@@ -1,0 +1,57 @@
+{
+  "libraries": [
+    {
+      "name": "common",
+      "path": "libs/common",
+      "buildImage": null
+    },
+    {
+      "name": "auth",
+      "path": "libs/auth",
+      "buildImage": null
+    }
+  ],
+  "services": [
+    {
+      "name": "api-gateway",
+      "path": "services/api-gateway",
+      "buildImage": null,
+      "libraryDependencies": ["common", "auth"]
+    },
+    {
+      "name": "user-service",
+      "path": "services/user-service",
+      "buildImage": null,
+      "libraryDependencies": ["common", "auth"]
+    },
+    {
+      "name": "order-service",
+      "path": "services/order-service",
+      "buildImage": null,
+      "libraryDependencies": ["common"]
+    }
+  ],
+  "integrationSuites": [
+    {
+      "name": "auth-flow",
+      "path": "tests/integration/auth-flow",
+      "requiredServices": ["api-gateway", "user-service"]
+    },
+    {
+      "name": "order-flow",
+      "path": "tests/integration/order-flow",
+      "requiredServices": ["api-gateway", "user-service", "order-service"]
+    }
+  ],
+  "environments": {
+    "staging": {
+      "healthEndpoint": "https://staging.example.com/health"
+    },
+    "canary": {
+      "healthEndpoint": "https://canary.example.com/health"
+    },
+    "production": {
+      "healthEndpoint": "https://example.com/health"
+    }
+  }
+}
