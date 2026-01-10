@@ -5,17 +5,19 @@ Complete reference for building pipelines with Conductor.
 ## Table of Contents
 
 1. [Pipeline Formats](#pipeline-formats)
-2. [Step API](#step-api)
-3. [Job Context API](#job-context-api)
-4. [Dynamic DAGs](#dynamic-dags)
-5. [Container Images](#container-images)
-6. [Services and Sidecars](#services-and-sidecars)
-7. [Artifacts](#artifacts)
-8. [Secrets](#secrets)
-9. [Notifications](#notifications)
-10. [Approvals](#approvals)
-11. [Matrix Builds](#matrix-builds)
-12. [Error Handling](#error-handling)
+2. [Container Compatibility](#container-compatibility)
+3. [Step API](#step-api)
+4. [Job Context API](#job-context-api)
+5. [Dynamic DAGs](#dynamic-dags)
+6. [Container Images](#container-images)
+7. [Services and Sidecars](#services-and-sidecars)
+8. [Artifacts](#artifacts)
+9. [Secrets](#secrets)
+10. [Notifications](#notifications)
+11. [Approvals](#approvals)
+12. [Matrix Builds](#matrix-builds)
+13. [Nested Containers (ilmarinen CLI)](#nested-containers-ilmarinen-cli)
+14. [Error Handling](#error-handling)
 
 ---
 
@@ -76,6 +78,71 @@ public class MyPipeline : Pipeline
 ```
 
 Benefits: Full IDE support, unit testing, complex logic, NuGet dependencies.
+
+---
+
+## Container Compatibility
+
+Use **any container image** - no special base images required. The `ilmarinen` CLI is automatically injected into every container.
+
+```csharp
+// These all work - ilmarinen CLI is auto-injected
+Step("build").Image("python:3.11").Run(...);
+Step("test").Image("node:20-alpine").Run(...);
+Step("deploy").Image("bitnami/kubectl:latest").Run(...);
+```
+
+### How Injection Works
+
+1. **Static binary mount** - A statically-linked `ilmarinen` binary is mounted at `/usr/local/bin/ilmarinen` for your container's architecture (amd64, arm64).
+
+2. **HTTP API fallback** - The API is always available at `http://ilmarinen.local:8080` for containers where the binary doesn't work.
+
+3. **Environment variable** - `$ILMARINEN_API` is set to the API endpoint for programmatic access.
+
+### Verifying the CLI
+
+```bash
+# Check if binary is available
+which ilmarinen
+ilmarinen --version
+
+# Or use the HTTP API
+curl $ILMARINEN_API/api/info/branch
+```
+
+### Minimal Containers (scratch/distroless)
+
+For containers without a shell, use the HTTP API directly:
+
+```go
+// Go example - call HTTP API
+apiURL := os.Getenv("ILMARINEN_API")
+resp, _ := http.Get(apiURL + "/api/secret/db-password")
+```
+
+```python
+# Python example
+import os, requests
+api = os.environ["ILMARINEN_API"]
+secret = requests.get(f"{api}/api/secret/db-password").text
+```
+
+### HTTP API Reference
+
+For containers that can't use the CLI binary:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/build` | POST | Build an image |
+| `/api/run` | POST | Run a container |
+| `/api/service/start` | POST | Start a service |
+| `/api/service/stop` | POST | Stop a service |
+| `/api/service/wait` | POST | Wait for service health |
+| `/api/secret/{name}` | GET | Get a secret value |
+| `/api/artifact/output` | POST | Output an artifact |
+| `/api/artifact/input` | POST | Input an artifact |
+| `/api/info/{key}` | GET | Get build metadata |
 
 ---
 
@@ -828,6 +895,142 @@ Plan(async ctx =>
 
     return graph;
 });
+```
+
+---
+
+## Nested Containers (ilmarinen CLI)
+
+For scripts that need to dynamically build and run containers at runtime.
+
+The `ilmarinen` CLI is automatically available inside every step container, enabling Python, shell, or any language to orchestrate containers with full Conductor integration.
+
+### Building Images
+
+```bash
+# Build an image (available for ilmarinen run in the same step)
+ilmarinen build -f Dockerfile -t myapp:latest
+ilmarinen build -f tests/Dockerfile -t test-runner --build-arg VERSION=1.0
+
+# Build with context directory
+ilmarinen build -f docker/Dockerfile -t myapp --context ./src
+```
+
+### Running Containers
+
+```bash
+# Run and wait for completion
+ilmarinen run myapp:latest -- ./entrypoint.sh
+ilmarinen run myapp:latest --env DB_URL=postgres://db:5432 -- ./migrate.sh
+
+# Capture output
+VERSION=$(ilmarinen run myapp:latest -- cat /app/VERSION)
+
+# Run with specific working directory
+ilmarinen run myapp:latest --workdir /app -- make test
+```
+
+Workspace is automatically mounted - nested containers see the same files as the parent.
+
+### Dynamic Services
+
+Start services at runtime based on script logic:
+
+```bash
+# Start a service (returns immediately)
+ilmarinen service start postgres:15 --name db --port 5432 \
+    --env POSTGRES_PASSWORD=test
+
+# Wait for health
+ilmarinen service wait db --health-url tcp://db:5432
+
+# Use the service (accessible by name as hostname)
+psql -h db -U postgres -c "SELECT 1"
+
+# Stop when done
+ilmarinen service stop db
+
+# List running services
+ilmarinen service list
+```
+
+### Accessing Conductor Context
+
+Nested containers have full access to Conductor features:
+
+```bash
+# Secrets
+API_KEY=$(ilmarinen secret get api-key)
+DB_PASSWORD=$(ilmarinen secret get db-password)
+
+# Artifacts
+ilmarinen artifact output ./results --name test-results
+ilmarinen artifact input build-output --dest ./artifacts
+
+# Build metadata
+BRANCH=$(ilmarinen info branch)
+COMMIT=$(ilmarinen info commit)
+BUILD_URL=$(ilmarinen info build-url)
+```
+
+### Example: Python Orchestration
+
+```python
+#!/usr/bin/env python3
+import subprocess
+import json
+
+def ilmarinen(cmd):
+    result = subprocess.run(f"ilmarinen {cmd}", shell=True,
+                          capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"ilmarinen {cmd} failed: {result.stderr}")
+    return result.stdout.strip()
+
+# Build based on runtime config
+config = json.load(open("build-config.json"))
+
+for variant in config["variants"]:
+    # Build each variant
+    ilmarinen(f"build -f Dockerfile -t app:{variant['name']} "
+              f"--build-arg BASE={variant['base']}")
+
+    # Run tests
+    result = subprocess.run(
+        f"ilmarinen run app:{variant['name']} -- pytest",
+        shell=True
+    )
+
+    if result.returncode != 0 and ilmarinen("info branch") == "main":
+        exit(1)  # Fail fast on main
+
+# Output results
+ilmarinen("artifact output ./results --name test-results")
+```
+
+### Example: Dynamic Integration Environment
+
+```bash
+#!/bin/bash
+# Discover required services from test annotations
+SERVICES=$(grep -rh '@requires' tests/ | sort -u)
+
+for svc in $SERVICES; do
+    ilmarinen service start "$svc" --name "$svc"
+done
+
+# Wait for all services
+for svc in $SERVICES; do
+    ilmarinen service wait "$svc" --timeout 60s
+done
+
+# Run tests
+pytest tests/ -v
+
+# Cleanup
+for svc in $SERVICES; do
+    ilmarinen service stop "$svc"
+done
 ```
 
 ---
