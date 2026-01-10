@@ -6,7 +6,7 @@
 #r "Conductor"
 
 // Build the application
-var appImage = Step("build")
+var build = Step("build")
     .Image("mcr.microsoft.com/dotnet/sdk:8.0")
     .Run(async ctx =>
     {
@@ -15,14 +15,14 @@ var appImage = Step("build")
     });
 
 // Unit tests (no external dependencies)
-Step("test-unit")
+var testUnit = Step("test-unit")
     .Image("mcr.microsoft.com/dotnet/sdk:8.0")
     .Run(ctx => ctx.Exec("dotnet", "test", "--filter", "Category!=Integration"));
 
 // Integration tests with database
-Step("test-integration")
+var testIntegration = Step("test-integration")
     .Image("mcr.microsoft.com/dotnet/sdk:8.0")
-    .Needs("build")
+    .Needs(build)
     .Service(new ServiceConfig
     {
         Image = "postgres:15",
@@ -41,10 +41,10 @@ Step("test-integration")
     });
 
 // E2E tests - run the app as a service and hit it with Playwright
-Step("test-e2e")
+var testE2e = Step("test-e2e")
     .Image("mcr.microsoft.com/playwright:latest")
-    .Needs("build")
-    .Service(appImage, "app", ports: [8080])
+    .Needs(build)
+    .Service(build, "app", ports: [8080])
     .Service("postgres:15", "db", environment: new Dictionary<string, string>
     {
         ["POSTGRES_PASSWORD"] = "test",
@@ -70,6 +70,6 @@ Step("test-e2e")
 // All tests must pass before deploy
 Step("deploy")
     .Image("bitnami/kubectl:latest")
-    .Needs("test-unit", "test-integration", "test-e2e")
+    .Needs(testUnit, testIntegration, testE2e)
     .When(ctx => ctx.Branch == "main")
     .Run(ctx => ctx.Exec("kubectl", "apply", "-f", "k8s/"));

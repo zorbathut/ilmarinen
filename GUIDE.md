@@ -30,13 +30,13 @@ Create `pipeline.csx` in your repo root:
 ```csharp
 #r "Conductor"
 
-Step("build")
+var build = Step("build")
     .Image("dotnet/sdk:8.0")
     .Run(ctx => ctx.Exec("dotnet", "build"));
 
-Step("test")
+var test = Step("test")
     .Image("dotnet/sdk:8.0")
-    .Needs("build")
+    .Needs(build)  // Type-safe step reference
     .Run(ctx => ctx.Exec("dotnet", "test"));
 ```
 
@@ -94,9 +94,10 @@ Step("name")
 | Method | Description |
 |--------|-------------|
 | `.Image(string)` | Container image (required) |
-| `.Image(ImageRef)` | Container from previous step |
+| `.Image(Step<ImageRef>)` | Container from previous step |
 | `.Run(Func<IJobContext, Task>)` | Work to execute (required) |
-| `.Needs(params string[])` | Dependencies by name |
+| `.Needs(params Step[])` | Dependencies (type-safe) |
+| `.Needs(params string[])` | Dependencies by name (for dynamic DAGs) |
 | `.When(Func<IConditionContext, bool>)` | Conditional execution |
 | `.Env(string, string)` | Environment variable |
 | `.Env(string, Func<IJobContext, string>)` | Dynamic environment variable |
@@ -128,14 +129,20 @@ Step("tag")
 ### Returning Images
 
 ```csharp
-var appImage = Step("build")
+var build = Step("build")
     .Image("docker:dind")
     .Run(ctx => ctx.BuildImage("Dockerfile", tag: "myapp:${BUILD_ID}"));
+// build is Step<ImageRef> - contains both step reference and the image
 
-// Use the built image
-Step("test")
-    .Image(appImage)  // Runs inside the image you just built
+// Use the built image - Step<ImageRef> works directly in .Image()
+var test = Step("test")
+    .Image(build)  // Runs inside the image you just built
     .Run(ctx => ctx.Exec("./run-tests.sh"));
+
+// Use in dependencies too
+Step("deploy")
+    .Needs(test)  // Type-safe reference to the test step
+    .Run(ctx => ctx.Exec("./deploy.sh"));
 ```
 
 ---
@@ -341,19 +348,21 @@ graph.Add("scan",
 ### Dependencies
 
 ```csharp
-// String-based (resolved by name)
-graph.Add("deploy", needs: ["build", "test"], ...);
-
-// Array of names
-var prereqs = new[] { "build-a", "build-b", "build-c" };
-graph.Add("integration", needs: prereqs, ...);
-
-// Programmatic
+// Type-safe (recommended) - collect references in dictionaries
+var builds = new Dictionary<string, JobNode>();
 foreach (var svc in services)
 {
-    graph.Add($"build-{svc.Name}", ...);
+    builds[svc.Name] = graph.Add($"build-{svc.Name}", ...);
 }
-graph.Add("deploy", needs: services.Select(s => $"build-{s.Name}"), ...);
+graph.Add("deploy", needs: builds.Values, ...);  // Type-safe!
+
+// Or reference specific nodes
+graph.Add("integration",
+    needs: [builds["api"], builds["worker"]],
+    ...);
+
+// String-based (for backward compat or truly dynamic names)
+graph.Add("deploy", needs: ["build", "test"], ...);
 ```
 
 ---
@@ -371,26 +380,41 @@ Step("deploy").Image("bitnami/kubectl:1.28")
 ### From Previous Step
 
 ```csharp
-var myImage = Step("build")
+var build = Step("build")
     .Image("docker:dind")
     .Run(ctx => ctx.BuildImage("Dockerfile"));
+// build is Step<ImageRef>
 
-Step("test")
-    .Image(myImage);  // Implicit dependency created
+var test = Step("test")
+    .Image(build)  // Implicit dependency created
+    .Run(ctx => ctx.Exec("./run-tests.sh"));
+
+// You can also use build in .Needs() for explicit dependencies
+Step("deploy")
+    .Needs(test)
+    .Run(...);
 ```
 
-### ImageRef Type
+### Step<T> and ImageRef Types
 
 ```csharp
+// Step<T> wraps a step reference with its return value
+public record Step<T>
+{
+    public string Name { get; }           // Step identifier
+    public T Value { get; }               // The returned value (e.g., ImageRef)
+}
+
+// ImageRef represents a container image
 public record ImageRef
 {
     public string Reference { get; }      // "myapp:abc123"
     public string? Digest { get; }        // "sha256:..."
-    public JobNode? ProducedBy { get; }   // Implicit dependency
-    
-    // Implicit conversion from string
-    public static implicit operator ImageRef(string tag);
 }
+
+// Step<ImageRef> can be used directly with .Image() and .Needs()
+var build = Step("build").Run(ctx => ctx.BuildImage("Dockerfile"));
+Step("test").Image(build).Needs(build);  // Both work!
 ```
 
 ### Building Images
@@ -759,15 +783,18 @@ Run the same job across multiple configurations.
 ```csharp
 var platforms = new[] { "linux-x64", "win-x64", "osx-arm64" };
 
-var builds = platforms.Select(platform =>
-    Step($"build-{platform}")
+// Collect step references in a dictionary
+var builds = new Dictionary<string, Step>();
+foreach (var platform in platforms)
+{
+    builds[platform] = Step($"build-{platform}")
         .Image("dotnet/sdk:8.0")
-        .Run(ctx => ctx.Exec("dotnet", "publish", "-r", platform))
-).ToList();
+        .Run(ctx => ctx.Exec("dotnet", "publish", "-r", platform));
+}
 
 Step("release")
     .Image("alpine")
-    .Needs(platforms.Select(p => $"build-{p}").ToArray())
+    .Needs(builds.Values.ToArray())  // Type-safe!
     .Run(ctx => ctx.Exec("echo", "All platforms built"));
 ```
 
@@ -777,25 +804,28 @@ Step("release")
 Plan(async ctx =>
 {
     var graph = new Graph();
-    
+
     var matrix = from platform in new[] { "linux-x64", "win-x64", "osx-arm64" }
                  from config in new[] { "Debug", "Release" }
                  select new { platform, config };
-    
-    var buildJobs = matrix.Select(m =>
-        graph.Add($"build-{m.platform}-{m.config}",
+
+    // Collect job nodes in a list
+    var buildJobs = new List<JobNode>();
+    foreach (var m in matrix)
+    {
+        buildJobs.Add(graph.Add($"build-{m.platform}-{m.config}",
             image: "dotnet/sdk:8.0",
             run: ctx => ctx.Exec("dotnet", "publish",
                 "-r", m.platform,
-                "-c", m.config))
-    ).ToList();
-    
-    // Fan-in after all matrix jobs
+                "-c", m.config)));
+    }
+
+    // Fan-in after all matrix jobs - type-safe!
     graph.Add("aggregate",
         image: "alpine",
-        needs: buildJobs.Select(j => j.Name),
+        needs: buildJobs,
         run: ctx => ctx.Exec("echo", "All builds complete"));
-    
+
     return graph;
 });
 ```

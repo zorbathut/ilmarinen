@@ -86,7 +86,7 @@ OnFailure(async ctx =>
 // here's a more expanded version:
 
 /*
-var buildOutput = Step("build")
+var build = Step("build")
     .Image("mcr.microsoft.com/dotnet/sdk:8.0")
     .Run(async ctx =>
     {
@@ -94,9 +94,9 @@ var buildOutput = Step("build")
         await ctx.Exec("dotnet", "publish", "-c", "Release", "-o", "publish/");
     });
 
-var deployPackage = Step("package")
+var package = Step("package")
     .Image("mcr.microsoft.com/dotnet/sdk:8.0")
-    .Needs("build")
+    .Needs(build)  // Type-safe step reference
     .Run(async ctx =>
     {
         await ctx.Exec("./tool.bat", "deploy_full");
@@ -105,7 +105,7 @@ var deployPackage = Step("package")
 
 Step("deploy")
     .Image("your-deploy-image:latest")
-    .Needs("package")
+    .Needs(package)  // Type-safe step reference
     .When(ctx => ctx.Branch == "main")
     .Run(async ctx =>
     {

@@ -9,17 +9,16 @@
 var platforms = new[] { "linux-x64", "win-x64", "osx-x64", "osx-arm64" };
 var configurations = new[] { "Debug", "Release" };
 
-// Generate build jobs for each combination
-var buildJobs = new List<string>();
+// Generate build jobs for each combination - store references in a dictionary
+var builds = new Dictionary<(string platform, string config), Step>();
 
 foreach (var platform in platforms)
 {
     foreach (var config in configurations)
     {
         var jobName = $"build-{platform}-{config.ToLower()}";
-        buildJobs.Add(jobName);
-        
-        Step(jobName)
+
+        builds[(platform, config)] = Step(jobName)
             .Image("mcr.microsoft.com/dotnet/sdk:8.0")
             .DisplayName($"Build {platform} ({config})")
             .Run(async ctx =>
@@ -28,20 +27,20 @@ foreach (var platform in platforms)
                     "-c", config,
                     "-r", platform,
                     "-o", $"out/{platform}/{config}");
-                
+
                 ctx.Output("binaries", $"out/{platform}/{config}/**/*");
             });
     }
 }
 
-// Create release archives for Release builds only
-var releaseJobs = platforms.Select(p => $"build-{p}-release").ToArray();
+// Create release archives for Release builds only - store package step references
+var packages = new Dictionary<string, Step>();
 
 foreach (var platform in platforms)
 {
-    Step($"package-{platform}")
+    packages[platform] = Step($"package-{platform}")
         .Image("alpine:latest")
-        .Needs($"build-{platform}-release")
+        .Needs(builds[(platform, "Release")])
         .Run(async ctx =>
         {
             ctx.Input("binaries");
@@ -52,30 +51,29 @@ foreach (var platform in platforms)
 }
 
 // Aggregate all release packages
-Step("create-release")
+var createRelease = Step("create-release")
     .Image("alpine:latest")
-    .Needs(platforms.Select(p => $"package-{p}").ToArray())
+    .Needs(packages.Values.ToArray())
     .When(ctx => ctx.Branch == "main" || ctx.Branch.StartsWith("release/"))
     .Run(async ctx =>
     {
-        // Download all platform releases
-        foreach (var platform in platforms)
-        {
-            ctx.Input("release", from: $"package-{platform}");
-        }
-        
+        // Download all platform releases (still need string for wildcard pattern)
+        ctx.Input("release", from: "package-*");
+
         await ctx.Exec("ls", "-la");
-        
+
         // Could upload to GitHub releases, S3, etc.
         ctx.Output("all-releases", "release-*.zip");
     });
 
 // Run tests for each platform (can run in parallel with packaging)
+var tests = new Dictionary<string, Step>();
+
 foreach (var platform in platforms)
 {
-    Step($"test-{platform}")
+    tests[platform] = Step($"test-{platform}")
         .Image("mcr.microsoft.com/dotnet/sdk:8.0")
-        .Needs($"build-{platform}-release")
+        .Needs(builds[(platform, "Release")])
         .Run(async ctx =>
         {
             await ctx.Exec("dotnet", "test",
@@ -88,9 +86,5 @@ foreach (var platform in platforms)
 // Final gate before release
 Step("release-gate")
     .Image("alpine:latest")
-    .Needs(
-        platforms.Select(p => $"test-{p}")
-            .Concat(platforms.Select(p => $"package-{p}"))
-            .ToArray()
-    )
+    .Needs(tests.Values.Concat(packages.Values).ToArray())
     .Run(ctx => ctx.Exec("echo", "All platforms built and tested successfully"));
