@@ -120,9 +120,40 @@ public class PipelineRunner
         fi
 
         # Extract JSON string value: json_str '{"k":"v"}' 'k' -> v
-        json_str() { echo "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sed 's/\\n/\n/g'; }
+        json_str() { echo "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 | sed 's/\\n/\n/g'; }
         # Extract JSON number value: json_num '{"k":123}' 'k' -> 123
-        json_num() { echo "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p'; }
+        json_num() { echo "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\([0-9-]*\).*/\1/p' | head -1; }
+        # Check if JSON has a field
+        json_has() { echo "$1" | grep -q "\"$2\""; }
+
+        # Handle structured error responses
+        handle_error() {
+            local result="$1"
+            local default_exit="${2:-1}"
+
+            if json_has "$result" "error"; then
+                local error_msg=$(json_str "$result" "error")
+                local exit_code=$(json_num "$result" "exitCode")
+                local stderr_out=$(json_str "$result" "stderr")
+                local exception_type=$(json_str "$result" "exceptionType")
+                local nesting_depth=$(json_num "$result" "nestingDepth")
+
+                echo "=== ilmarinen error ===" >&2
+                [ -n "$exception_type" ] && echo "Type: $exception_type" >&2
+                [ -n "$nesting_depth" ] && [ "$nesting_depth" -gt 1 ] 2>/dev/null && echo "Nesting depth: $nesting_depth" >&2
+                echo "Error: $error_msg" >&2
+                if [ -n "$stderr_out" ]; then
+                    echo "--- stderr ---" >&2
+                    printf '%s\n' "$stderr_out" >&2
+                    echo "--- end stderr ---" >&2
+                fi
+                echo "=======================" >&2
+
+                [ -n "$exit_code" ] && [ "$exit_code" != "0" ] && return "$exit_code"
+                return "$default_exit"
+            fi
+            return 0
+        }
 
         case "$1" in
             --help|-h|help)
@@ -145,12 +176,14 @@ public class PipelineRunner
                 shift
                 [ -z "$1" ] && { echo "Usage: ilmarinen info <branch|commit>" >&2; exit 1; }
                 result=$(http_get "${API}/api/info/$1")
+                handle_error "$result" || exit $?
                 json_str "$result" "value"
                 ;;
             secret)
                 shift
                 [ "$1" != "get" ] || [ -z "$2" ] && { echo "Usage: ilmarinen secret get <name>" >&2; exit 1; }
                 result=$(http_get "${API}/api/secret/$2")
+                handle_error "$result" || exit $?
                 printf '%s' "$(json_str "$result" "value")"
                 ;;
             run)
@@ -167,6 +200,13 @@ public class PipelineRunner
                 done
                 cmd="$cmd]"
                 result=$(http_post "${API}/api/run" "{\"image\":\"$image\",\"command\":$cmd}")
+
+                # Check for error response
+                if json_has "$result" "error"; then
+                    handle_error "$result"
+                    exit $?
+                fi
+
                 stdout=$(json_str "$result" "stdout")
                 stderr=$(json_str "$result" "stderr")
                 exitcode=$(json_num "$result" "exitCode")

@@ -42,7 +42,7 @@ public class DockerJobContext : IJobContext
         _secretProvider = secretProvider;
     }
 
-    public async Task<CommandResult> Exec(string command, params string[] args)
+    public async Task<CommandResult> TryExec(string command, params string[] args)
     {
         var cmd = new List<string> { command };
         cmd.AddRange(args);
@@ -75,9 +75,29 @@ public class DockerJobContext : IJobContext
         };
     }
 
-    public Task<CommandResult> Shell(string script)
+    public async Task<CommandResult> Exec(string command, params string[] args)
     {
-        return Exec("/bin/sh", "-c", script);
+        var result = await TryExec(command, args);
+        if (!result.Success)
+        {
+            throw new CommandException(command, args, result.ExitCode, result.Stdout, result.Stderr, result);
+        }
+        return result;
+    }
+
+    public Task<CommandResult> TryShell(string script)
+    {
+        return TryExec("/bin/sh", "-c", script);
+    }
+
+    public async Task<CommandResult> Shell(string script)
+    {
+        var result = await TryShell(script);
+        if (!result.Success)
+        {
+            throw new ShellException(script, result.ExitCode, result.Stdout, result.Stderr, result);
+        }
+        return result;
     }
 
     public string Secret(string name)
@@ -91,32 +111,48 @@ public class DockerJobContext : IJobContext
         var imageTag = tag ?? $"ilmarinen-build:{Guid.NewGuid():N}";
 
         // Use docker build via exec in the container (requires docker socket mount)
-        var result = await Shell($"docker build -f {dockerfile} -t {imageTag} .");
-
-        if (!result.Success)
-        {
-            throw new InvalidOperationException($"Failed to build image: {result.Stderr}");
-        }
+        // Shell throws ShellException on failure
+        await Shell($"docker build -f {dockerfile} -t {imageTag} .");
 
         return ImageRef.From(imageTag);
     }
 
-    public async Task<CommandResult> Run(ImageRef image, params string[] command)
+    public async Task<CommandResult> TryRun(ImageRef image, params string[] command)
     {
         var cmdStr = string.Join(" ", command.Select(c => c.Contains(' ') ? $"\"{c}\"" : c));
         // Mount workspace and connect to network so nested containers can access files and services
-        return await Shell($"docker run --rm -v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {image.Reference} {cmdStr}");
+        return await TryShell($"docker run --rm -v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {image.Reference} {cmdStr}");
+    }
+
+    public async Task<CommandResult> Run(ImageRef image, params string[] command)
+    {
+        var result = await TryRun(image, command);
+        if (!result.Success)
+        {
+            throw new NestedContainerException(
+                image.Reference,
+                command,
+                result.ExitCode,
+                result.Stdout,
+                result.Stderr);
+        }
+        return result;
     }
 
     public async Task<ServiceHandle> StartService(ImageRef image, string name, int[]? ports = null)
     {
         var portsArg = ports != null ? string.Join(" ", ports.Select(p => $"-p {p}")) : "";
         // Connect to network so services can communicate
-        var result = await Shell($"docker run -d --name {name} --network {_networkName} {portsArg} {image.Reference}");
+        var result = await TryShell($"docker run -d --name {name} --network {_networkName} {portsArg} {image.Reference}");
 
         if (!result.Success)
         {
-            throw new InvalidOperationException($"Failed to start service: {result.Stderr}");
+            throw new ShellException(
+                $"docker run -d --name {name} --network {_networkName} {portsArg} {image.Reference}",
+                result.ExitCode,
+                result.Stdout,
+                result.Stderr,
+                result);
         }
 
         var containerId = result.Stdout.Trim();
@@ -141,12 +177,12 @@ public class DockerJobContext : IJobContext
                     var parts = url["tcp://".Length..].Split(':');
                     var host = parts[0];
                     var port = parts.Length > 1 ? parts[1] : "80";
-                    result = await Shell($"nc -z {host} {port}");
+                    result = await TryShell($"nc -z {host} {port}");
                 }
                 else
                 {
                     // HTTP health check using curl
-                    result = await Shell($"curl -sf {url}");
+                    result = await TryShell($"curl -sf {url}");
                 }
 
                 if (result.Success)
@@ -165,8 +201,9 @@ public class DockerJobContext : IJobContext
 
     internal async Task StopServiceAsync(string containerId)
     {
-        await Shell($"docker stop {containerId}");
-        await Shell($"docker rm {containerId}");
+        // Best effort cleanup - use TryShell to avoid throwing
+        await TryShell($"docker stop {containerId}");
+        await TryShell($"docker rm {containerId}");
         _serviceContainerIds.Remove(containerId);
     }
 

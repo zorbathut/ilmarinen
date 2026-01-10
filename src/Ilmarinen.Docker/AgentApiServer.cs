@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Ilmarinen.Execution;
 using Ilmarinen.Models;
 
@@ -132,10 +133,41 @@ public class AgentApiServer : IAsyncDisposable
                 await WriteJsonResponse(response, new { error = "Not found" });
             }
         }
+        catch (NestedContainerException ex)
+        {
+            response.StatusCode = 422; // Unprocessable Entity - command ran but failed
+            await WriteJsonResponse(response, new ErrorResponse(
+                ex.Message,
+                ex.GetType().Name,
+                ex.ExitCode,
+                ex.Stdout,
+                ex.Stderr,
+                ex.NestingDepth,
+                ex.ContainerChain.ToArray()));
+        }
+        catch (CommandException ex)
+        {
+            response.StatusCode = 422;
+            await WriteJsonResponse(response, new ErrorResponse(
+                ex.Message,
+                ex.GetType().Name,
+                ex.ExitCode,
+                ex.Stdout,
+                ex.Stderr,
+                null,
+                null));
+        }
         catch (Exception ex)
         {
             response.StatusCode = 500;
-            await WriteJsonResponse(response, new { error = ex.Message });
+            await WriteJsonResponse(response, new ErrorResponse(
+                ex.Message,
+                ex.GetType().Name,
+                null,
+                null,
+                null,
+                null,
+                null));
         }
         finally
         {
@@ -146,14 +178,32 @@ public class AgentApiServer : IAsyncDisposable
     private async Task HandleRun(HttpListenerRequest request, HttpListenerResponse response)
     {
         var body = await ReadJsonBody<RunRequest>(request);
-        var result = await _currentContext!.Run(ImageRef.From(body.Image), body.Command ?? []);
 
-        await WriteJsonResponse(response, new
+        try
         {
-            exitCode = result.ExitCode,
-            stdout = result.Stdout,
-            stderr = result.Stderr
-        });
+            var result = await _currentContext!.Run(ImageRef.From(body.Image), body.Command ?? []);
+
+            await WriteJsonResponse(response, new
+            {
+                exitCode = result.ExitCode,
+                stdout = result.Stdout,
+                stderr = result.Stderr
+            });
+        }
+        catch (NestedContainerException ex)
+        {
+            // Increment nesting depth and add to container chain
+            var newChain = new List<string>(ex.ContainerChain) { body.Image };
+            throw new NestedContainerException(
+                ex.Image,
+                ex.Command,
+                ex.ExitCode,
+                ex.Stdout,
+                ex.Stderr,
+                ex.NestingDepth + 1,
+                newChain,
+                ex);
+        }
     }
 
     private async Task HandleBuild(HttpListenerRequest request, HttpListenerResponse response)
@@ -271,10 +321,22 @@ public class AgentApiServer : IAsyncDisposable
         _cts.Dispose();
     }
 
-    // Request DTOs
+    // Request/Response DTOs
     private record RunRequest(string Image, string[]? Command);
     private record BuildRequest(string Dockerfile, string? Tag);
     private record ServiceStartRequest(string Image, string Name, int[]? Ports);
     private record ServiceStopRequest(string Name);
     private record ServiceWaitRequest(string Url, int? TimeoutSeconds);
+
+    /// <summary>
+    /// Structured error response for API errors.
+    /// </summary>
+    private record ErrorResponse(
+        [property: JsonPropertyName("error")] string Error,
+        [property: JsonPropertyName("exceptionType")] string? ExceptionType,
+        [property: JsonPropertyName("exitCode")] int? ExitCode,
+        [property: JsonPropertyName("stdout")] string? Stdout,
+        [property: JsonPropertyName("stderr")] string? Stderr,
+        [property: JsonPropertyName("nestingDepth")] int? NestingDepth,
+        [property: JsonPropertyName("containerChain")] string[]? ContainerChain);
 }

@@ -19,13 +19,27 @@ public interface IJobContext
 
     /// <summary>
     /// Execute a command in the container.
+    /// Throws <see cref="CommandException"/> on non-zero exit code.
     /// </summary>
+    /// <exception cref="CommandException">When command fails with non-zero exit code.</exception>
     Task<CommandResult> Exec(string command, params string[] args);
 
     /// <summary>
-    /// Execute a shell script in the container.
+    /// Execute a command in the container without throwing on failure.
     /// </summary>
+    Task<CommandResult> TryExec(string command, params string[] args);
+
+    /// <summary>
+    /// Execute a shell script in the container.
+    /// Throws <see cref="ShellException"/> on non-zero exit code.
+    /// </summary>
+    /// <exception cref="ShellException">When script fails with non-zero exit code.</exception>
     Task<CommandResult> Shell(string script);
+
+    /// <summary>
+    /// Execute a shell script in the container without throwing on failure.
+    /// </summary>
+    Task<CommandResult> TryShell(string script);
 
     /// <summary>
     /// Get a secret value by name.
@@ -39,8 +53,15 @@ public interface IJobContext
 
     /// <summary>
     /// Run a container and wait for it to complete.
+    /// Throws <see cref="NestedContainerException"/> on non-zero exit code.
     /// </summary>
+    /// <exception cref="NestedContainerException">When container fails with non-zero exit code.</exception>
     Task<CommandResult> Run(ImageRef image, params string[] command);
+
+    /// <summary>
+    /// Run a container and wait for it to complete without throwing on failure.
+    /// </summary>
+    Task<CommandResult> TryRun(ImageRef image, params string[] command);
 
     /// <summary>
     /// Start a service container (runs in background).
