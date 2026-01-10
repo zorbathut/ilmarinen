@@ -42,41 +42,74 @@ public class PipelineRunner
     {
         var branch = await GetGitBranch();
         var commit = await GetGitCommit();
+        var networkName = $"ilmarinen-{Guid.NewGuid():N}";
 
         Console.WriteLine($"Running {steps.Count} step(s)...");
         Console.WriteLine($"Branch: {branch}, Commit: {commit[..Math.Min(8, commit.Length)]}");
         Console.WriteLine();
 
-        foreach (var step in steps)
+        // Create a network for this pipeline run
+        await CreateNetworkAsync(networkName);
+
+        try
         {
-            Console.WriteLine($"=== Step: {step.Name} ===");
-            Console.WriteLine($"Image: {step.Image}");
+            foreach (var step in steps)
+            {
+                Console.WriteLine($"=== Step: {step.Name} ===");
+                Console.WriteLine($"Image: {step.Image}");
 
-            try
-            {
-                await RunStepAsync(step, branch, commit);
-                Console.WriteLine($"=== {step.Name}: SUCCESS ===");
-                Console.WriteLine();
+                try
+                {
+                    await RunStepAsync(step, branch, commit, networkName);
+                    Console.WriteLine($"=== {step.Name}: SUCCESS ===");
+                    Console.WriteLine();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"=== {step.Name}: FAILED ===");
+                    Console.WriteLine($"Error: {ex.Message}");
+                    return false;
+                }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"=== {step.Name}: FAILED ===");
-                Console.WriteLine($"Error: {ex.Message}");
-                return false;
-            }
+
+            Console.WriteLine("All steps completed successfully!");
+            return true;
         }
-
-        Console.WriteLine("All steps completed successfully!");
-        return true;
+        finally
+        {
+            // Clean up the network
+            await RemoveNetworkAsync(networkName);
+        }
     }
 
-    private async Task RunStepAsync(Step step, string branch, string commit)
+    private async Task CreateNetworkAsync(string name)
+    {
+        await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
+        {
+            Name = name,
+            Driver = "bridge"
+        });
+    }
+
+    private async Task RemoveNetworkAsync(string name)
+    {
+        try
+        {
+            await _client.Networks.DeleteNetworkAsync(name);
+        }
+        catch
+        {
+            // Best effort cleanup
+        }
+    }
+
+    private async Task RunStepAsync(Step step, string branch, string commit, string networkName)
     {
         // Pull the image if needed
         await PullImageIfNeeded(step.Image);
 
         // Create and start the container
-        var containerId = await CreateContainerAsync(step.Image);
+        var containerId = await CreateContainerAsync(step.Image, networkName);
 
         try
         {
@@ -86,6 +119,8 @@ public class PipelineRunner
                 _client,
                 containerId,
                 "/workspace",
+                _workDir,
+                networkName,
                 branch,
                 commit,
                 _secretProvider);
@@ -102,8 +137,17 @@ public class PipelineRunner
         finally
         {
             // Stop and remove container
-            await _client.Containers.StopContainerAsync(containerId, new ContainerStopParameters());
-            await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters());
+            try
+            {
+                await _client.Containers.StopContainerAsync(containerId, new ContainerStopParameters());
+            }
+            catch { }
+
+            try
+            {
+                await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true });
+            }
+            catch { }
         }
     }
 
@@ -127,7 +171,7 @@ public class PipelineRunner
         }
     }
 
-    private async Task<string> CreateContainerAsync(string image)
+    private async Task<string> CreateContainerAsync(string image, string networkName)
     {
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
@@ -144,6 +188,7 @@ public class PipelineRunner
                     $"{_workDir}:/workspace",
                     "/var/run/docker.sock:/var/run/docker.sock" // For nested containers
                 ],
+                NetworkMode = networkName,
                 AutoRemove = false
             }
         });

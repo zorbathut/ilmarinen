@@ -14,6 +14,8 @@ public class DockerJobContext : IJobContext
     private readonly DockerClient _client;
     private readonly string _containerId;
     private readonly string _workDir;
+    private readonly string _hostWorkDir;
+    private readonly string _networkName;
     private readonly Func<string, string?> _secretProvider;
     private readonly List<string> _serviceContainerIds = [];
 
@@ -24,6 +26,8 @@ public class DockerJobContext : IJobContext
         DockerClient client,
         string containerId,
         string workDir,
+        string hostWorkDir,
+        string networkName,
         string branch,
         string commit,
         Func<string, string?> secretProvider)
@@ -31,6 +35,8 @@ public class DockerJobContext : IJobContext
         _client = client;
         _containerId = containerId;
         _workDir = workDir;
+        _hostWorkDir = hostWorkDir;
+        _networkName = networkName;
         Branch = branch;
         Commit = commit;
         _secretProvider = secretProvider;
@@ -98,13 +104,15 @@ public class DockerJobContext : IJobContext
     public async Task<CommandResult> Run(ImageRef image, params string[] command)
     {
         var cmdStr = string.Join(" ", command.Select(c => c.Contains(' ') ? $"\"{c}\"" : c));
-        return await Shell($"docker run --rm {image.Reference} {cmdStr}");
+        // Mount workspace and connect to network so nested containers can access files and services
+        return await Shell($"docker run --rm -v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {image.Reference} {cmdStr}");
     }
 
     public async Task<ServiceHandle> StartService(ImageRef image, string name, int[]? ports = null)
     {
         var portsArg = ports != null ? string.Join(" ", ports.Select(p => $"-p {p}")) : "";
-        var result = await Shell($"docker run -d --name {name} {portsArg} {image.Reference}");
+        // Connect to network so services can communicate
+        var result = await Shell($"docker run -d --name {name} --network {_networkName} {portsArg} {image.Reference}");
 
         if (!result.Success)
         {
@@ -126,7 +134,21 @@ public class DockerJobContext : IJobContext
         {
             try
             {
-                var result = await Shell($"curl -sf {url}");
+                CommandResult result;
+                if (url.StartsWith("tcp://"))
+                {
+                    // TCP health check using nc (netcat)
+                    var parts = url["tcp://".Length..].Split(':');
+                    var host = parts[0];
+                    var port = parts.Length > 1 ? parts[1] : "80";
+                    result = await Shell($"nc -z {host} {port}");
+                }
+                else
+                {
+                    // HTTP health check using curl
+                    result = await Shell($"curl -sf {url}");
+                }
+
                 if (result.Success)
                     return;
             }
