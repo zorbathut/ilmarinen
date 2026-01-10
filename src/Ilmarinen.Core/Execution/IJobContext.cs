@@ -1,0 +1,100 @@
+using Ilmarinen.Models;
+
+namespace Ilmarinen.Execution;
+
+/// <summary>
+/// Context passed to step actions for interacting with the container.
+/// </summary>
+public interface IJobContext
+{
+    /// <summary>
+    /// The current git branch.
+    /// </summary>
+    string Branch { get; }
+
+    /// <summary>
+    /// The current git commit SHA.
+    /// </summary>
+    string Commit { get; }
+
+    /// <summary>
+    /// Execute a command in the container.
+    /// </summary>
+    Task<CommandResult> Exec(string command, params string[] args);
+
+    /// <summary>
+    /// Execute a shell script in the container.
+    /// </summary>
+    Task<CommandResult> Shell(string script);
+
+    /// <summary>
+    /// Get a secret value by name.
+    /// </summary>
+    string Secret(string name);
+
+    /// <summary>
+    /// Build a container image from a Dockerfile.
+    /// </summary>
+    Task<ImageRef> BuildImage(string dockerfile, string? tag = null);
+
+    /// <summary>
+    /// Run a container and wait for it to complete.
+    /// </summary>
+    Task<CommandResult> Run(ImageRef image, params string[] command);
+
+    /// <summary>
+    /// Start a service container (runs in background).
+    /// </summary>
+    Task<ServiceHandle> StartService(ImageRef image, string name, int[]? ports = null);
+
+    /// <summary>
+    /// Wait for a service to be healthy.
+    /// </summary>
+    Task WaitForHealthy(string url, TimeSpan? timeout = null);
+}
+
+/// <summary>
+/// Handle to a running service container.
+/// </summary>
+public interface IServiceHandle : IAsyncDisposable
+{
+    /// <summary>
+    /// The service name/hostname.
+    /// </summary>
+    string Name { get; }
+
+    /// <summary>
+    /// Stop the service.
+    /// </summary>
+    Task StopAsync();
+}
+
+/// <summary>
+/// Alias for IServiceHandle.
+/// </summary>
+public interface ServiceHandle : IServiceHandle { }
+
+/// <summary>
+/// Result of executing a command.
+/// </summary>
+public sealed record CommandResult
+{
+    public required int ExitCode { get; init; }
+    public required string Stdout { get; init; }
+    public required string Stderr { get; init; }
+    public bool Success => ExitCode == 0;
+
+    public static CommandResult Ok(string stdout = "", string stderr = "") => new()
+    {
+        ExitCode = 0,
+        Stdout = stdout,
+        Stderr = stderr
+    };
+
+    public static CommandResult Failed(int exitCode, string stdout = "", string stderr = "") => new()
+    {
+        ExitCode = exitCode,
+        Stdout = stdout,
+        Stderr = stderr
+    };
+}
