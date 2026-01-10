@@ -106,15 +106,33 @@ public class DockerJobContext : IJobContext
             ?? throw new InvalidOperationException($"Secret '{name}' not found");
     }
 
-    public async Task<ImageRef> BuildImage(string dockerfile, string? tag = null)
+    public async Task<ImageRef> BuildImage(string dockerfile, string? tag = null, string? context = null)
     {
         var imageTag = tag ?? $"ilmarinen-build:{Guid.NewGuid():N}";
+        var buildContext = context ?? ".";
+
+        // Escape paths for shell (handle spaces and special characters)
+        var escapedDockerfile = EscapeShellArg(dockerfile);
+        var escapedContext = EscapeShellArg(buildContext);
 
         // Use docker build via exec in the container (requires docker socket mount)
         // Shell throws ShellException on failure
-        await Shell($"docker build -f {dockerfile} -t {imageTag} .");
+        await Shell($"docker build -f {escapedDockerfile} -t {imageTag} {escapedContext}");
 
         return ImageRef.From(imageTag);
+    }
+
+    /// <summary>
+    /// Escapes a string for safe use as a shell argument.
+    /// </summary>
+    private static string EscapeShellArg(string arg)
+    {
+        // If no special characters, return as-is
+        if (!arg.Any(c => char.IsWhiteSpace(c) || c == '\'' || c == '"' || c == '\\' || c == '$' || c == '`'))
+            return arg;
+
+        // Use single quotes and escape any single quotes within
+        return "'" + arg.Replace("'", "'\\''") + "'";
     }
 
     public async Task<CommandResult> TryRun(ImageRef image, params string[] command)

@@ -162,6 +162,8 @@ public class PipelineRunner
                 echo "Usage: ilmarinen <command> [options]"
                 echo ""
                 echo "Commands:"
+                echo "  build [-f <dockerfile>] [-t <tag>] [<context>]"
+                echo "                                 Build a container image"
                 echo "  run <image> [-- <command>...]  Run a container"
                 echo "  info <branch|commit>           Get build info"
                 echo "  secret get <name>              Get a secret value"
@@ -213,6 +215,59 @@ public class PipelineRunner
                 [ -n "$stdout" ] && printf '%s' "$stdout"
                 [ -n "$stderr" ] && printf '%s' "$stderr" >&2
                 exit ${exitcode:-0}
+                ;;
+            build)
+                shift
+                dockerfile=""
+                tag=""
+                context=""
+
+                while [ $# -gt 0 ]; do
+                    case "$1" in
+                        -f|--file)
+                            [ -z "$2" ] && { echo "Error: -f requires a dockerfile path" >&2; exit 1; }
+                            dockerfile="$2"
+                            shift 2
+                            ;;
+                        -t|--tag)
+                            [ -z "$2" ] && { echo "Error: -t requires a tag" >&2; exit 1; }
+                            tag="$2"
+                            shift 2
+                            ;;
+                        -*)
+                            echo "Error: Unknown option: $1" >&2
+                            echo "Usage: ilmarinen build [-f <dockerfile>] [-t <tag>] [<context>]" >&2
+                            exit 1
+                            ;;
+                        *)
+                            [ -n "$context" ] && { echo "Error: Multiple context directories specified" >&2; exit 1; }
+                            context="$1"
+                            shift
+                            ;;
+                    esac
+                done
+
+                [ -z "$dockerfile" ] && dockerfile="Dockerfile"
+                [ -z "$context" ] && context="."
+
+                json_dockerfile=$(printf '%s' "$dockerfile" | sed 's/"/\\"/g')
+                json_context=$(printf '%s' "$context" | sed 's/"/\\"/g')
+
+                if [ -n "$tag" ]; then
+                    json_tag=$(printf '%s' "$tag" | sed 's/"/\\"/g')
+                    payload="{\"dockerfile\":\"$json_dockerfile\",\"tag\":\"$json_tag\",\"context\":\"$json_context\"}"
+                else
+                    payload="{\"dockerfile\":\"$json_dockerfile\",\"context\":\"$json_context\"}"
+                fi
+
+                result=$(http_post "${API}/api/build" "$payload")
+
+                if json_has "$result" "error"; then
+                    handle_error "$result"
+                    exit $?
+                fi
+
+                json_str "$result" "reference"
                 ;;
             *)
                 echo "Unknown command: $1" >&2
