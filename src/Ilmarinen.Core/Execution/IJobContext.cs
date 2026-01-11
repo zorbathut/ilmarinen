@@ -52,7 +52,8 @@ public interface IJobContext
     /// <param name="dockerfile">Path to the Dockerfile (relative to workspace or absolute)</param>
     /// <param name="tag">Optional image tag. If not provided, a random tag is generated.</param>
     /// <param name="context">Build context directory. Defaults to current directory "."</param>
-    Task<ImageRef> BuildImage(string dockerfile, string? tag = null, string? context = null);
+    /// <param name="buildArgs">Optional build arguments to pass to docker build.</param>
+    Task<ImageRef> BuildImage(string dockerfile, string? tag = null, string? context = null, IDictionary<string, string>? buildArgs = null);
 
     /// <summary>
     /// Run a container and wait for it to complete.

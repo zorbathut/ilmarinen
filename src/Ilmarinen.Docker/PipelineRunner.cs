@@ -220,7 +220,7 @@ public class PipelineRunner
                 echo "Usage: ilmarinen <command> [options]"
                 echo ""
                 echo "Commands:"
-                echo "  build [-f <dockerfile>] [-t <tag>] [<context>]"
+                echo "  build [-f <dockerfile>] [-t <tag>] [--build-arg KEY=VALUE]... [<context>]"
                 echo "                                 Build a container image"
                 echo "  run <image> [-- <command>...]  Run a container"
                 echo "  info <branch|commit>           Get build info"
@@ -268,6 +268,7 @@ public class PipelineRunner
                 dockerfile=""
                 tag=""
                 context=""
+                build_args=""
 
                 while [ $# -gt 0 ]; do
                     case "$1" in
@@ -281,9 +282,20 @@ public class PipelineRunner
                             tag="$2"
                             shift 2
                             ;;
+                        --build-arg)
+                            [ -z "$2" ] && { echo "Error: --build-arg requires KEY=VALUE" >&2; exit 1; }
+                            # Parse KEY=VALUE
+                            arg_key="${2%%=*}"
+                            arg_value="${2#*=}"
+                            escaped_key=$(printf '%s' "$arg_key" | sed 's/"/\\"/g')
+                            escaped_value=$(printf '%s' "$arg_value" | sed 's/"/\\"/g')
+                            [ -n "$build_args" ] && build_args="$build_args,"
+                            build_args="$build_args\"$escaped_key\":\"$escaped_value\""
+                            shift 2
+                            ;;
                         -*)
                             echo "Error: Unknown option: $1" >&2
-                            echo "Usage: ilmarinen build [-f <dockerfile>] [-t <tag>] [<context>]" >&2
+                            echo "Usage: ilmarinen build [-f <dockerfile>] [-t <tag>] [--build-arg KEY=VALUE]... [<context>]" >&2
                             exit 1
                             ;;
                         *)
@@ -300,12 +312,10 @@ public class PipelineRunner
                 json_dockerfile=$(printf '%s' "$dockerfile" | sed 's/"/\\"/g')
                 json_context=$(printf '%s' "$context" | sed 's/"/\\"/g')
 
-                if [ -n "$tag" ]; then
-                    json_tag=$(printf '%s' "$tag" | sed 's/"/\\"/g')
-                    payload="{\"dockerfile\":\"$json_dockerfile\",\"tag\":\"$json_tag\",\"context\":\"$json_context\"}"
-                else
-                    payload="{\"dockerfile\":\"$json_dockerfile\",\"context\":\"$json_context\"}"
-                fi
+                payload="{\"dockerfile\":\"$json_dockerfile\",\"context\":\"$json_context\""
+                [ -n "$tag" ] && payload="$payload,\"tag\":\"$(printf '%s' "$tag" | sed 's/"/\\"/g')\""
+                [ -n "$build_args" ] && payload="$payload,\"buildArgs\":{$build_args}"
+                payload="$payload}"
 
                 result=$(http_post "${API}/api/build" "$payload")
 

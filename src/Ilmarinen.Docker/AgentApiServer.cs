@@ -224,7 +224,7 @@ public class AgentApiServer : IAsyncDisposable
     private async Task HandleBuild(HttpListenerRequest request, HttpListenerResponse response)
     {
         var body = await ReadJsonBody<BuildRequest>(request);
-        var image = await _currentContext!.BuildImage(body.Dockerfile, body.Tag, body.Context);
+        var image = await _currentContext!.BuildImage(body.Dockerfile, body.Tag, body.Context, body.BuildArgs);
 
         await WriteJsonResponse(response, new { reference = image.Reference });
     }
@@ -338,7 +338,7 @@ public class AgentApiServer : IAsyncDisposable
 
     // Request/Response DTOs
     private record RunRequest(string Image, string[]? Command);
-    private record BuildRequest(string Dockerfile, string? Tag, string? Context);
+    private record BuildRequest(string Dockerfile, string? Tag, string? Context, Dictionary<string, string>? BuildArgs);
     private record ServiceStartRequest(string Image, string Name, int[]? Ports);
     private record ServiceStopRequest(string Name);
     private record ServiceWaitRequest(string Url, int? TimeoutSeconds);

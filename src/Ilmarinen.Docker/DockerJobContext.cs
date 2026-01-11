@@ -217,7 +217,7 @@ public class DockerJobContext : IJobContext
             ?? throw new InvalidOperationException($"Secret '{name}' not found");
     }
 
-    public async Task<ImageRef> BuildImage(string dockerfile, string? tag = null, string? context = null)
+    public async Task<ImageRef> BuildImage(string dockerfile, string? tag = null, string? context = null, IDictionary<string, string>? buildArgs = null)
     {
         var imageTag = tag ?? $"ilmarinen-build:{Guid.NewGuid():N}";
         var buildContext = context ?? ".";
@@ -226,9 +226,19 @@ public class DockerJobContext : IJobContext
         var escapedDockerfile = EscapeShellArg(dockerfile);
         var escapedContext = EscapeShellArg(buildContext);
 
+        // Build the --build-arg flags
+        var buildArgsStr = "";
+        if (buildArgs != null)
+        {
+            foreach (var (key, value) in buildArgs)
+            {
+                buildArgsStr += $" --build-arg {EscapeShellArg($"{key}={value}")}";
+            }
+        }
+
         // Use docker build via exec in the container (requires docker socket mount)
         // Shell throws ShellException on failure
-        await Shell($"docker build -f {escapedDockerfile} -t {imageTag} {escapedContext}");
+        await Shell($"docker build -f {escapedDockerfile} -t {imageTag}{buildArgsStr} {escapedContext}");
 
         return ImageRef.From(imageTag);
     }
