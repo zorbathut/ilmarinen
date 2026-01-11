@@ -12,7 +12,7 @@ public class PipelineScript
     /// <summary>
     /// Load a pipeline from a .csx file.
     /// </summary>
-    public static async Task<IReadOnlyList<Step>> LoadAsync(string path)
+    public static async Task<IReadOnlyList<Step<object?>>> LoadAsync(string path)
     {
         var code = await File.ReadAllTextAsync(path);
         return await LoadFromStringAsync(code);
@@ -21,7 +21,7 @@ public class PipelineScript
     /// <summary>
     /// Load a pipeline from script code.
     /// </summary>
-    public static async Task<IReadOnlyList<Step>> LoadFromStringAsync(string code)
+    public static async Task<IReadOnlyList<Step<object?>>> LoadFromStringAsync(string code)
     {
         var globals = new ScriptGlobals();
 

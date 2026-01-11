@@ -13,7 +13,7 @@ public class StepBuilderTests
             .Run(ctx => Task.CompletedTask);
 
         Assert.Equal("build", step.Name);
-        Assert.Equal("dotnet/sdk:8.0", step.Image);
+        Assert.Equal("dotnet/sdk:8.0", step.ImageResolver().Reference);
         Assert.NotNull(step.Action);
     }
 

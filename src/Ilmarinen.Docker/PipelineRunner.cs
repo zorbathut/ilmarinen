@@ -38,7 +38,7 @@ public class PipelineRunner
         return new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock")).CreateClient();
     }
 
-    public async Task<bool> RunAsync(IReadOnlyList<Step> steps)
+    public async Task<bool> RunAsync(IReadOnlyList<Step<object?>> steps)
     {
         var branch = await GetGitBranch();
         var commit = await GetGitCommit();
@@ -60,12 +60,15 @@ public class PipelineRunner
         {
             foreach (var step in steps)
             {
+                // Resolve image lazily (may depend on previous step outputs)
+                var image = step.ImageResolver();
+
                 Console.WriteLine($"=== Step: {step.Name} ===");
-                Console.WriteLine($"Image: {step.Image}");
+                Console.WriteLine($"Image: {image}");
 
                 try
                 {
-                    await RunStepAsync(step, branch, commit, networkName, apiServer);
+                    await RunStepAsync(step, image, branch, commit, networkName, apiServer);
                     Console.WriteLine($"=== {step.Name}: SUCCESS ===");
                     Console.WriteLine();
                 }
@@ -342,16 +345,16 @@ public class PipelineRunner
         }
     }
 
-    private async Task RunStepAsync(Step step, string branch, string commit, string networkName,
-        AgentApiServer apiServer)
+    private async Task RunStepAsync(Step<object?> step, ImageRef image, string branch, string commit,
+        string networkName, AgentApiServer apiServer)
     {
         // Pull the image if needed
-        await PullImageIfNeeded(step.Image);
+        await PullImageIfNeeded(image.Reference);
 
         Console.WriteLine("Agent CLI: shell script");
 
         // Create and start the container
-        var containerId = await CreateContainerAsync(step.Image, networkName, apiServer);
+        var containerId = await CreateContainerAsync(image.Reference, networkName, apiServer);
 
         try
         {
@@ -372,7 +375,9 @@ public class PipelineRunner
 
             try
             {
-                await step.Action(context);
+                // Execute the action and capture output
+                step.Output = await step.Action(context);
+                step.HasRun = true;
             }
             finally
             {

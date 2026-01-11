@@ -8,56 +8,138 @@ namespace Ilmarinen.Scripting;
 /// </summary>
 public class ScriptGlobals
 {
-    private readonly List<Step> _steps = [];
+    private readonly List<Step<object?>> _steps = [];
 
     /// <summary>
     /// All steps defined in the script.
     /// </summary>
-    public IReadOnlyList<Step> Steps => _steps;
+    public IReadOnlyList<Step<object?>> Steps => _steps;
 
     /// <summary>
-    /// Define a new step.
+    /// Define a new step with no typed output.
     /// </summary>
     public ScriptStepBuilder Step(string name)
     {
         return new ScriptStepBuilder(name, _steps);
     }
+
+    /// <summary>
+    /// Define a new step with typed output.
+    /// </summary>
+    public ScriptStepBuilder<T> Step<T>(string name)
+    {
+        return new ScriptStepBuilder<T>(name, _steps);
+    }
 }
 
 /// <summary>
-/// Step builder for scripts that auto-collects steps.
+/// Step builder for scripts with typed output that auto-collects steps.
 /// </summary>
-public class ScriptStepBuilder
+public class ScriptStepBuilder<T>
 {
     private readonly string _name;
-    private readonly List<Step> _steps;
-    private string? _image;
+    private readonly List<Step<object?>> _steps;
+    private Func<ImageRef>? _imageResolver;
 
-    internal ScriptStepBuilder(string name, List<Step> steps)
+    internal ScriptStepBuilder(string name, List<Step<object?>> steps)
     {
         _name = name;
         _steps = steps;
     }
 
-    public ScriptStepBuilder Image(string image)
+    public ScriptStepBuilder<T> Image(string image)
     {
-        _image = image;
+        ArgumentException.ThrowIfNullOrWhiteSpace(image);
+        var img = ImageRef.From(image);
+        _imageResolver = () => img;
+        return this;
+    }
+
+    public ScriptStepBuilder<T> Image(Func<ImageRef> resolver)
+    {
+        ArgumentNullException.ThrowIfNull(resolver);
+        _imageResolver = resolver;
+        return this;
+    }
+
+    public ScriptStepBuilder<T> Image(Func<string> resolver)
+    {
+        ArgumentNullException.ThrowIfNull(resolver);
+        _imageResolver = () => ImageRef.From(resolver());
+        return this;
+    }
+
+    public Step<T> Run(Func<IJobContext, Task<T>> action)
+    {
+        if (_imageResolver == null)
+            throw new InvalidOperationException($"Step '{_name}' must have an image.");
+
+        var step = new Step<T>
+        {
+            Name = _name,
+            ImageResolver = _imageResolver,
+            Action = action
+        };
+
+        // Store as base type for collection
+        _steps.Add(new Step<object?>
+        {
+            Name = step.Name,
+            ImageResolver = step.ImageResolver,
+            Action = async ctx =>
+            {
+                var result = await step.Action(ctx);
+                step.Output = result;
+                step.HasRun = true;
+                return result;
+            }
+        });
+
+        return step;
+    }
+}
+
+/// <summary>
+/// Step builder for scripts with no typed output that auto-collects steps.
+/// </summary>
+public class ScriptStepBuilder : ScriptStepBuilder<object?>
+{
+    internal ScriptStepBuilder(string name, List<Step<object?>> steps) : base(name, steps) { }
+
+    public new ScriptStepBuilder Image(string image)
+    {
+        base.Image(image);
+        return this;
+    }
+
+    public new ScriptStepBuilder Image(Func<ImageRef> resolver)
+    {
+        base.Image(resolver);
+        return this;
+    }
+
+    public new ScriptStepBuilder Image(Func<string> resolver)
+    {
+        base.Image(resolver);
         return this;
     }
 
     public Step Run(Func<IJobContext, Task> action)
     {
-        if (string.IsNullOrWhiteSpace(_image))
-            throw new InvalidOperationException($"Step '{_name}' must have an image.");
-
-        var step = new Step
+        var step = base.Run(async ctx =>
         {
-            Name = _name,
-            Image = _image,
-            Action = action
+            await action(ctx);
+            return null;
+        });
+
+        return new Step
+        {
+            Name = step.Name,
+            ImageResolver = step.ImageResolver,
+            Action = step.Action,
+            Output = step.Output,
+            HasRun = step.HasRun
         };
-        _steps.Add(step);
-        return step;
     }
 
     public Step Run(Action<IJobContext> action)
