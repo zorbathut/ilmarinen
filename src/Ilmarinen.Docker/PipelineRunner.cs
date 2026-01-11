@@ -108,12 +108,21 @@ public class PipelineRunner
         TOKEN="${ILMARINEN_TOKEN}"
 
         # Detect HTTP client
-        if command -v wget >/dev/null 2>&1; then
-            http_get() { wget -qO- --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null; }
-            http_post() { wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null; }
-        elif command -v curl >/dev/null 2>&1; then
+        if command -v curl >/dev/null 2>&1; then
+            # Prefer curl for streaming (-N disables buffering)
             http_get() { curl -sf -H "Authorization: Bearer $TOKEN" "$1"; }
             http_post() { curl -sf -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1"; }
+            http_stream() {
+                curl -sfN -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1" | stream_output
+                return $?
+            }
+        elif command -v wget >/dev/null 2>&1; then
+            http_get() { wget -qO- --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null; }
+            http_post() { wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null; }
+            http_stream() {
+                wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null | stream_output
+                return $?
+            }
         else
             echo "Error: Neither wget nor curl found" >&2
             exit 1
@@ -125,6 +134,52 @@ public class PipelineRunner
         json_num() { echo "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\([0-9-]*\).*/\1/p' | head -1; }
         # Check if JSON has a field
         json_has() { echo "$1" | grep -q "\"$2\""; }
+
+        # Unescape JSON string (handles \n, \t, \", \\)
+        json_unescape() {
+            # Use printf %b to interpret escape sequences
+            printf '%b' "$(printf '%s' "$1" | sed 's/\\"/"/g')"
+        }
+
+        # Stream NDJSON output - parses {"t":"o/e/x","d":"...","c":N} lines
+        # Returns exit code from the "x" message
+        stream_output() {
+            _stream_exit=0
+            while IFS= read -r line || [ -n "$line" ]; do
+                [ -z "$line" ] && continue
+                # Extract type field
+                _type=$(echo "$line" | sed -n 's/.*"t":"\([^"]*\)".*/\1/p')
+                case "$_type" in
+                    o)
+                        # stdout chunk
+                        _data=$(echo "$line" | sed -n 's/.*"d":"\([^"]*\)".*/\1/p')
+                        printf '%s' "$(json_unescape "$_data")"
+                        ;;
+                    e)
+                        # stderr chunk
+                        _data=$(echo "$line" | sed -n 's/.*"d":"\([^"]*\)".*/\1/p')
+                        printf '%s' "$(json_unescape "$_data")" >&2
+                        ;;
+                    x)
+                        # exit message
+                        _stream_exit=$(echo "$line" | sed -n 's/.*"c":\([0-9-]*\).*/\1/p')
+                        _stream_exit=${_stream_exit:-0}
+                        # Check for error
+                        if echo "$line" | grep -q '"error"'; then
+                            _error=$(echo "$line" | sed -n 's/.*"error":"\([^"]*\)".*/\1/p')
+                            _extype=$(echo "$line" | sed -n 's/.*"exceptionType":"\([^"]*\)".*/\1/p')
+                            _depth=$(echo "$line" | sed -n 's/.*"nestingDepth":\([0-9]*\).*/\1/p')
+                            echo "=== ilmarinen error ===" >&2
+                            [ -n "$_extype" ] && echo "Type: $_extype" >&2
+                            [ -n "$_depth" ] && [ "$_depth" -gt 1 ] 2>/dev/null && echo "Nesting depth: $_depth" >&2
+                            echo "Error: $_error" >&2
+                            echo "=======================" >&2
+                        fi
+                        ;;
+                esac
+            done
+            return $_stream_exit
+        }
 
         # Handle structured error responses
         handle_error() {
@@ -201,20 +256,9 @@ public class PipelineRunner
                     cmd="$cmd\"$escaped\""
                 done
                 cmd="$cmd]"
-                result=$(http_post "${API}/api/run" "{\"image\":\"$image\",\"command\":$cmd}")
-
-                # Check for error response
-                if json_has "$result" "error"; then
-                    handle_error "$result"
-                    exit $?
-                fi
-
-                stdout=$(json_str "$result" "stdout")
-                stderr=$(json_str "$result" "stderr")
-                exitcode=$(json_num "$result" "exitCode")
-                [ -n "$stdout" ] && printf '%s' "$stdout"
-                [ -n "$stderr" ] && printf '%s' "$stderr" >&2
-                exit ${exitcode:-0}
+                # Use streaming for real-time output
+                http_stream "${API}/api/run" "{\"image\":\"$image\",\"command\":$cmd}"
+                exit $?
                 ;;
             build)
                 shift

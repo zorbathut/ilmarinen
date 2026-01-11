@@ -179,30 +179,45 @@ public class AgentApiServer : IAsyncDisposable
     {
         var body = await ReadJsonBody<RunRequest>(request);
 
+        // Stream NDJSON response in real-time
+        response.ContentType = "application/x-ndjson";
+        response.SendChunked = true;
+
         try
         {
-            var result = await _currentContext!.Run(ImageRef.From(body.Image), body.Command ?? []);
-
-            await WriteJsonResponse(response, new
-            {
-                exitCode = result.ExitCode,
-                stdout = result.Stdout,
-                stderr = result.Stderr
-            });
+            await _currentContext!.RunStreaming(
+                response.OutputStream,
+                ImageRef.From(body.Image),
+                body.Command ?? []);
         }
         catch (NestedContainerException ex)
         {
-            // Increment nesting depth and add to container chain
+            // Write error as final NDJSON line
             var newChain = new List<string>(ex.ContainerChain) { body.Image };
-            throw new NestedContainerException(
-                ex.Image,
-                ex.Command,
-                ex.ExitCode,
-                ex.Stdout,
-                ex.Stderr,
-                ex.NestingDepth + 1,
-                newChain,
-                ex);
+            var errorJson = JsonSerializer.Serialize(new
+            {
+                t = "x",
+                c = ex.ExitCode,
+                error = ex.Message,
+                exceptionType = ex.GetType().Name,
+                nestingDepth = ex.NestingDepth + 1,
+                containerChain = newChain
+            }, JsonOptions);
+            var bytes = Encoding.UTF8.GetBytes(errorJson + "\n");
+            await response.OutputStream.WriteAsync(bytes);
+        }
+        catch (Exception ex)
+        {
+            // Write generic error as final NDJSON line
+            var errorJson = JsonSerializer.Serialize(new
+            {
+                t = "x",
+                c = -1,
+                error = ex.Message,
+                exceptionType = ex.GetType().Name
+            }, JsonOptions);
+            var bytes = Encoding.UTF8.GetBytes(errorJson + "\n");
+            await response.OutputStream.WriteAsync(bytes);
         }
     }
 
