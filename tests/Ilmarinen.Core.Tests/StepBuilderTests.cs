@@ -1,23 +1,24 @@
 using Ilmarinen.Models;
-using Xunit;
+using NUnit.Framework;
 
 namespace Ilmarinen.Core.Tests;
 
+[TestFixture]
 public class StepBuilderTests
 {
-    [Fact]
+    [Test]
     public void BasicStep_CreatesStep()
     {
         var step = new StepBuilder("build")
             .Image("dotnet/sdk:8.0")
             .Run(ctx => Task.CompletedTask);
 
-        Assert.Equal("build", step.Name);
-        Assert.Equal("dotnet/sdk:8.0", step.ImageResolver().Reference);
-        Assert.NotNull(step.Action);
+        Assert.That(step.Name, Is.EqualTo("build"));
+        Assert.That(step.ImageResolver().Reference, Is.EqualTo("dotnet/sdk:8.0"));
+        Assert.That(step.Action, Is.Not.Null);
     }
 
-    [Fact]
+    [Test]
     public void Step_WithoutImage_Throws()
     {
         var builder = new StepBuilder("build");
@@ -26,14 +27,14 @@ public class StepBuilderTests
             builder.Run(ctx => Task.CompletedTask));
     }
 
-    [Fact]
+    [Test]
     public void StepBuilder_WithEmptyName_Throws()
     {
         Assert.Throws<ArgumentException>(() => new StepBuilder(""));
         Assert.Throws<ArgumentException>(() => new StepBuilder("   "));
     }
 
-    [Fact]
+    [Test]
     public void StepBuilder_WithEmptyImage_Throws()
     {
         var builder = new StepBuilder("build");
@@ -41,14 +42,13 @@ public class StepBuilderTests
         Assert.Throws<ArgumentException>(() => builder.Image("   "));
     }
 
-    [Fact]
+    [Test]
     public void Step_WithSyncAction_Works()
     {
-        var executed = false;
         var step = new StepBuilder("build")
             .Image("alpine")
-            .Run(ctx => { executed = true; });
+            .Run(ctx => { });
 
-        Assert.NotNull(step.Action);
+        Assert.That(step.Action, Is.Not.Null);
     }
 }

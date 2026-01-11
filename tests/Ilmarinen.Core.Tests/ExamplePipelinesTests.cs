@@ -1,9 +1,10 @@
 using Ilmarinen.Docker;
 using Ilmarinen.Scripting;
-using Xunit;
+using NUnit.Framework;
 
 namespace Ilmarinen.Core.Tests;
 
+[TestFixture]
 public class ExamplePipelinesTests
 {
     private static string GetExamplesDirectory()
@@ -12,23 +13,21 @@ public class ExamplePipelinesTests
         return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", "..", "examples"));
     }
 
-    public static TheoryData<string> GetExampleFiles()
+    public static IEnumerable<string> GetExampleFiles()
     {
-        var examplesDir = GetExamplesDirectory();
-        var data = new TheoryData<string>();
-        foreach (var file in Directory.GetFiles(examplesDir, "*.csx").OrderBy(f => f))
-            data.Add(Path.GetFileName(file));
-        return data;
+        return Directory.GetFiles(GetExamplesDirectory(), "*.csx")
+            .Select(Path.GetFileName)
+            .OrderBy(f => f)!;
     }
 
-    [Theory]
-    [MemberData(nameof(GetExampleFiles))]
+    [Test]
+    [TestCaseSource(nameof(GetExampleFiles))]
     public async Task Example_RunsSuccessfully(string exampleFile)
     {
         var path = Path.Combine(GetExamplesDirectory(), exampleFile);
         var steps = await PipelineScript.LoadAsync(path);
         var runner = new PipelineRunner();
         var success = await runner.RunAsync(steps);
-        Assert.True(success, $"Pipeline {exampleFile} failed");
+        Assert.That(success, Is.True, $"Pipeline {exampleFile} failed");
     }
 }
