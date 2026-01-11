@@ -1,3 +1,4 @@
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
 using Microsoft.CodeAnalysis.Scripting;
 using Ilmarinen.Models;
@@ -14,8 +15,25 @@ public class PipelineScript
     /// </summary>
     public static async Task<IReadOnlyList<Step<object?>>> LoadAsync(string path)
     {
-        var code = await File.ReadAllTextAsync(path);
-        return await LoadFromStringAsync(code);
+        var fullPath = Path.GetFullPath(path);
+        var scriptDir = Path.GetDirectoryName(fullPath)!;
+        var code = await File.ReadAllTextAsync(fullPath);
+
+        var globals = new ScriptGlobals();
+
+        var options = ScriptOptions.Default
+            .AddReferences(typeof(Step).Assembly)
+            .AddImports(
+                "System",
+                "System.Threading.Tasks",
+                "Ilmarinen.Models",
+                "Ilmarinen.Execution")
+            .WithFilePath(fullPath)
+            .WithSourceResolver(new SourceFileResolver(searchPaths: [], baseDirectory: scriptDir));
+
+        await CSharpScript.RunAsync(code, options, globals);
+
+        return globals.Steps;
     }
 
     /// <summary>
