@@ -5,6 +5,7 @@ using NUnit.Framework;
 namespace Ilmarinen.Core.Tests;
 
 [TestFixture]
+[Parallelizable(ParallelScope.Children)]
 public class ExamplePipelinesTests
 {
     private static string GetExamplesDirectory()
@@ -24,10 +25,24 @@ public class ExamplePipelinesTests
     [TestCaseSource(nameof(GetExampleFiles))]
     public async Task Example_RunsSuccessfully(string exampleFile)
     {
-        var path = Path.Combine(GetExamplesDirectory(), exampleFile);
-        var steps = await PipelineScript.LoadAsync(path);
-        var runner = new PipelineRunner();
-        var success = await runner.RunAsync(steps);
-        Assert.That(success, Is.True, $"Pipeline {exampleFile} failed");
+        var tempDir = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            // Copy example to isolated workspace
+            var srcPath = Path.Combine(GetExamplesDirectory(), exampleFile);
+            var destPath = Path.Combine(tempDir, exampleFile);
+            File.Copy(srcPath, destPath);
+
+            var steps = await PipelineScript.LoadAsync(destPath);
+            var runner = new PipelineRunner(workDir: tempDir);
+            var success = await runner.RunAsync(steps);
+            Assert.That(success, Is.True, $"Pipeline {exampleFile} failed");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
     }
 }
