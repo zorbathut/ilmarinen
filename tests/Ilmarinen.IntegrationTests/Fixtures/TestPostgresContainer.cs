@@ -11,6 +11,8 @@ namespace Ilmarinen.IntegrationTests.Fixtures;
 /// </summary>
 public class TestPostgresContainer : IAsyncDisposable
 {
+    private const string PostgresImage = "postgres:16-alpine";
+
     private readonly DockerClient _client;
     private string? _containerId;
 
@@ -38,10 +40,12 @@ public class TestPostgresContainer : IAsyncDisposable
         Port = GetAvailablePort();
         var pid = Environment.ProcessId;
 
+        await PullImageIfNeededAsync();
+
         // Create container with PID label for watchdog-based cleanup
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
-            Image = "postgres:16-alpine",
+            Image = PostgresImage,
             Labels = new Dictionary<string, string>
             {
                 ["ilmarinen.test.pid"] = pid.ToString()
@@ -107,6 +111,21 @@ public class TestPostgresContainer : IAsyncDisposable
         }
 
         throw new TimeoutException($"PostgreSQL container did not become ready within {timeout}");
+    }
+
+    private async Task PullImageIfNeededAsync()
+    {
+        try
+        {
+            await _client.Images.InspectImageAsync(PostgresImage);
+        }
+        catch (DockerImageNotFoundException)
+        {
+            await _client.Images.CreateImageAsync(
+                new ImagesCreateParameters { FromImage = PostgresImage },
+                null,
+                new Progress<JSONMessage>());
+        }
     }
 
     public async ValueTask DisposeAsync()
