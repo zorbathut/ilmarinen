@@ -1,0 +1,208 @@
+# Ilmarinen
+
+A container-native CI/CD system where pipelines are defined in C#.
+
+## Features
+
+- **C# Pipeline Definitions** - Write pipelines as `.csx` scripts with full IDE support, type safety, and the entire .NET ecosystem
+- **Container-Native** - Every step runs in an isolated container; no ambient environment pollution
+- **Nested Containers** - Steps can spawn additional containers, build images, and run services
+- **Step Dependencies** - Pass outputs between steps (e.g., build an image in one step, use it in the next)
+- **Service Containers** - Spin up databases, caches, or other services for integration tests
+- **Local And Distributed Execution** - Run locally or submit jobs to a central server with worker pools
+
+## Quick Start
+
+### Local Execution
+
+```bash
+# Run a pipeline locally
+dotnet run --project src/Ilmarinen.Cli -- examples/hello.csx
+```
+
+### Server Mode
+
+```bash
+# Start the server and worker with Docker Compose
+docker-compose up -d
+
+# Submit a job
+dotnet run --project src/Ilmarinen.Cli -- submit \
+  --server http://localhost:1551 \
+  --repo https://github.com/your/repo.git \
+  --script pipeline.csx
+
+# Check job status
+dotnet run --project src/Ilmarinen.Cli -- status \
+  --server http://localhost:1551 \
+  <job-id>
+```
+
+## Pipeline Examples
+
+### Hello World
+
+```csharp
+// hello.csx
+Step("hello")
+    .Image("alpine:latest")
+    .Run(async ctx =>
+    {
+        await ctx.Exec("echo", "Hello from ilmarinen!");
+        await ctx.Shell("echo 'Current directory:' && pwd && ls -la");
+    });
+```
+
+### Build and Use an Image
+
+```csharp
+// Build an image in one step, use it in the next
+var build = Step<ImageRef>("build")
+    .Image("docker:cli")
+    .Run(async ctx =>
+    {
+        await ctx.Shell("cat > /workspace/Dockerfile << 'EOF'\nFROM alpine\nRUN echo 'hello' > /message.txt\nEOF");
+        return await ctx.BuildImage("Dockerfile", "my-app:latest");
+    });
+
+Step("run")
+    .Image(() => build.Output!)  // Lazy reference resolved at runtime
+    .Run(async ctx =>
+    {
+        await ctx.Exec("cat", "/message.txt");
+    });
+```
+
+### Service Containers
+
+```csharp
+Step("integration-test")
+    .Image("docker:cli")
+    .Run(async ctx =>
+    {
+        // Start Redis as a background service
+        var redis = await ctx.StartService("redis:alpine", "redis", [6379]);
+
+        try
+        {
+            await ctx.WaitForHealthy("tcp://redis:6379", TimeSpan.FromSeconds(30));
+            await ctx.Run("redis:alpine", "redis-cli", "-h", "redis", "PING");
+        }
+        finally
+        {
+            await redis.StopAsync();
+        }
+    });
+```
+
+### Nested Containers
+
+```csharp
+Step("nested")
+    .Image("docker:cli")
+    .Run(async ctx =>
+    {
+        // Run a command in a nested container
+        await ctx.Run("alpine:latest", "echo", "Hello from nested container!");
+
+        // Nested containers share the /workspace volume
+        await ctx.Shell("echo 'data' > /workspace/file.txt");
+        await ctx.Run("alpine:latest", "cat", "/workspace/file.txt");
+    });
+```
+
+## Architecture
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| **Ilmarinen.Cli** | Command-line interface for local execution and job submission |
+| **Ilmarinen.Server** | Web server with job queue, worker coordination, and dashboard |
+| **Ilmarinen.Worker** | Executes jobs by cloning repos and running pipelines |
+| **Ilmarinen.Core** | Domain models (`Step<T>`, `ImageRef`, `IJobContext`) |
+| **Ilmarinen.Docker** | Docker execution engine and pipeline orchestration |
+| **Ilmarinen.Scripting** | Roslyn-based .csx script compilation |
+| **Ilmarinen.Protocol** | Shared types for server/worker communication |
+| **Ilmarinen.Database** | PostgreSQL persistence with Entity Framework Core |
+
+### Execution Model
+
+The key insight is that the lambda in `Run()` executes on the **host** (or worker), not inside the container. The `IJobContext` provides methods to dispatch commands to the container:
+
+```csharp
+Step("example")
+    .Image("alpine:latest")
+    .Run(async ctx =>
+    {
+        // This C# code runs on the host
+        var result = await ctx.Exec("ls", "-la");  // This runs in the container
+
+        if (result.ExitCode == 0)
+        {
+            // Back on the host, making decisions based on container output
+            await ctx.Shell("echo 'success'");
+        }
+    });
+```
+
+### IJobContext API
+
+| Method | Description |
+|--------|-------------|
+| `Exec(cmd, args...)` | Execute a command in the container |
+| `Shell(script)` | Execute a shell script in the container |
+| `Run(image, cmd, args...)` | Run a nested container |
+| `BuildImage(dockerfile, tag)` | Build a Docker image |
+| `StartService(image, name, ports)` | Start a background service container |
+| `WaitForHealthy(url, timeout)` | Wait for a TCP/HTTP endpoint |
+
+### Server Architecture
+
+```
+┌─────────────┐     HTTP/SignalR     ┌─────────────┐
+│   Client    │ ──────────────────── │   Server    │
+│   (CLI)     │                      │             │
+└─────────────┘                      │  ┌───────┐  │
+                                     │  │ Queue │  │
+┌─────────────┐     SignalR          │  └───────┘  │
+│   Worker    │ ──────────────────── │             │
+│             │                      │  ┌──────┐   │
+└─────────────┘                      │  │  DB  │   │
+                                     │  └──────┘   │
+┌─────────────┐     SignalR          │             │
+│   Worker    │ ──────────────────── └─────────────┘
+│             │
+└─────────────┘
+```
+
+- Jobs are submitted via HTTP and stored in PostgreSQL
+- Workers connect via SignalR and receive job assignments
+- Each worker clones the repo, loads the pipeline script, and executes it
+- Job status updates flow back through SignalR
+
+## Development
+
+```bash
+# Build
+dotnet build
+
+# Test
+dotnet test
+
+# Run locally
+dotnet run --project src/Ilmarinen.Cli -- examples/hello.csx
+
+# Enable debug mode (full stack traces)
+DEBUG=1 dotnet run --project src/Ilmarinen.Cli -- examples/hello.csx
+```
+
+## Requirements
+
+- .NET 8.0 SDK
+- Docker (with API access for the CLI/worker)
+- PostgreSQL (for server mode, included in docker-compose)
+
+## License
+
+MIT
