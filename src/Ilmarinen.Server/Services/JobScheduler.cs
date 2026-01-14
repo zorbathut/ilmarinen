@@ -56,10 +56,19 @@ public class JobScheduler
 
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         var info = await jobs.CreateAsync(submission);
         await jobs.UpdateStatusAsync(info.Id, JobStatus.Queued);
         _pendingJobs.Enqueue(info.Id);
+
+        // Try to dispatch immediately if there's an idle worker
+        var readyConnectionId = await workers.FindReadyWorkerConnectionIdAsync();
+        if (readyConnectionId != null)
+        {
+            await TryAssignJobAsync(readyConnectionId);
+        }
+
         return info.Id;
     }
 
