@@ -23,7 +23,7 @@ builder.Services.AddDbContext<IlmarinenDbContext>(options =>
 // Add services
 builder.Services.AddScoped<JobRepository>();
 builder.Services.AddScoped<WorkerRepository>();
-builder.Services.AddScoped<JobScheduler>();
+builder.Services.AddSingleton<JobScheduler>();
 builder.Services.AddScoped<DashboardService>();
 
 // Add SignalR

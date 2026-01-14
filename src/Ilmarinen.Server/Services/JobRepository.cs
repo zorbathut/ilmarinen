@@ -79,6 +79,15 @@ public class JobRepository
         return jobs.Select(ToJobInfo).ToList();
     }
 
+    public async Task<IReadOnlyList<Ulid>> GetQueuedJobIdsAsync()
+    {
+        return await _db.Jobs
+            .Where(j => j.Status == JobStatus.Queued)
+            .OrderBy(j => j.CreatedAt)
+            .Select(j => j.Id)
+            .ToListAsync();
+    }
+
     public async Task<bool> TryCancelAsync(Ulid id)
     {
         var now = DateTime.UtcNow;

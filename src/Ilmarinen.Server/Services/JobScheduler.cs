@@ -11,38 +11,74 @@ namespace Ilmarinen.Server.Services;
 public class JobScheduler
 {
     private readonly ConcurrentQueue<Ulid> _pendingJobs = new();
-    private readonly JobRepository _jobs;
-    private readonly WorkerRepository _workers;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
+    private readonly ILogger<JobScheduler> _logger;
+    private bool _initialized;
+    private readonly object _initLock = new();
 
     public JobScheduler(
-        JobRepository jobs,
-        WorkerRepository workers,
-        IHubContext<WorkerHub, IWorkerClient> hubContext)
+        IServiceScopeFactory scopeFactory,
+        IHubContext<WorkerHub, IWorkerClient> hubContext,
+        ILogger<JobScheduler> logger)
     {
-        _jobs = jobs;
-        _workers = workers;
+        _scopeFactory = scopeFactory;
         _hubContext = hubContext;
+        _logger = logger;
+    }
+
+    private async Task EnsureInitializedAsync()
+    {
+        if (_initialized) return;
+
+        lock (_initLock)
+        {
+            if (_initialized) return;
+            _initialized = true;
+        }
+
+        // Load queued jobs from database
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var queuedIds = await jobs.GetQueuedJobIdsAsync();
+
+        foreach (var id in queuedIds)
+        {
+            _pendingJobs.Enqueue(id);
+        }
+
+        _logger.LogInformation("Loaded {Count} queued jobs from database", queuedIds.Count);
     }
 
     public async Task<Ulid> EnqueueJobAsync(JobSubmission submission)
     {
-        var info = await _jobs.CreateAsync(submission);
-        await _jobs.UpdateStatusAsync(info.Id, JobStatus.Queued);
+        await EnsureInitializedAsync();
+
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        var info = await jobs.CreateAsync(submission);
+        await jobs.UpdateStatusAsync(info.Id, JobStatus.Queued);
         _pendingJobs.Enqueue(info.Id);
         return info.Id;
     }
 
     public async Task<bool> TryAssignJobAsync(string connectionId)
     {
-        var worker = await _workers.GetByConnectionIdAsync(connectionId);
+        await EnsureInitializedAsync();
+
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        var worker = await workers.GetByConnectionIdAsync(connectionId);
         if (worker == null || !worker.IsReady)
             return false;
 
         if (!_pendingJobs.TryDequeue(out var jobId))
             return false;
 
-        var submission = await _jobs.GetSubmissionAsync(jobId);
+        var submission = await jobs.GetSubmissionAsync(jobId);
         if (submission == null)
             return false;
 
@@ -54,8 +90,8 @@ public class JobScheduler
             ScriptPath = submission.ScriptPath
         };
 
-        await _jobs.UpdateStatusAsync(jobId, JobStatus.Running, worker.Id);
-        await _workers.SetCurrentJobAsync(connectionId, jobId);
+        await jobs.UpdateStatusAsync(jobId, JobStatus.Running, worker.Id);
+        await workers.SetCurrentJobAsync(connectionId, jobId);
 
         await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
         return true;
@@ -63,11 +99,15 @@ public class JobScheduler
 
     public async Task CompleteJobAsync(Ulid jobId, JobCompleted result)
     {
-        await _jobs.UpdateStatusAsync(jobId, result.Status);
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        await jobs.UpdateStatusAsync(jobId, result.Status);
     }
 
     public async Task<bool> CancelJobAsync(Ulid jobId)
     {
-        return await _jobs.TryCancelAsync(jobId);
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        return await jobs.TryCancelAsync(jobId);
     }
 }
