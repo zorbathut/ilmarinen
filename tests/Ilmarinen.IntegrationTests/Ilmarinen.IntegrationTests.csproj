@@ -20,6 +20,12 @@
 
     <!-- Testcontainers -->
     <PackageReference Include="Testcontainers.PostgreSql" Version="3.10.0" />
+
+    <!-- EF Core Design for schema tests -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.23">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>

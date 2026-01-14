@@ -7,7 +7,7 @@ Step("service-test")
         Console.WriteLine("=== Starting Redis service ===");
 
         // Start Redis as a background service
-        var redis = await ctx.StartService("redis:alpine", "redis", [6379]);
+        var redis = await ctx.StartService("redis:alpine", "redis", new[] { 6379 });
         Console.WriteLine($"Started service: {redis.Name}");
 
         try
