@@ -99,8 +99,10 @@ public class PipelineRunner
 
         _shellScriptPath = Path.Combine(Path.GetTempPath(), $"ilmarinen-cli-{Guid.NewGuid():N}.sh");
         File.WriteAllText(_shellScriptPath, ShellScript);
-        // Make executable (no-op on Windows, works on Unix)
-        try { File.SetUnixFileMode(_shellScriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute); } catch { }
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(_shellScriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
         return _shellScriptPath;
     }
 

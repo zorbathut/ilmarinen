@@ -101,7 +101,7 @@ public class WorkerService : BackgroundService
             WorkerId = _config.WorkerId
         });
 
-        await _connection.SendAsync("Ready");
+        await _connection!.SendAsync("Ready");
     }
 
     private async Task OnJobAssigned(JobAssignment job)
@@ -114,12 +114,12 @@ public class WorkerService : BackgroundService
         {
             await _connection!.SendAsync("JobStarted", job.Id);
 
-            var runner = new JobRunner(_config, job, _connection, _logger);
+            var runner = new JobRunner(_config, job, _connection!, _logger);
             var result = await runner.ExecuteAsync();
 
             result = result with { Duration = DateTime.UtcNow - startTime };
 
-            await _connection.SendAsync("JobCompleted", job.Id, result);
+            await _connection!.SendAsync("JobCompleted", job.Id, result);
             _logger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
         }
         catch (Exception ex)
