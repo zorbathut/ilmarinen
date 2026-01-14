@@ -355,3 +355,6 @@ sample-data/
 
 # Discord bot configuration (keep .example file)
 config/discord-bot.json
+
+# Roslyn MSBuild BuildHost bug - creates dirs with literal backslashes on Linux
+**/bin\\Debug/
