@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy csproj files and restore
@@ -13,7 +13,7 @@ COPY src/Ilmarinen.Database/ src/Ilmarinen.Database/
 COPY src/Ilmarinen.Server/ src/Ilmarinen.Server/
 RUN dotnet publish src/Ilmarinen.Server/Ilmarinen.Server.csproj -c Release -o /app
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app .
