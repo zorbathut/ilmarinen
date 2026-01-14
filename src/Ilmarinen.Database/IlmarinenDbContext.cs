@@ -14,6 +14,7 @@ public class IlmarinenDbContext : DbContext
 
     public DbSet<Job> Jobs => Set<Job>();
     public DbSet<Worker> Workers => Set<Worker>();
+    public DbSet<JobLogChunk> JobLogChunks => Set<JobLogChunk>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -28,6 +29,15 @@ public class IlmarinenDbContext : DbContext
         {
             e.HasIndex(j => j.Status);
             e.HasIndex(j => j.CreatedAt);
+        });
+
+        modelBuilder.Entity<JobLogChunk>(e =>
+        {
+            e.HasIndex(c => new { c.JobId, c.SequenceNumber });
+            e.HasOne(c => c.Job)
+                .WithMany()
+                .HasForeignKey(c => c.JobId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -48,6 +48,11 @@
             }
         </div>
     </div>
+
+    <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title">Logs</h2>
+        <LogViewer JobId="@jobUlid" IsStreaming="@(job.Status == JobStatus.Running)" />
+    </div>
 }
 else if (loading)
 {
@@ -63,13 +68,14 @@ else
     public string Id { get; set; } = "";
 
     private JobInfo? job;
+    private Ulid jobUlid;
     private bool loading = true;
 
     protected override async Task OnInitializedAsync()
     {
-        if (Ulid.TryParse(Id, out var ulid))
+        if (Ulid.TryParse(Id, out jobUlid))
         {
-            job = await Jobs.GetAsync(ulid);
+            job = await Jobs.GetAsync(jobUlid);
         }
         loading = false;
     }

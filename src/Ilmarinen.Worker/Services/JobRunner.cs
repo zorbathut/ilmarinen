@@ -30,6 +30,7 @@ public class JobRunner
     public async Task<JobCompleted> ExecuteAsync()
     {
         var workDir = Path.Combine(_config.WorkspacePath, _job.Id.ToString());
+        var logCollector = new LogCollector(_job.Id, _connection);
 
         try
         {
@@ -58,10 +59,10 @@ public class JobRunner
                 return new JobCompleted { Id = _job.Id, Status = JobStatus.Failed };
             }
 
-            // 4. Run pipeline
+            // 4. Run pipeline with log streaming
             _logger.LogInformation("Running {StepCount} step(s)...", steps.Count);
 
-            var runner = new PipelineRunner(workDir);
+            var runner = new PipelineRunner(workDir, onOutput: logCollector.AsCallback());
             var success = await runner.RunAsync(steps);
 
             return new JobCompleted
@@ -72,6 +73,16 @@ public class JobRunner
         }
         finally
         {
+            // Flush any remaining logs
+            try
+            {
+                await logCollector.FlushAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to flush logs");
+            }
+
             // Cleanup
             try
             {

@@ -28,8 +28,11 @@ builder.Services.AddDbContext<IlmarinenDbContext>(options =>
 
 // Add services
 builder.Services.AddScoped<JobRepository>();
+builder.Services.AddScoped<JobLogRepository>();
 builder.Services.AddScoped<WorkerRepository>();
 builder.Services.AddSingleton<JobScheduler>();
+builder.Services.AddSingleton<LogSubscriptionService>();
+builder.Services.AddSingleton<LogStreamService>();
 builder.Services.AddScoped<DashboardService>();
 
 // Add SignalR with Ulid JSON support
@@ -72,6 +75,7 @@ app.UseRouting();
 // Map endpoints
 app.MapControllers();
 app.MapHub<WorkerHub>("/workers");
+app.MapHub<JobLogsHub>("/job-logs");
 app.MapHealthChecks("/health");
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");

@@ -47,14 +47,24 @@ public class WorkerHub : Hub<IWorkerClient>
         await jobs.UpdateStatusAsync(jobId, JobStatus.Running);
     }
 
+    public async Task StreamLogs(LogChunk chunk)
+    {
+        var logService = _scopeFactory.CreateScope()
+            .ServiceProvider.GetRequiredService<LogStreamService>();
+
+        await logService.ProcessChunkAsync(chunk);
+    }
+
     public async Task JobCompleted(Ulid jobId, JobCompleted result)
     {
         using var scope = _scopeFactory.CreateScope();
         var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
 
         _logger.LogInformation("Job completed: {JobId} - {Status}", jobId, result.Status);
         await scheduler.CompleteJobAsync(jobId, result);
+        await logService.NotifyJobCompletedAsync(jobId, result.Status);
         await workers.SetCurrentJobAsync(Context.ConnectionId, null);
 
         await scheduler.TryAssignJobAsync(Context.ConnectionId);
@@ -73,6 +83,7 @@ public class WorkerHub : Hub<IWorkerClient>
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
 
         var worker = await workers.GetByConnectionIdAsync(Context.ConnectionId);
         if (worker != null)
@@ -81,6 +92,7 @@ public class WorkerHub : Hub<IWorkerClient>
 
             if (worker.CurrentJobId.HasValue)
             {
+                await logService.NotifyJobCompletedAsync(worker.CurrentJobId.Value, JobStatus.Failed);
                 await jobs.UpdateStatusAsync(worker.CurrentJobId.Value, JobStatus.Failed);
             }
         }

@@ -13,12 +13,20 @@ public class PipelineRunner
     private readonly DockerClient _client;
     private readonly string _workDir;
     private readonly Func<string, string?> _secretProvider;
+    private readonly Action<string, string>? _onOutput;
 
-    public PipelineRunner(string? workDir = null, Func<string, string?>? secretProvider = null)
+    /// <summary>
+    /// Creates a new PipelineRunner.
+    /// </summary>
+    /// <param name="workDir">Working directory (defaults to current directory)</param>
+    /// <param name="secretProvider">Function to resolve secrets (defaults to environment variables)</param>
+    /// <param name="onOutput">Optional callback for log output. First parameter is type ("o" for stdout, "e" for stderr), second is data.</param>
+    public PipelineRunner(string? workDir = null, Func<string, string?>? secretProvider = null, Action<string, string>? onOutput = null)
     {
         _client = CreateDockerClient();
         _workDir = workDir ?? Directory.GetCurrentDirectory();
         _secretProvider = secretProvider ?? (name => Environment.GetEnvironmentVariable(name));
+        _onOutput = onOutput;
     }
 
     private static DockerClient CreateDockerClient()
@@ -38,20 +46,29 @@ public class PipelineRunner
         return new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock")).CreateClient();
     }
 
+    /// <summary>
+    /// Write informational message to both console and log output callback.
+    /// </summary>
+    private void WriteInfo(string message)
+    {
+        Console.WriteLine(message);
+        _onOutput?.Invoke("m", message + "\n");
+    }
+
     public async Task<bool> RunAsync(IReadOnlyList<Step<object?>> steps)
     {
         var branch = await GetGitBranch();
         var commit = await GetGitCommit();
         var networkName = $"ilmarinen-{Guid.NewGuid():N}";
 
-        Console.WriteLine($"Running {steps.Count} step(s)...");
-        Console.WriteLine($"Branch: {branch}, Commit: {commit[..Math.Min(8, commit.Length)]}");
-        Console.WriteLine();
+        WriteInfo($"Running {steps.Count} step(s)...");
+        WriteInfo($"Branch: {branch}, Commit: {commit[..Math.Min(8, commit.Length)]}");
+        WriteInfo("");
 
         // Start the agent API server (starts automatically in constructor)
         await using var apiServer = new AgentApiServer();
-        Console.WriteLine($"Agent API: http://localhost:{apiServer.Port}");
-        Console.WriteLine();
+        WriteInfo($"Agent API: http://localhost:{apiServer.Port}");
+        WriteInfo("");
 
         // Create a network for this pipeline run
         await CreateNetworkAsync(networkName);
@@ -63,24 +80,24 @@ public class PipelineRunner
                 // Resolve image lazily (may depend on previous step outputs)
                 var image = step.ImageResolver();
 
-                Console.WriteLine($"=== Step: {step.Name} ===");
-                Console.WriteLine($"Image: {image}");
+                WriteInfo($"=== Step: {step.Name} ===");
+                WriteInfo($"Image: {image}");
 
                 try
                 {
                     await RunStepAsync(step, image, branch, commit, networkName, apiServer);
-                    Console.WriteLine($"=== {step.Name}: SUCCESS ===");
-                    Console.WriteLine();
+                    WriteInfo($"=== {step.Name}: SUCCESS ===");
+                    WriteInfo("");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"=== {step.Name}: FAILED ===");
-                    Console.WriteLine($"Error: {ex.Message}");
+                    WriteInfo($"=== {step.Name}: FAILED ===");
+                    WriteInfo($"Error: {ex.Message}");
                     return false;
                 }
             }
 
-            Console.WriteLine("All steps completed successfully!");
+            WriteInfo("All steps completed successfully!");
             return true;
         }
         finally
@@ -367,7 +384,7 @@ public class PipelineRunner
         // Pull the image if needed
         await PullImageIfNeeded(image.Reference);
 
-        Console.WriteLine("Agent CLI: shell script");
+        WriteInfo("Agent CLI: shell script");
 
         // Create and start the container
         var containerId = await CreateContainerAsync(image.Reference, networkName, apiServer);
@@ -384,7 +401,8 @@ public class PipelineRunner
                 networkName,
                 branch,
                 commit,
-                _secretProvider);
+                _secretProvider,
+                _onOutput);
 
             // Set the context on the API server so CLI requests are routed correctly
             apiServer.SetContext(context);
@@ -425,14 +443,14 @@ public class PipelineRunner
         }
         catch (DockerImageNotFoundException)
         {
-            Console.WriteLine($"Pulling image: {image}");
+            WriteInfo($"Pulling image: {image}");
             await _client.Images.CreateImageAsync(
                 new ImagesCreateParameters { FromImage = image },
                 null,
                 new Progress<JSONMessage>(m =>
                 {
                     if (!string.IsNullOrEmpty(m.Status))
-                        Console.WriteLine($"  {m.Status}");
+                        WriteInfo($"  {m.Status}");
                 }));
         }
     }

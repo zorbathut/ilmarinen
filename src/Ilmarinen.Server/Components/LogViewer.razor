@@ -1,0 +1,231 @@
+@using System.Text.Json
+@using Ilmarinen.Protocol
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using NUlid
+@implements IDisposable
+@inject LogSubscriptionService SubscriptionService
+@inject JobLogRepository LogRepository
+
+<div class="log-viewer">
+    <div class="log-toolbar">
+        <label class="log-option">
+            <input type="checkbox" @bind="autoScroll" /> Auto-scroll
+        </label>
+        <label class="log-option">
+            <input type="checkbox" @bind="showStderr" /> Show stderr
+        </label>
+        <span class="log-stats">@logLines.Count lines | @FormatBytes(totalBytes)</span>
+        @if (IsStreaming)
+        {
+            <span class="log-status streaming">Streaming...</span>
+        }
+        else if (isComplete)
+        {
+            <span class="log-status complete">Complete</span>
+        }
+    </div>
+
+    <div class="log-container" @ref="logContainer">
+        @if (logLines.Count == 0 && !IsStreaming)
+        {
+            <div class="log-empty">No logs available</div>
+        }
+        else
+        {
+            @foreach (var line in GetVisibleLines())
+            {
+                <div class="log-line @(line.IsMetadata ? "log-meta" : line.IsStderr ? "log-stderr" : "log-stdout")">@line.Content</div>
+            }
+        }
+    </div>
+</div>
+
+<style>
+    .log-viewer {
+        display: flex;
+        flex-direction: column;
+    }
+    .log-toolbar {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        padding: 0.5rem 1rem;
+        background-color: var(--bg-tertiary);
+        border-radius: 0.5rem 0.5rem 0 0;
+        font-size: 0.875rem;
+    }
+    .log-option {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        cursor: pointer;
+        color: var(--text-secondary);
+    }
+    .log-option input {
+        cursor: pointer;
+    }
+    .log-stats {
+        margin-left: auto;
+        color: var(--text-secondary);
+    }
+    .log-status {
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.75rem;
+    }
+    .log-status.streaming {
+        background-color: #164e63;
+        color: #22d3ee;
+        animation: pulse 2s infinite;
+    }
+    .log-status.complete {
+        background-color: #14532d;
+        color: #4ade80;
+    }
+    @@keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    .log-container {
+        border-radius: 0 0 0.5rem 0.5rem;
+        min-height: 200px;
+        max-height: 600px;
+    }
+    .log-empty {
+        color: var(--text-secondary);
+        font-style: italic;
+    }
+    .log-meta {
+        color: #22d3ee;
+    }
+</style>
+
+@code {
+    [Parameter]
+    public Ulid JobId { get; set; }
+
+    [Parameter]
+    public bool IsStreaming { get; set; }
+
+    private string? subscriberId;
+    private List<LogLine> logLines = new();
+    private ElementReference logContainer;
+    private bool autoScroll = true;
+    private bool showStderr = true;
+    private bool isComplete;
+    private long totalBytes;
+    private int lastSequence;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load historical logs first
+        await LoadHistoricalLogsAsync();
+
+        // Subscribe to live updates
+        subscriberId = SubscriptionService.Subscribe(
+            JobId,
+            OnLogChunk,
+            OnJobCompleted);
+    }
+
+    private async Task LoadHistoricalLogsAsync()
+    {
+        var chunks = await LogRepository.GetChunksAsync(JobId, 0, limit: 1000);
+        foreach (var chunk in chunks)
+        {
+            if (chunk.SequenceNumber > lastSequence)
+            {
+                lastSequence = chunk.SequenceNumber;
+                ParseAndAddContent(chunk.Content);
+            }
+        }
+    }
+
+    private void OnLogChunk(LogBroadcast chunk)
+    {
+        if (chunk.SequenceNumber <= lastSequence) return;
+        lastSequence = chunk.SequenceNumber;
+
+        ParseAndAddContent(chunk.Content);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ParseAndAddContent(string content)
+    {
+        // Parse NDJSON content
+        foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement;
+
+                if (!root.TryGetProperty("t", out var typeEl)) continue;
+                var type = typeEl.GetString();
+
+                if (type == "o" || type == "e" || type == "m")
+                {
+                    if (root.TryGetProperty("d", out var dataEl))
+                    {
+                        var data = dataEl.GetString() ?? "";
+                        totalBytes += data.Length;
+
+                        // Split by newlines to create individual log lines
+                        foreach (var logLine in data.Split('\n'))
+                        {
+                            if (!string.IsNullOrEmpty(logLine))
+                            {
+                                logLines.Add(new LogLine
+                                {
+                                    Content = logLine,
+                                    IsStderr = type == "e",
+                                    IsMetadata = type == "m"
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Skip malformed JSON
+            }
+        }
+    }
+
+    private void OnJobCompleted(JobStatus status)
+    {
+        isComplete = true;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private IEnumerable<LogLine> GetVisibleLines()
+    {
+        var lines = showStderr ? logLines : logLines.Where(l => !l.IsStderr);
+        // Return last 2000 lines to prevent UI slowdown
+        return lines.TakeLast(2000);
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        return $"{bytes / (1024.0 * 1024.0):F1} MB";
+    }
+
+    public void Dispose()
+    {
+        if (subscriberId != null)
+        {
+            SubscriptionService.Unsubscribe(JobId, subscriberId);
+        }
+    }
+
+    private record LogLine
+    {
+        public required string Content { get; init; }
+        public required bool IsStderr { get; init; }
+        public bool IsMetadata { get; init; }
+    }
+}

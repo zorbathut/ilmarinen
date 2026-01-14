@@ -18,6 +18,7 @@ public class DockerJobContext : IJobContext
     private readonly string _hostWorkDir;
     private readonly string _networkName;
     private readonly Func<string, string?> _secretProvider;
+    private readonly Action<string, string>? _onOutput;
     private readonly List<string> _serviceContainerIds = [];
 
     public string Branch { get; }
@@ -31,7 +32,8 @@ public class DockerJobContext : IJobContext
         string networkName,
         string branch,
         string commit,
-        Func<string, string?> secretProvider)
+        Func<string, string?> secretProvider,
+        Action<string, string>? onOutput = null)
     {
         _client = client;
         _containerId = containerId;
@@ -41,6 +43,7 @@ public class DockerJobContext : IJobContext
         Branch = branch;
         Commit = commit;
         _secretProvider = secretProvider;
+        _onOutput = onOutput;
     }
 
     public async Task<CommandResult> TryExec(string command, params string[] args)
@@ -73,11 +76,13 @@ public class DockerJobContext : IJobContext
             {
                 stdoutBuilder.Append(chunk);
                 Console.Write(chunk);
+                _onOutput?.Invoke("o", chunk);
             }
             else
             {
                 stderrBuilder.Append(chunk);
                 Console.Error.Write(chunk);
+                _onOutput?.Invoke("e", chunk);
             }
         }
 
@@ -149,11 +154,13 @@ public class DockerJobContext : IJobContext
             {
                 stdoutBuilder.Append(chunk);
                 Console.Write(chunk);
+                _onOutput?.Invoke("o", chunk);
             }
             else
             {
                 stderrBuilder.Append(chunk);
                 Console.Error.Write(chunk);
+                _onOutput?.Invoke("e", chunk);
             }
         }
 
