@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Cocona.Lite" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Ilmarinen.Scripting\Ilmarinen.Scripting.csproj" />
     <ProjectReference Include="..\Ilmarinen.Docker\Ilmarinen.Docker.csproj" />
     <ProjectReference Include="..\Ilmarinen.Protocol\Ilmarinen.Protocol.csproj" />
