@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Ilmarinen.Database;
+using Ilmarinen.Protocol;
 using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.EntityFrameworkCore;
@@ -6,6 +8,10 @@ using Npgsql;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure JSON serialization for Ulid
+var jsonOptions = new JsonSerializerOptions();
+jsonOptions.Converters.Add(new UlidJsonConverter());
 
 // Configure Serilog
 builder.Host.UseSerilog((context, config) =>
@@ -26,11 +32,19 @@ builder.Services.AddScoped<WorkerRepository>();
 builder.Services.AddSingleton<JobScheduler>();
 builder.Services.AddScoped<DashboardService>();
 
-// Add SignalR
-builder.Services.AddSignalR();
+// Add SignalR with Ulid JSON support
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.Converters.Add(new UlidJsonConverter());
+    });
 
-// Add controllers
-builder.Services.AddControllers();
+// Add controllers with Ulid JSON support
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new UlidJsonConverter());
+    });
 
 // Add Blazor
 builder.Services.AddRazorPages();

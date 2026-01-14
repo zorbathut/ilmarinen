@@ -1,10 +1,18 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using Ilmarinen.Docker;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Scripting;
 using NUlid;
+
+// Configure JSON serialization for Ulid
+var jsonOptions = new JsonSerializerOptions
+{
+    PropertyNameCaseInsensitive = true
+};
+jsonOptions.Converters.Add(new UlidJsonConverter());
 
 var command = args.Length > 0 ? args[0] : "run";
 
@@ -110,7 +118,7 @@ async Task<int> SubmitJobAsync(string[] args)
         return 1;
     }
 
-    var result = await response.Content.ReadFromJsonAsync<JobSubmissionResult>();
+    var result = await response.Content.ReadFromJsonAsync<JobSubmissionResult>(jsonOptions);
     Console.WriteLine($"Job submitted: {result?.Id}");
     return 0;
 }
@@ -143,7 +151,7 @@ async Task<int> GetStatusAsync(string[] args)
         return 1;
     }
 
-    var job = await response.Content.ReadFromJsonAsync<JobInfo>();
+    var job = await response.Content.ReadFromJsonAsync<JobInfo>(jsonOptions);
     if (job == null)
     {
         Console.Error.WriteLine("Job not found");

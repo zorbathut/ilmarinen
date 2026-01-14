@@ -24,6 +24,11 @@ public class WorkerService : BackgroundService
         _connection = new HubConnectionBuilder()
             .WithUrl($"{_config.ServerUrl}/workers")
             .WithAutomaticReconnect()
+            .AddJsonProtocol(options =>
+            {
+                options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
+                options.PayloadSerializerOptions.Converters.Add(new UlidJsonConverter());
+            })
             .Build();
 
         _connection.On<JobAssignment>("AssignJob", OnJobAssigned);
