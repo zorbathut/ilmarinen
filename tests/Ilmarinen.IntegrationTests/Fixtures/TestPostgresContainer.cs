@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using Docker.DotNet;
@@ -34,38 +35,50 @@ public class TestPostgresContainer : IAsyncDisposable
 
     public async Task StartAsync()
     {
-        // Find available port
         Port = GetAvailablePort();
+        var pid = Environment.ProcessId;
 
-        // Create container
+        // Create container with PID label for watchdog-based cleanup
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
             Image = "postgres:16-alpine",
-            Env = new List<string>
+            Labels = new Dictionary<string, string>
             {
+                ["ilmarinen.test.pid"] = pid.ToString()
+            },
+            Env =
+            [
                 $"POSTGRES_DB={Database}",
                 $"POSTGRES_USER={Username}",
                 $"POSTGRES_PASSWORD={Password}"
-            },
+            ],
             HostConfig = new HostConfig
             {
                 PortBindings = new Dictionary<string, IList<PortBinding>>
                 {
-                    ["5432/tcp"] = new List<PortBinding>
-                    {
-                        new() { HostPort = Port.ToString() }
-                    }
+                    ["5432/tcp"] = [new() { HostPort = Port.ToString() }]
                 },
                 AutoRemove = true
             }
         });
 
         _containerId = response.ID;
-
-        // Start container
         await _client.Containers.StartContainerAsync(_containerId, new ContainerStartParameters());
 
-        // Wait for PostgreSQL to be ready
+        // Spawn detached watchdog that kills containers if test process dies.
+        // Uses setsid -f to create new session AND fork - this makes the watchdog:
+        // 1. Immune to SIGHUP when parent dies
+        // 2. Independent of parent's file descriptors (no broken pipe issues)
+        // We can't track/kill this process (it's double-forked), but that's fine -
+        // on normal dispose the container is already stopped.
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "setsid",
+            Arguments = $"-f /bin/sh -c \"while kill -0 {pid} 2>/dev/null; do sleep 1; done; docker rm -f $(docker ps -aq --filter label=ilmarinen.test.pid={pid}) 2>/dev/null\" </dev/null >/dev/null 2>&1",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+
         await WaitForReadyAsync();
     }
 
