@@ -1,4 +1,5 @@
 using Ilmarinen.Database;
+using Ilmarinen.IntegrationTests.Fixtures;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -6,7 +7,6 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
 using NUnit.Framework;
-using Testcontainers.PostgreSql;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 
@@ -14,21 +14,16 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [Category("Integration")]
 public class DatabaseSchemaTests
 {
-    private PostgreSqlContainer _postgres = null!;
+    private TestPostgresContainer _postgres = null!;
     private IlmarinenDbContext _dbContext = null!;
 
     [SetUp]
     public async Task SetUp()
     {
-        _postgres = new PostgreSqlBuilder()
-            .WithImage("postgres:16-alpine")
-            .WithDatabase("ilmarinen_schema_test")
-            .WithUsername("test")
-            .WithPassword("test")
-            .Build();
+        _postgres = new TestPostgresContainer(database: "ilmarinen_schema_test");
         await _postgres.StartAsync();
 
-        var dataSourceBuilder = new NpgsqlDataSourceBuilder(_postgres.GetConnectionString());
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(_postgres.ConnectionString);
         dataSourceBuilder.EnableDynamicJson();
         var dataSource = dataSourceBuilder.Build();
 

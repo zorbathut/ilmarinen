@@ -10,7 +10,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
-using Testcontainers.PostgreSql;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
 
@@ -20,17 +19,12 @@ namespace Ilmarinen.IntegrationTests.Fixtures;
 /// </summary>
 public class IlmarinenWebApplicationFactory : IAsyncDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .WithDatabase("ilmarinen_test")
-        .WithUsername("test")
-        .WithPassword("test")
-        .Build();
+    private readonly TestPostgresContainer _postgres = new();
 
     private WebApplication? _app;
     private bool _initialized;
 
-    public string PostgresConnectionString => _postgres.GetConnectionString();
+    public string PostgresConnectionString => _postgres.ConnectionString;
     public string ServerUrl { get; private set; } = null!;
     public IServiceProvider Services => _app?.Services ?? throw new InvalidOperationException("Server not started");
 
