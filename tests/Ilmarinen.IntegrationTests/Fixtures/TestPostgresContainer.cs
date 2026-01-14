@@ -78,7 +78,7 @@ public class TestPostgresContainer : IAsyncDisposable
         Process.Start(new ProcessStartInfo
         {
             FileName = "setsid",
-            Arguments = $"-f /bin/sh -c \"while kill -0 {pid} 2>/dev/null; do sleep 1; done; docker rm -f $(docker ps -aq --filter label=ilmarinen.test.pid={pid}) 2>/dev/null\" </dev/null >/dev/null 2>&1",
+            Arguments = $"-f /bin/sh -c \"while kill -0 {pid} 2>/dev/null; do sleep 1; done; docker rm -f $(docker ps -aq --filter label=ilmarinen.test.pid={pid}) 2>/dev/null; docker network rm $(docker network ls -q --filter label=ilmarinen.test.pid={pid}) 2>/dev/null\" </dev/null >/dev/null 2>&1",
             UseShellExecute = false,
             CreateNoWindow = true
         });

@@ -341,7 +341,11 @@ public class PipelineRunner
         await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
         {
             Name = name,
-            Driver = "bridge"
+            Driver = "bridge",
+            Labels = new Dictionary<string, string>
+            {
+                ["ilmarinen.test.pid"] = Environment.ProcessId.ToString()
+            }
         });
     }
 
