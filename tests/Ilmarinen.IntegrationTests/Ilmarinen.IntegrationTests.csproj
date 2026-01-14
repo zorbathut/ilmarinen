@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Test framework -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+
+    <!-- ASP.NET Core testing -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
+
+    <!-- Testcontainers -->
+    <PackageReference Include="Testcontainers.PostgreSql" Version="3.10.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Ilmarinen.Server\Ilmarinen.Server.csproj" />
+    <ProjectReference Include="..\..\src\Ilmarinen.Worker\Ilmarinen.Worker.csproj" />
+    <ProjectReference Include="..\..\src\Ilmarinen.Database\Ilmarinen.Database.csproj" />
+    <ProjectReference Include="..\..\src\Ilmarinen.Protocol\Ilmarinen.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>

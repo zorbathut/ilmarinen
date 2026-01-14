@@ -79,3 +79,6 @@ app.MapFallbackToPage("/_Host");
 Log.Information("Ilmarinen Server starting on {Urls}", string.Join(", ", app.Urls));
 
 app.Run();
+
+// Enable WebApplicationFactory for integration tests
+public partial class Program { }
