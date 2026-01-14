@@ -19,13 +19,13 @@
     </PackageReference>
 
     <!-- ASP.NET Core testing -->
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.23" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.2" />
 
     <!-- Docker client for test containers -->
     <PackageReference Include="Docker.DotNet" Version="3.125.15" />
 
     <!-- EF Core Design for schema tests -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.23">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.2">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
