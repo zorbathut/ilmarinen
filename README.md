@@ -1,5 +1,7 @@
 # Ilmarinen
 
+[![Language: C#](https://img.shields.io/badge/language-C%23-blue)](https://docs.microsoft.com/en-us/dotnet/csharp/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Build status](https://img.shields.io/github/actions/workflow/status/zorbathut/ilmarinen/test.yml?branch=dev)](https://github.com/zorbathut/ilmarinen/actions?query=workflow%3Atest+branch%3Adev)
+
 A container-native CI/CD system where pipelines are defined in C#.
 
 ## Features
