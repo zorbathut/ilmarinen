@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Ilmarinen.Scripting\Ilmarinen.Scripting.csproj" />
     <ProjectReference Include="..\Ilmarinen.Docker\Ilmarinen.Docker.csproj" />
+    <ProjectReference Include="..\Ilmarinen.Protocol\Ilmarinen.Protocol.csproj" />
   </ItemGroup>
 
 </Project>

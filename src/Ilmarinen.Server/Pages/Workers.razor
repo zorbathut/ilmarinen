@@ -1,0 +1,55 @@
+@page "/workers"
+@using Ilmarinen.Server.Services
+@inject WorkerRepository WorkerRepo
+
+<h1 class="page-title">Workers</h1>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Status</th>
+                <th>ID</th>
+                <th>Current Job</th>
+                <th>First Seen</th>
+                <th>Last Seen</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (workers != null)
+            {
+                @foreach (var worker in workers)
+                {
+                    <tr>
+                        <td>
+                            <span class="connection-badge @(worker.IsConnected ? "connected" : "disconnected")"></span>
+                            @(worker.IsConnected ? (worker.IsReady ? "Ready" : "Busy") : "Offline")
+                        </td>
+                        <td>@worker.Id.ToString()[..8]</td>
+                        <td>
+                            @if (worker.CurrentJobId.HasValue)
+                            {
+                                <a href="/jobs/@worker.CurrentJobId">@worker.CurrentJobId.Value.ToString()[..8]</a>
+                            }
+                            else
+                            {
+                                <span>-</span>
+                            }
+                        </td>
+                        <td>@worker.FirstSeen.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td>@worker.LastSeen.ToString("HH:mm:ss")</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private IReadOnlyList<WorkerView>? workers;
+
+    protected override async Task OnInitializedAsync()
+    {
+        workers = await WorkerRepo.GetAllAsync();
+    }
+}

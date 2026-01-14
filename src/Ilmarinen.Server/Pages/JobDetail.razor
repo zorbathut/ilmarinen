@@ -1,0 +1,86 @@
+@page "/jobs/{Id}"
+@using Ilmarinen.Protocol
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using NUlid
+@inject JobRepository Jobs
+@inject JobScheduler Scheduler
+@inject NavigationManager Navigation
+
+<h1 class="page-title">Job @Id</h1>
+
+@if (job != null)
+{
+    <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div class="detail-grid">
+                <span class="detail-label">ID</span>
+                <span class="detail-value">@job.Id</span>
+
+                <span class="detail-label">Status</span>
+                <span class="detail-value"><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></span>
+
+                <span class="detail-label">Repository</span>
+                <span class="detail-value">@job.RepoUrl</span>
+
+                <span class="detail-label">Ref</span>
+                <span class="detail-value">@job.Ref</span>
+
+                <span class="detail-label">Script</span>
+                <span class="detail-value">@job.ScriptPath</span>
+
+                <span class="detail-label">Worker</span>
+                <span class="detail-value">@(job.WorkerId?.ToString()[..8] ?? "-")</span>
+
+                <span class="detail-label">Created</span>
+                <span class="detail-value">@job.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+
+                <span class="detail-label">Started</span>
+                <span class="detail-value">@(job.StartedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</span>
+
+                <span class="detail-label">Completed</span>
+                <span class="detail-value">@(job.CompletedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</span>
+            </div>
+
+            @if (job.Status is JobStatus.Pending or JobStatus.Queued or JobStatus.Running)
+            {
+                <button class="btn btn-danger" @onclick="CancelJob">Cancel Job</button>
+            }
+        </div>
+    </div>
+}
+else if (loading)
+{
+    <div class="card">Loading...</div>
+}
+else
+{
+    <div class="card">Job not found</div>
+}
+
+@code {
+    [Parameter]
+    public string Id { get; set; } = "";
+
+    private JobInfo? job;
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Ulid.TryParse(Id, out var ulid))
+        {
+            job = await Jobs.GetAsync(ulid);
+        }
+        loading = false;
+    }
+
+    private async Task CancelJob()
+    {
+        if (Ulid.TryParse(Id, out var ulid))
+        {
+            await Scheduler.CancelJobAsync(ulid);
+            job = await Jobs.GetAsync(ulid);
+            StateHasChanged();
+        }
+    }
+}

@@ -1,0 +1,59 @@
+@page "/jobs"
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@inject JobRepository JobRepo
+
+<h1 class="page-title">Jobs</h1>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Repository</th>
+                <th>Ref</th>
+                <th>Worker</th>
+                <th>Created</th>
+                <th>Started</th>
+                <th>Completed</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (jobs != null)
+            {
+                @foreach (var job in jobs)
+                {
+                    <tr>
+                        <td><a href="/jobs/@job.Id">@job.Id.ToString()[..8]</a></td>
+                        <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
+                        <td>@GetShortRepoUrl(job.RepoUrl)</td>
+                        <td>@job.Ref</td>
+                        <td>@(job.WorkerId?.ToString()[..8] ?? "-")</td>
+                        <td>@job.CreatedAt.ToString("HH:mm:ss")</td>
+                        <td>@(job.StartedAt?.ToString("HH:mm:ss") ?? "-")</td>
+                        <td>@(job.CompletedAt?.ToString("HH:mm:ss") ?? "-")</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private IReadOnlyList<JobInfo>? jobs;
+
+    protected override async Task OnInitializedAsync()
+    {
+        jobs = await JobRepo.GetAllAsync();
+    }
+
+    private string GetShortRepoUrl(string url)
+    {
+        if (url.StartsWith("https://github.com/"))
+            return url.Replace("https://github.com/", "");
+        if (url.StartsWith("git@github.com:"))
+            return url.Replace("git@github.com:", "").Replace(".git", "");
+        return url;
+    }
+}

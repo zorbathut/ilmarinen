@@ -1,0 +1,13 @@
+using NUlid;
+
+namespace Ilmarinen.Protocol.Requests;
+
+/// <summary>
+/// Worker → Server: Heartbeat via SignalR Hub.Heartbeat()
+/// </summary>
+public record WorkerHeartbeat
+{
+    public required Ulid WorkerId { get; init; }
+    public bool IsReady { get; init; }
+    public Ulid? CurrentJobId { get; init; }
+}

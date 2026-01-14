@@ -1,0 +1,87 @@
+@page "/"
+@using Ilmarinen.Server.Services
+@inject DashboardService Dashboard
+
+<h1 class="page-title">Dashboard</h1>
+
+@if (stats != null)
+{
+    <div class="stats-grid">
+        <div class="card">
+            <div class="card-title">Total Jobs</div>
+            <div class="card-value">@stats.TotalJobs</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Running</div>
+            <div class="card-value" style="color: #22d3ee;">@stats.RunningJobs</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Queued</div>
+            <div class="card-value" style="color: #60a5fa;">@stats.QueuedJobs</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Successful</div>
+            <div class="card-value" style="color: #4ade80;">@stats.SuccessfulJobs</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Failed</div>
+            <div class="card-value" style="color: #f87171;">@stats.FailedJobs</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Workers</div>
+            <div class="card-value">@stats.ConnectedWorkers / @stats.TotalWorkers</div>
+        </div>
+    </div>
+}
+
+<div class="card">
+    <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Recent Jobs</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Repository</th>
+                <th>Ref</th>
+                <th>Created</th>
+                <th>Worker</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (recentJobs != null)
+            {
+                @foreach (var job in recentJobs)
+                {
+                    <tr>
+                        <td><a href="/jobs/@job.Id">@job.Id.ToString()[..8]</a></td>
+                        <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
+                        <td>@GetShortRepoUrl(job.RepoUrl)</td>
+                        <td>@job.Ref</td>
+                        <td>@job.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td>@(job.WorkerId?.ToString()[..8] ?? "-")</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private DashboardStats? stats;
+    private IReadOnlyList<RecentJob>? recentJobs;
+
+    protected override async Task OnInitializedAsync()
+    {
+        stats = await Dashboard.GetStatsAsync();
+        recentJobs = await Dashboard.GetRecentJobsAsync();
+    }
+
+    private string GetShortRepoUrl(string url)
+    {
+        if (url.StartsWith("https://github.com/"))
+            return url.Replace("https://github.com/", "");
+        if (url.StartsWith("git@github.com:"))
+            return url.Replace("git@github.com:", "").Replace(".git", "");
+        return url;
+    }
+}
