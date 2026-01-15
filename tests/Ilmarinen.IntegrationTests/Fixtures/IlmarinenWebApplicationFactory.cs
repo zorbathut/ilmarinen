@@ -71,8 +71,11 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
         // Register server services
         builder.Services.AddScoped<JobRepository>();
+        builder.Services.AddScoped<JobLogRepository>();
         builder.Services.AddScoped<WorkerRepository>();
         builder.Services.AddSingleton<JobScheduler>();
+        builder.Services.AddSingleton<LogSubscriptionService>();
+        builder.Services.AddSingleton<LogStreamService>();
 
         builder.Environment.EnvironmentName = "Testing";
 
@@ -81,6 +84,7 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         // Configure middleware
         _app.MapControllers();
         _app.MapHub<WorkerHub>("/workers");
+        _app.MapHub<JobLogsHub>("/job-logs");
 
         // Start the server
         await _app.StartAsync();
