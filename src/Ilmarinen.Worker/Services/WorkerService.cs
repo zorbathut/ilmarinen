@@ -98,7 +98,8 @@ public class WorkerService : BackgroundService
     {
         await _connection!.SendAsync("Register", new WorkerRegister
         {
-            WorkerId = _config.WorkerId
+            WorkerId = _config.WorkerId,
+            BuildId = BuildInfo.GitCommit
         });
 
         await _connection!.SendAsync("Ready");

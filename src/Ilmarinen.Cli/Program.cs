@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Cocona;
+using Ilmarinen;
 using Ilmarinen.Docker;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
@@ -59,6 +60,25 @@ public class Commands
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         jsonOptions.Converters.Add(new UlidJsonConverter());
 
+        using var http = new HttpClient();
+
+        // Check build compatibility with server
+        try
+        {
+            var versionResponse = await http.GetFromJsonAsync<VersionInfo>($"{server}/api/version", jsonOptions);
+            if (versionResponse?.BuildId != BuildInfo.GitCommit)
+            {
+                Console.Error.WriteLine($"Warning: Build mismatch with server.");
+                Console.Error.WriteLine($"  CLI:    {BuildInfo.GitCommit}");
+                Console.Error.WriteLine($"  Server: {versionResponse?.BuildId ?? "unknown"}");
+                Console.Error.WriteLine("Rebuild CLI from the same commit as server.");
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Older server without version endpoint - proceed anyway
+        }
+
         var submission = new JobSubmission
         {
             RepoUrl = repo,
@@ -66,7 +86,6 @@ public class Commands
             ScriptPath = script
         };
 
-        using var http = new HttpClient();
         var response = await http.PostAsJsonAsync($"{server}/api/jobs", submission);
 
         if (!response.IsSuccessStatusCode)

@@ -8,4 +8,5 @@ namespace Ilmarinen.Protocol.Requests;
 public record WorkerRegister
 {
     public required Ulid WorkerId { get; init; }
+    public required string BuildId { get; init; }
 }

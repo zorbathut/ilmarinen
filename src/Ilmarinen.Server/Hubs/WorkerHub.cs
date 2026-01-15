@@ -19,6 +19,18 @@ public class WorkerHub : Hub<IWorkerClient>
 
     public async Task Register(WorkerRegister info)
     {
+        // Validate build compatibility
+        if (info.BuildId != BuildInfo.GitCommit)
+        {
+            _logger.LogError(
+                "Worker {WorkerId} rejected: build mismatch (worker: {WorkerBuild}, server: {ServerBuild})",
+                info.WorkerId, info.BuildId, BuildInfo.GitCommit);
+
+            throw new HubException(
+                $"Build mismatch. Worker is '{info.BuildId}', server is '{BuildInfo.GitCommit}'. " +
+                "Rebuild both from the same commit.");
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
