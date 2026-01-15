@@ -1,14 +1,11 @@
 using System.Net;
 using System.Net.Sockets;
 using Ilmarinen.Database;
-using Ilmarinen.Protocol;
-using Ilmarinen.Server.Hubs;
-using Ilmarinen.Server.Services;
+using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Npgsql;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
@@ -35,33 +32,16 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
         await _postgres.StartAsync();
 
-        // Find an available port
         var port = GetAvailablePort();
         ServerUrl = $"http://localhost:{port}";
 
-        // Build and configure the app
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
             ApplicationName = typeof(Program).Assembly.GetName().Name,
         });
 
-        // Configure to use our port
         builder.WebHost.UseUrls(ServerUrl);
 
-        // Configure services - replace database with test container
-        builder.Services.AddControllers()
-            .AddJsonOptions(options =>
-            {
-                options.JsonSerializerOptions.Converters.Add(new UlidJsonConverter());
-            });
-
-        builder.Services.AddSignalR()
-            .AddJsonProtocol(options =>
-            {
-                options.PayloadSerializerOptions.Converters.Add(new UlidJsonConverter());
-            });
-
-        // Remove default DB and use test container
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(PostgresConnectionString);
         dataSourceBuilder.EnableDynamicJson();
         var dataSource = dataSourceBuilder.Build();
@@ -69,24 +49,14 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         builder.Services.AddDbContext<IlmarinenDbContext>(options =>
             options.UseNpgsql(dataSource));
 
-        // Register server services
-        builder.Services.AddScoped<JobRepository>();
-        builder.Services.AddScoped<JobLogRepository>();
-        builder.Services.AddScoped<WorkerRepository>();
-        builder.Services.AddSingleton<JobScheduler>();
-        builder.Services.AddSingleton<LogSubscriptionService>();
-        builder.Services.AddSingleton<LogStreamService>();
+        builder.Services.AddIlmarinenServer();
 
         builder.Environment.EnvironmentName = "Testing";
 
         _app = builder.Build();
 
-        // Configure middleware
-        _app.MapControllers();
-        _app.MapHub<WorkerHub>("/workers");
-        _app.MapHub<JobLogsHub>("/job-logs");
+        _app.MapIlmarinenServer();
 
-        // Start the server
         await _app.StartAsync();
     }
 
