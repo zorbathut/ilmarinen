@@ -2,7 +2,7 @@ using Ilmarinen.Worker;
 using Ilmarinen.Worker.Services;
 using Serilog;
 
-var serverUrl = GetArg(args, "--server") ?? "http://localhost:5000";
+var serverUrl = GetArg(args, "--server") ?? "http://localhost:8081";
 
 var config = new WorkerConfig
 {

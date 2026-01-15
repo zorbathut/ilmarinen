@@ -33,12 +33,24 @@ public static class IlmarinenServerExtensions
         return services;
     }
 
-    public static IEndpointRouteBuilder MapIlmarinenServer(this IEndpointRouteBuilder endpoints)
+    /// <summary>
+    /// Maps endpoints accessible on the public port:
+    /// REST API controllers, JobLogsHub for UI log streaming.
+    /// </summary>
+    public static IEndpointRouteBuilder MapPublicEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapControllers();
-        endpoints.MapHub<WorkerHub>("/workers");
         endpoints.MapHub<JobLogsHub>("/job-logs");
+        return endpoints;
+    }
 
+    /// <summary>
+    /// Maps endpoints accessible only on the worker port:
+    /// WorkerHub for worker registration and communication.
+    /// </summary>
+    public static IEndpointRouteBuilder MapWorkerEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapHub<WorkerHub>("/workers");
         return endpoints;
     }
 }

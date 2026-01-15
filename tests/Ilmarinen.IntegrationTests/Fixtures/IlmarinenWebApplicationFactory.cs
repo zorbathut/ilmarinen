@@ -12,7 +12,8 @@ namespace Ilmarinen.IntegrationTests.Fixtures;
 
 /// <summary>
 /// Creates a real Kestrel-hosted test server (not in-memory) so that
-/// SignalR clients can connect via TCP.
+/// SignalR clients can connect via TCP. Exposes separate ports for
+/// public (API/UI) and worker (SignalR hub) traffic.
 /// </summary>
 public class IlmarinenWebApplicationFactory : IAsyncDisposable
 {
@@ -22,7 +23,13 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
     private bool _initialized;
 
     public string PostgresConnectionString => _postgres.ConnectionString;
+
+    /// <summary>URL for public endpoints (REST API, Blazor UI, JobLogsHub).</summary>
     public string ServerUrl { get; private set; } = null!;
+
+    /// <summary>URL for worker endpoints (WorkerHub SignalR).</summary>
+    public string WorkerUrl { get; private set; } = null!;
+
     public IServiceProvider Services => _app?.Services ?? throw new InvalidOperationException("Server not started");
 
     public async Task InitializeAsync()
@@ -32,15 +39,29 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
         await _postgres.StartAsync();
 
-        var port = GetAvailablePort();
-        ServerUrl = $"http://localhost:{port}";
+        var publicPort = GetAvailablePort();
+        var workerPort = GetAvailablePort();
+        ServerUrl = $"http://localhost:{publicPort}";
+        WorkerUrl = $"http://localhost:{workerPort}";
+
+        var serverConfig = new ServerConfig
+        {
+            PublicPort = publicPort,
+            WorkerPort = workerPort
+        };
 
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
             ApplicationName = typeof(Program).Assembly.GetName().Name,
         });
 
-        builder.WebHost.UseUrls(ServerUrl);
+        builder.Services.AddSingleton(serverConfig);
+
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.ListenLocalhost(publicPort);
+            options.ListenLocalhost(workerPort);
+        });
 
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(PostgresConnectionString);
         dataSourceBuilder.EnableDynamicJson();
@@ -50,12 +71,16 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
             options.UseNpgsql(dataSource));
 
         builder.Services.AddIlmarinenServer();
+        builder.Services.AddHealthChecks();
 
         builder.Environment.EnvironmentName = "Testing";
 
         _app = builder.Build();
 
-        _app.MapIlmarinenServer();
+        _app.UseMiddleware<PortFilteringMiddleware>();
+        _app.MapPublicEndpoints();
+        _app.MapWorkerEndpoints();
+        _app.MapHealthChecks("/health");
 
         await _app.StartAsync();
     }

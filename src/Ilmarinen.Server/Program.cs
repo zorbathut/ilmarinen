@@ -10,6 +10,17 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog((context, config) =>
     config.ReadFrom.Configuration(context.Configuration));
 
+// Bind server configuration for dual-port setup
+var serverConfig = builder.Configuration.GetSection("Server").Get<ServerConfig>() ?? new ServerConfig();
+builder.Services.AddSingleton(serverConfig);
+
+// Configure Kestrel to listen on both public and worker ports
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.ListenAnyIP(serverConfig.PublicPort);
+    options.ListenAnyIP(serverConfig.WorkerPort);
+});
+
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(
     builder.Configuration.GetConnectionString("DefaultConnection"));
 dataSourceBuilder.EnableDynamicJson();
@@ -38,12 +49,19 @@ app.UseSerilogRequestLogging();
 app.UseStaticFiles();
 app.UseRouting();
 
-app.MapIlmarinenServer();
+// Port filtering middleware - blocks endpoints based on connection's local port
+app.UseMiddleware<PortFilteringMiddleware>();
+
+app.MapPublicEndpoints();
+app.MapWorkerEndpoints();
 app.MapHealthChecks("/health");
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 
-Log.Information("Ilmarinen Server starting on {Urls}", string.Join(", ", app.Urls));
+Log.Information(
+    "Ilmarinen Server starting - Public: {PublicPort}, Worker: {WorkerPort}",
+    serverConfig.PublicPort,
+    serverConfig.WorkerPort);
 
 app.Run();
 

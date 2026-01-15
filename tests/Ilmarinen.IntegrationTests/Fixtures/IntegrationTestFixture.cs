@@ -28,6 +28,7 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     public HttpClient HttpClient => _httpClient;
     public string ServerUrl { get; private set; } = null!;
+    public string WorkerUrl { get; private set; } = null!;
     public IServiceProvider Services => _factory.Services;
 
     public async Task SetupAsync()
@@ -37,6 +38,7 @@ public class IntegrationTestFixture : IAsyncDisposable
 
         _httpClient = _factory.CreateClient();
         ServerUrl = _factory.ServerUrl;
+        WorkerUrl = _factory.WorkerUrl;
 
         // Ensure database is migrated
         using var scope = _factory.Services.CreateScope();
@@ -46,7 +48,7 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     public async Task<Ulid> StartWorkerAsync()
     {
-        _workerBuilder = new TestWorkerBuilder(ServerUrl);
+        _workerBuilder = new TestWorkerBuilder(WorkerUrl);
         _workerHost = _workerBuilder.Build();
         _workerCts = new CancellationTokenSource();
 
