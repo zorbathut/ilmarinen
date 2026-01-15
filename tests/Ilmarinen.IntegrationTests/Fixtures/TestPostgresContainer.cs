@@ -37,12 +37,12 @@ public class TestPostgresContainer : IAsyncDisposable
 
     public async Task StartAsync()
     {
-        Port = GetAvailablePort();
         var pid = Environment.ProcessId;
 
         await PullImageIfNeededAsync();
 
         // Create container with PID label for watchdog-based cleanup
+        // Use empty HostPort to let Docker assign a random available port (avoids race conditions)
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
             Image = PostgresImage,
@@ -60,7 +60,7 @@ public class TestPostgresContainer : IAsyncDisposable
             {
                 PortBindings = new Dictionary<string, IList<PortBinding>>
                 {
-                    ["5432/tcp"] = [new() { HostPort = Port.ToString() }]
+                    ["5432/tcp"] = [new() { HostPort = "" }]
                 },
                 AutoRemove = true
             }
@@ -68,6 +68,11 @@ public class TestPostgresContainer : IAsyncDisposable
 
         _containerId = response.ID;
         await _client.Containers.StartContainerAsync(_containerId, new ContainerStartParameters());
+
+        // Get the dynamically assigned port
+        var inspect = await _client.Containers.InspectContainerAsync(_containerId);
+        var hostPort = inspect.NetworkSettings.Ports["5432/tcp"].First().HostPort;
+        Port = int.Parse(hostPort);
 
         // Spawn detached watchdog that kills containers if test process dies.
         // Uses setsid -f to create new session AND fork - this makes the watchdog:
@@ -161,12 +166,4 @@ public class TestPostgresContainer : IAsyncDisposable
         return new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock")).CreateClient();
     }
 
-    private static int GetAvailablePort()
-    {
-        using var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
-    }
 }
