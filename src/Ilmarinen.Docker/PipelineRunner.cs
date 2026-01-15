@@ -234,9 +234,9 @@ public class PipelineRunner
 
         case "$1" in
             --help|-h|help)
-                echo "ilmarinen - Container orchestration CLI"
+                echo "ilmarinen-agent - In-container agent CLI"
                 echo ""
-                echo "Usage: ilmarinen <command> [options]"
+                echo "Usage: ilmarinen-agent <command> [options]"
                 echo ""
                 echo "Commands:"
                 echo "  build [-f <dockerfile>] [-t <tag>] [--build-arg KEY=VALUE]... [<context>]"
@@ -248,26 +248,26 @@ public class PipelineRunner
                 exit 0
                 ;;
             --version|-v)
-                echo "ilmarinen 0.1.0"
+                echo "ilmarinen-agent 0.1.0"
                 exit 0
                 ;;
             info)
                 shift
-                [ -z "$1" ] && { echo "Usage: ilmarinen info <branch|commit>" >&2; exit 1; }
+                [ -z "$1" ] && { echo "Usage: ilmarinen-agent info <branch|commit>" >&2; exit 1; }
                 result=$(http_get "${API}/api/info/$1")
                 handle_error "$result" || exit $?
                 json_str "$result" "value"
                 ;;
             secret)
                 shift
-                [ "$1" != "get" ] || [ -z "$2" ] && { echo "Usage: ilmarinen secret get <name>" >&2; exit 1; }
+                [ "$1" != "get" ] || [ -z "$2" ] && { echo "Usage: ilmarinen-agent secret get <name>" >&2; exit 1; }
                 result=$(http_get "${API}/api/secret/$2")
                 handle_error "$result" || exit $?
                 printf '%s' "$(json_str "$result" "value")"
                 ;;
             run)
                 shift
-                [ -z "$1" ] && { echo "Usage: ilmarinen run <image> [-- <command>...]" >&2; exit 1; }
+                [ -z "$1" ] && { echo "Usage: ilmarinen-agent run <image> [-- <command>...]" >&2; exit 1; }
                 image="$1"; shift
                 [ "$1" = "--" ] && shift
                 # Build command JSON array
@@ -314,7 +314,7 @@ public class PipelineRunner
                             ;;
                         -*)
                             echo "Error: Unknown option: $1" >&2
-                            echo "Usage: ilmarinen build [-f <dockerfile>] [-t <tag>] [--build-arg KEY=VALUE]... [<context>]" >&2
+                            echo "Usage: ilmarinen-agent build [-f <dockerfile>] [-t <tag>] [--build-arg KEY=VALUE]... [<context>]" >&2
                             exit 1
                             ;;
                         *)
@@ -347,7 +347,7 @@ public class PipelineRunner
                 ;;
             *)
                 echo "Unknown command: $1" >&2
-                echo "Run 'ilmarinen --help' for usage." >&2
+                echo "Run 'ilmarinen-agent --help' for usage." >&2
                 exit 1
                 ;;
         esac
@@ -464,7 +464,7 @@ public class PipelineRunner
         {
             $"{_workDir}:/workspace",
             "/var/run/docker.sock:/var/run/docker.sock", // For nested containers
-            $"{shellScriptPath}:/usr/local/bin/ilmarinen:ro" // CLI shell script
+            $"{shellScriptPath}:/usr/local/bin/ilmarinen-agent:ro" // CLI shell script
         };
 
         var env = new List<string>
