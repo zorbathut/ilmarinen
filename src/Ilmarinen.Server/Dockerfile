@@ -1,6 +1,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
+# Copy git repo and build configuration for version embedding
+COPY .git .git
+COPY Directory.Build.targets ./
+
 # Copy csproj files and restore
 COPY src/Ilmarinen.Protocol/Ilmarinen.Protocol.csproj src/Ilmarinen.Protocol/
 COPY src/Ilmarinen.Database/Ilmarinen.Database.csproj src/Ilmarinen.Database/
