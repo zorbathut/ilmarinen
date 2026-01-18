@@ -27,16 +27,21 @@ public class Commands
         try
         {
             Console.WriteLine($"Loading pipeline: {script}");
-            var steps = await PipelineScript.LoadAsync(script);
+            var scriptResult = await PipelineScript.LoadAsync(script);
 
-            if (steps.Count == 0)
+            if (scriptResult.Workspace != null)
+            {
+                Console.WriteLine($"Workspace: {scriptResult.Workspace.Name} (ignored in CLI mode)");
+            }
+
+            if (scriptResult.Steps.Count == 0)
             {
                 Console.WriteLine("No steps defined in pipeline.");
                 return 0;
             }
 
             var runner = new PipelineRunner();
-            var success = await runner.RunAsync(steps);
+            var success = await runner.RunAsync(scriptResult.Steps);
 
             return success ? 0 : 1;
         }

@@ -6,6 +6,13 @@ using Ilmarinen.Models;
 namespace Ilmarinen.Scripting;
 
 /// <summary>
+/// Result of loading a pipeline script.
+/// </summary>
+public record PipelineScriptResult(
+    IReadOnlyList<Step<object?>> Steps,
+    WorkspaceConfig? Workspace);
+
+/// <summary>
 /// Loads and executes pipeline scripts.
 /// </summary>
 public class PipelineScript
@@ -13,7 +20,7 @@ public class PipelineScript
     /// <summary>
     /// Load a pipeline from a .csx file.
     /// </summary>
-    public static async Task<IReadOnlyList<Step<object?>>> LoadAsync(string path)
+    public static async Task<PipelineScriptResult> LoadAsync(string path)
     {
         var fullPath = Path.GetFullPath(path);
         var scriptDir = Path.GetDirectoryName(fullPath)!;
@@ -33,13 +40,13 @@ public class PipelineScript
 
         await CSharpScript.RunAsync(code, options, globals);
 
-        return globals.Steps;
+        return new PipelineScriptResult(globals.Steps, globals.WorkspaceConfig);
     }
 
     /// <summary>
     /// Load a pipeline from script code.
     /// </summary>
-    public static async Task<IReadOnlyList<Step<object?>>> LoadFromStringAsync(string code)
+    public static async Task<PipelineScriptResult> LoadFromStringAsync(string code)
     {
         var globals = new ScriptGlobals();
 
@@ -53,6 +60,6 @@ public class PipelineScript
 
         await CSharpScript.RunAsync(code, options, globals);
 
-        return globals.Steps;
+        return new PipelineScriptResult(globals.Steps, globals.WorkspaceConfig);
     }
 }

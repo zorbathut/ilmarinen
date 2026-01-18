@@ -1,0 +1,169 @@
+using LibGit2Sharp;
+
+namespace Ilmarinen.Worker.Services;
+
+/// <summary>
+/// Handles git operations for persistent workspaces.
+/// </summary>
+public static class WorkspaceGitHelper
+{
+    /// <summary>
+    /// Prepare a persistent workspace by cloning or updating the repository.
+    /// </summary>
+    /// <param name="path">Workspace directory path</param>
+    /// <param name="repoUrl">Expected repository URL</param>
+    /// <param name="gitRef">Git ref to checkout (branch, tag, or commit)</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown if workspace exists but is not a git repo, repo URL doesn't match, or workspace has uncommitted changes.
+    /// </exception>
+    public static void PrepareWorkspace(string path, string repoUrl, string gitRef)
+    {
+        Directory.CreateDirectory(path);
+        var gitDir = Path.Combine(path, ".git");
+
+        if (!Directory.Exists(gitDir))
+        {
+            // Empty workspace - clone
+            Repository.Clone(repoUrl, path);
+        }
+        else
+        {
+            // Existing workspace - validate and update
+            using var repo = new Repository(path);
+
+            // Validate repo URL matches
+            var origin = repo.Network.Remotes["origin"];
+            if (origin == null)
+            {
+                throw new InvalidOperationException(
+                    $"Workspace at '{path}' has no 'origin' remote configured.");
+            }
+
+            if (!UrlsMatch(origin.Url, repoUrl))
+            {
+                throw new InvalidOperationException(
+                    $"Workspace repo mismatch: workspace has '{origin.Url}', job wants '{repoUrl}'. " +
+                    $"Delete the workspace directory to resolve.");
+            }
+
+            // Check for dirty state
+            var status = repo.RetrieveStatus();
+            if (status.IsDirty)
+            {
+                throw new InvalidOperationException(
+                    $"Workspace at '{path}' has uncommitted changes. " +
+                    $"Clean it manually or delete the workspace directory.");
+            }
+
+            // Fetch latest
+            var remote = repo.Network.Remotes["origin"];
+            var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
+            Commands.Fetch(repo, remote.Name, refSpecs, new FetchOptions(), null);
+        }
+
+        // Checkout the ref
+        CheckoutRef(path, gitRef);
+    }
+
+    private static void CheckoutRef(string path, string gitRef)
+    {
+        using var repo = new Repository(path);
+
+        // Try to find the ref as a direct object (tag, commit SHA)
+        var target = repo.Lookup(gitRef);
+        if (target != null)
+        {
+            var commit = target as Commit ?? target.Peel<Commit>();
+            Commands.Checkout(repo, commit);
+            return;
+        }
+
+        // Try as a remote branch (origin/xxx)
+        var remoteBranch = repo.Branches[$"origin/{gitRef}"];
+        if (remoteBranch != null)
+        {
+            Commands.Checkout(repo, remoteBranch.Tip);
+            return;
+        }
+
+        // Try as a local branch
+        var localBranch = repo.Branches[gitRef];
+        if (localBranch != null)
+        {
+            Commands.Checkout(repo, localBranch);
+            return;
+        }
+
+        // Try looking up as a reference (refs/heads/xxx, refs/remotes/origin/xxx)
+        var reference = repo.Refs[$"refs/heads/{gitRef}"]
+            ?? repo.Refs[$"refs/remotes/origin/{gitRef}"];
+        if (reference != null)
+        {
+            var refTarget = reference.ResolveToDirectReference();
+            var commit = repo.Lookup<Commit>(refTarget.TargetIdentifier);
+            if (commit != null)
+            {
+                Commands.Checkout(repo, commit);
+                return;
+            }
+        }
+
+        // Last resort: iterate branches to find a match
+        foreach (var branch in repo.Branches)
+        {
+            if (branch.FriendlyName == gitRef ||
+                branch.FriendlyName == $"origin/{gitRef}" ||
+                branch.CanonicalName.EndsWith($"/{gitRef}"))
+            {
+                Commands.Checkout(repo, branch.Tip);
+                return;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Could not find ref '{gitRef}' in repository. " +
+            $"Tried as commit/tag, remote branch 'origin/{gitRef}', and local branch.");
+    }
+
+    private static bool UrlsMatch(string a, string b)
+    {
+        return NormalizeUrl(a) == NormalizeUrl(b);
+    }
+
+    private static string NormalizeUrl(string url)
+    {
+        // Normalize git URLs for comparison:
+        // - Remove trailing .git
+        // - Lowercase
+        // - Handle http vs https (treat as same)
+        // - Handle git@ vs https:// (treat as same host)
+
+        url = url.Trim().ToLowerInvariant();
+
+        // Remove trailing .git
+        if (url.EndsWith(".git"))
+        {
+            url = url[..^4];
+        }
+
+        // Remove trailing slash
+        url = url.TrimEnd('/');
+
+        // Convert git@host:path to https://host/path for comparison
+        if (url.StartsWith("git@"))
+        {
+            // git@github.com:org/repo -> github.com/org/repo
+            url = url[4..].Replace(":", "/");
+        }
+        else if (url.StartsWith("https://"))
+        {
+            url = url[8..];
+        }
+        else if (url.StartsWith("http://"))
+        {
+            url = url[7..];
+        }
+
+        return url;
+    }
+}

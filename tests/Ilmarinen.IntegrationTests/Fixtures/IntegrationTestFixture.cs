@@ -30,6 +30,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     public string ServerUrl { get; private set; } = null!;
     public string WorkerUrl { get; private set; } = null!;
     public IServiceProvider Services => _factory.Services;
+    public string? WorkerWorkspacePath => _workerBuilder?.WorkspacePath;
 
     public async Task SetupAsync()
     {

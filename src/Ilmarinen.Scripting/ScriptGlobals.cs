@@ -16,6 +16,27 @@ public class ScriptGlobals
     public IReadOnlyList<Step<object?>> Steps => _steps;
 
     /// <summary>
+    /// Workspace configuration for persistent workspaces (worker mode only).
+    /// </summary>
+    public WorkspaceConfig? WorkspaceConfig { get; private set; }
+
+    /// <summary>
+    /// Configure a persistent workspace for this pipeline.
+    /// In worker mode, the workspace directory persists between job runs.
+    /// In CLI mode, this is informational only (current directory is used).
+    /// </summary>
+    /// <param name="name">
+    /// Workspace name. Must be a simple name without path separators.
+    /// Only alphanumeric characters, dashes, and underscores are allowed.
+    /// </param>
+    /// <exception cref="ArgumentException">Thrown if name contains invalid characters.</exception>
+    public void Workspace(string name)
+    {
+        WorkspaceConfig.ValidateName(name);
+        WorkspaceConfig = new WorkspaceConfig(name);
+    }
+
+    /// <summary>
     /// Define a new step with no typed output.
     /// </summary>
     public ScriptStepBuilder Step(string name)
