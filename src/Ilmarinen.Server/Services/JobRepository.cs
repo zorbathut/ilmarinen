@@ -11,10 +11,12 @@ namespace Ilmarinen.Server.Services;
 public class JobRepository
 {
     private readonly IlmarinenDbContext _db;
+    private readonly ArtifactRepository _artifacts;
 
-    public JobRepository(IlmarinenDbContext db)
+    public JobRepository(IlmarinenDbContext db, ArtifactRepository artifacts)
     {
         _db = db;
+        _artifacts = artifacts;
     }
 
     public async Task<JobInfo> CreateAsync(JobSubmission submission)
@@ -38,7 +40,10 @@ public class JobRepository
     public async Task<JobInfo?> GetAsync(Ulid id)
     {
         var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
-        return job != null ? ToJobInfo(job) : null;
+        if (job == null) return null;
+
+        var artifacts = await _artifacts.GetByJobIdAsync(id);
+        return ToJobInfo(job, artifacts);
     }
 
     public async Task<JobSubmission?> GetSubmissionAsync(Ulid id)
@@ -76,7 +81,7 @@ public class JobRepository
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
 
-        return jobs.Select(ToJobInfo).ToList();
+        return jobs.Select(j => ToJobInfo(j)).ToList();
     }
 
     public async Task<IReadOnlyList<Ulid>> GetQueuedJobIdsAsync()
@@ -103,7 +108,7 @@ public class JobRepository
         return rows > 0;
     }
 
-    private static JobInfo ToJobInfo(Job job) => new()
+    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null) => new()
     {
         Id = job.Id,
         Status = job.Status,
@@ -113,6 +118,7 @@ public class JobRepository
         WorkerId = job.WorkerId,
         CreatedAt = job.CreatedAt,
         StartedAt = job.StartedAt,
-        CompletedAt = job.CompletedAt
+        CompletedAt = job.CompletedAt,
+        Artifacts = artifacts
     };
 }

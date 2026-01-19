@@ -53,6 +53,32 @@
         <h2 class="card-title">Logs</h2>
         <LogViewer JobId="@jobUlid" IsStreaming="@(job.Status == JobStatus.Running)" />
     </div>
+
+    @if (job.Status is JobStatus.Success or JobStatus.Failed && job.Artifacts?.Count > 0)
+    {
+        <div class="card" style="margin-top: 1rem;">
+            <h2 class="card-title">Artifacts</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var artifact in job.Artifacts)
+                    {
+                        <tr>
+                            <td>@artifact.Name</td>
+                            <td>@FormatSize(artifact.Size)</td>
+                            <td><a href="/api/jobs/@job.Id/artifacts/@artifact.Id/download" class="btn-download">Download</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
 }
 else if (loading)
 {
@@ -88,5 +114,14 @@ else
             job = await Jobs.GetAsync(ulid);
             StateHasChanged();
         }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes >= 1024 * 1024)
+            return $"{bytes / (1024.0 * 1024.0):F1} MB";
+        if (bytes >= 1024)
+            return $"{bytes / 1024.0:F1} KB";
+        return $"{bytes} B";
     }
 }
