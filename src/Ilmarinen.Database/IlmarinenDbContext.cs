@@ -15,6 +15,7 @@ public class IlmarinenDbContext : DbContext
     public DbSet<Job> Jobs => Set<Job>();
     public DbSet<Worker> Workers => Set<Worker>();
     public DbSet<JobLogChunk> JobLogChunks => Set<JobLogChunk>();
+    public DbSet<JobArtifact> JobArtifacts => Set<JobArtifact>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -37,6 +38,15 @@ public class IlmarinenDbContext : DbContext
             e.HasOne(c => c.Job)
                 .WithMany()
                 .HasForeignKey(c => c.JobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<JobArtifact>(e =>
+        {
+            e.HasIndex(a => a.JobId);
+            e.HasOne(a => a.Job)
+                .WithMany()
+                .HasForeignKey(a => a.JobId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

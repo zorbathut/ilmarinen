@@ -24,6 +24,8 @@ services:
       ConnectionStrings__DefaultConnection: Host=postgres;Database=ilmarinen;Username=ilmarinen;Password=ilmarinen
       Server__PublicPort: 8080
       Server__WorkerPort: 8081
+    volumes:
+      - artifacts:/data/artifacts
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,3 +50,4 @@ services:
 volumes:
   pgdata:
   worker-workspace:
+  artifacts:

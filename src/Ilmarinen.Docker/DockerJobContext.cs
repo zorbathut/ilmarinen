@@ -18,6 +18,7 @@ public class DockerJobContext : IJobContext
     private readonly string _hostWorkDir;
     private readonly string _networkName;
     private readonly Func<string, string?> _secretProvider;
+    private readonly Func<string, string?, Task<ArtifactRef>>? _artifactSaver;
     private readonly Action<string, string>? _onOutput;
     private readonly string? _userSpec;
     private readonly uint? _dockerSocketGid;
@@ -35,6 +36,7 @@ public class DockerJobContext : IJobContext
         string branch,
         string commit,
         Func<string, string?> secretProvider,
+        Func<string, string?, Task<ArtifactRef>>? artifactSaver = null,
         Action<string, string>? onOutput = null,
         string? userSpec = null,
         uint? dockerSocketGid = null)
@@ -47,6 +49,7 @@ public class DockerJobContext : IJobContext
         Branch = branch;
         Commit = commit;
         _secretProvider = secretProvider;
+        _artifactSaver = artifactSaver;
         _onOutput = onOutput;
         _userSpec = userSpec;
         _dockerSocketGid = dockerSocketGid;
@@ -361,6 +364,38 @@ public class DockerJobContext : IJobContext
         }
 
         throw new TimeoutException($"Service at {url} did not become healthy within {actualTimeout}");
+    }
+
+    public async Task<ArtifactRef> SaveArtifact(string path, string? name = null)
+    {
+        if (_artifactSaver == null)
+        {
+            throw new InvalidOperationException("Artifact saving is not configured for this context");
+        }
+
+        // Resolve path - relative paths are relative to /workspace (which is _hostWorkDir on host)
+        string hostPath;
+        if (path.StartsWith("/workspace/"))
+        {
+            hostPath = Path.Combine(_hostWorkDir, path["/workspace/".Length..]);
+        }
+        else if (path.StartsWith("/"))
+        {
+            // Absolute path outside /workspace - not supported via bind mount
+            throw new ArgumentException($"Cannot save artifact from absolute path outside /workspace: {path}");
+        }
+        else
+        {
+            // Relative path
+            hostPath = Path.Combine(_hostWorkDir, path);
+        }
+
+        if (!File.Exists(hostPath))
+        {
+            throw new FileNotFoundException($"Artifact file not found: {path}", hostPath);
+        }
+
+        return await _artifactSaver(hostPath, name);
     }
 
     internal async Task StopServiceAsync(string containerId)

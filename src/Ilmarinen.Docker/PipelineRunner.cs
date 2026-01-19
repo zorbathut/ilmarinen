@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Ilmarinen.Models;
+using NUlid;
 
 namespace Ilmarinen.Docker;
 
@@ -14,6 +15,7 @@ public class PipelineRunner
     private readonly string _workDir;
     private readonly string _hostWorkDir;
     private readonly Func<string, string?> _secretProvider;
+    private readonly Func<string, string?, Task<ArtifactRef>>? _artifactSaver;
     private readonly Action<string, string>? _onOutput;
     private readonly string? _userSpec;
     private readonly uint? _dockerSocketGid;
@@ -25,17 +27,20 @@ public class PipelineRunner
     /// <param name="hostWorkDir">Host-side path for Docker bind mounts. When running in Docker, this should be the
     /// actual host path that maps to workDir. Defaults to workDir (correct for non-containerized execution).</param>
     /// <param name="secretProvider">Function to resolve secrets (defaults to environment variables)</param>
+    /// <param name="artifactSaver">Optional custom artifact saver. If not provided, uses local filesystem storage.</param>
     /// <param name="onOutput">Optional callback for log output. First parameter is type ("o" for stdout, "e" for stderr), second is data.</param>
     public PipelineRunner(
         string? workDir = null,
         string? hostWorkDir = null,
         Func<string, string?>? secretProvider = null,
+        Func<string, string?, Task<ArtifactRef>>? artifactSaver = null,
         Action<string, string>? onOutput = null)
     {
         _client = CreateDockerClient();
         _workDir = workDir ?? Directory.GetCurrentDirectory();
         _hostWorkDir = hostWorkDir ?? _workDir;
         _secretProvider = secretProvider ?? (name => Environment.GetEnvironmentVariable(name));
+        _artifactSaver = artifactSaver;
         _onOutput = onOutput;
         _userSpec = LinuxInterop.GetUserSpec();
         _dockerSocketGid = LinuxInterop.GetDockerSocketGid();
@@ -72,6 +77,10 @@ public class PipelineRunner
         var branch = await GetGitBranch();
         var commit = await GetGitCommit();
         var networkName = $"ilmarinen-{Guid.NewGuid():N}";
+        var runId = Ulid.NewUlid();
+
+        // Set up artifact saver (use custom if provided, otherwise save to local filesystem)
+        var artifactSaver = _artifactSaver ?? CreateLocalArtifactSaver(runId);
 
         WriteInfo($"Running {steps.Count} step(s)...");
         WriteInfo($"Branch: {branch}, Commit: {commit[..Math.Min(8, commit.Length)]}");
@@ -97,7 +106,7 @@ public class PipelineRunner
 
                 try
                 {
-                    await RunStepAsync(step, image, branch, commit, networkName, apiServer);
+                    await RunStepAsync(step, image, branch, commit, networkName, apiServer, artifactSaver);
                     WriteInfo($"=== {step.Name}: SUCCESS ===");
                     WriteInfo("");
                 }
@@ -365,6 +374,44 @@ public class PipelineRunner
         esac
         """;
 
+    private Func<string, string?, Task<ArtifactRef>> CreateLocalArtifactSaver(Ulid runId)
+    {
+        var artifactDir = Path.Combine(_workDir, ".ilmarinen", "artifacts", runId.ToString());
+
+        return async (hostPath, name) =>
+        {
+            var artifactId = Ulid.NewUlid();
+            var fileName = name ?? Path.GetFileName(hostPath);
+            var safeFileName = SanitizeFileName(fileName);
+            var destFileName = $"{artifactId}-{safeFileName}";
+            var destPath = Path.Combine(artifactDir, destFileName);
+
+            Directory.CreateDirectory(artifactDir);
+
+            await using var source = File.OpenRead(hostPath);
+            await using var dest = File.Create(destPath);
+            await source.CopyToAsync(dest);
+
+            var fileInfo = new FileInfo(destPath);
+
+            WriteInfo($"Artifact saved: {fileName} ({fileInfo.Length:N0} bytes)");
+            WriteInfo($"  -> {destPath}");
+
+            return new ArtifactRef
+            {
+                Id = artifactId.ToString(),
+                Name = fileName,
+                Size = fileInfo.Length
+            };
+        };
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        return string.Concat(name.Select(c => invalid.Contains(c) ? '_' : c));
+    }
+
     private async Task CreateNetworkAsync(string name)
     {
         await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
@@ -391,7 +438,7 @@ public class PipelineRunner
     }
 
     private async Task RunStepAsync(Step<object?> step, ImageRef image, string branch, string commit,
-        string networkName, AgentApiServer apiServer)
+        string networkName, AgentApiServer apiServer, Func<string, string?, Task<ArtifactRef>> artifactSaver)
     {
         // Pull the image if needed
         await PullImageIfNeeded(image.Reference);
@@ -414,6 +461,7 @@ public class PipelineRunner
                 branch,
                 commit,
                 _secretProvider,
+                artifactSaver,
                 _onOutput,
                 _userSpec,
                 _dockerSocketGid);

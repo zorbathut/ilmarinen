@@ -49,7 +49,7 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     public async Task<Ulid> StartWorkerAsync()
     {
-        _workerBuilder = new TestWorkerBuilder(WorkerUrl);
+        _workerBuilder = new TestWorkerBuilder(WorkerUrl, ServerUrl);
         _workerHost = _workerBuilder.Build();
         _workerCts = new CancellationTokenSource();
 
@@ -123,6 +123,22 @@ public class IntegrationTestFixture : IAsyncDisposable
     {
         var response = await _httpClient.DeleteAsync($"/api/jobs/{jobId}");
         return response.IsSuccessStatusCode;
+    }
+
+    public async Task<IReadOnlyList<ArtifactInfo>> GetArtifactsAsync(Ulid jobId)
+    {
+        var response = await _httpClient.GetAsync($"/api/jobs/{jobId}/artifacts");
+        response.EnsureSuccessStatusCode();
+
+        return (await response.Content.ReadFromJsonAsync<List<ArtifactInfo>>(JsonOptions))!;
+    }
+
+    public async Task<byte[]> DownloadArtifactAsync(Ulid jobId, Ulid artifactId)
+    {
+        var response = await _httpClient.GetAsync($"/api/jobs/{jobId}/artifacts/{artifactId}/download");
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadAsByteArrayAsync();
     }
 
     public async Task StopWorkerAsync()

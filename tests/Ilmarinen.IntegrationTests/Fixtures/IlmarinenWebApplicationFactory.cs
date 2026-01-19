@@ -21,6 +21,7 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
     private WebApplication? _app;
     private bool _initialized;
+    private string? _artifactPath;
 
     public string PostgresConnectionString => _postgres.ConnectionString;
 
@@ -44,10 +45,14 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         ServerUrl = $"http://localhost:{publicPort}";
         WorkerUrl = $"http://localhost:{workerPort}";
 
+        _artifactPath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-artifacts-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_artifactPath);
+
         var serverConfig = new ServerConfig
         {
             PublicPort = publicPort,
-            WorkerPort = workerPort
+            WorkerPort = workerPort,
+            ArtifactStoragePath = _artifactPath
         };
 
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -111,5 +116,18 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
             await _app.DisposeAsync();
         }
         await _postgres.DisposeAsync();
+
+        // Clean up artifact storage
+        if (_artifactPath != null && Directory.Exists(_artifactPath))
+        {
+            try
+            {
+                Directory.Delete(_artifactPath, recursive: true);
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
     }
 }

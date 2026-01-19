@@ -1,3 +1,6 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Ilmarinen.Docker;
 using Ilmarinen.Models;
 using Ilmarinen.Protocol;
@@ -6,6 +9,7 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Scripting;
 using LibGit2Sharp;
 using Microsoft.AspNetCore.SignalR.Client;
+using NUlid;
 
 namespace Ilmarinen.Worker.Services;
 
@@ -115,12 +119,13 @@ public class JobRunner
                 _logger.LogInformation("Using ephemeral workspace at {WorkDir}", workDir);
             }
 
-            // 5. Run pipeline with log streaming
+            // 5. Run pipeline with log streaming and artifact upload
             _logger.LogInformation("Running {StepCount} step(s)...", scriptResult.Steps.Count);
 
             // Compute host path for Docker bind mounts (may differ when running in Docker)
             var hostWorkDir = Path.Combine(_config.GetHostWorkspacePath(), Path.GetFileName(workDir)!);
-            var runner = new PipelineRunner(workDir, hostWorkDir, onOutput: logCollector.AsCallback());
+            var artifactSaver = CreateArtifactSaver();
+            var runner = new PipelineRunner(workDir, hostWorkDir, artifactSaver: artifactSaver, onOutput: logCollector.AsCallback());
             var success = await runner.RunAsync(scriptResult.Steps);
 
             return new JobCompleted
@@ -202,6 +207,47 @@ public class JobRunner
         }
     }
 
+    private Func<string, string?, Task<ArtifactRef>> CreateArtifactSaver()
+    {
+        var httpClient = new HttpClient();
+        var baseUrl = _config.GetPublicApiUrl();
+
+        return async (hostPath, name) =>
+        {
+            var artifactName = name ?? Path.GetFileName(hostPath);
+
+            await using var fileStream = File.OpenRead(hostPath);
+            var fileInfo = new FileInfo(hostPath);
+
+            _logger.LogInformation("Uploading artifact {Name} ({Size} bytes)...", artifactName, fileInfo.Length);
+
+            var content = new StreamContent(fileStream);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            content.Headers.ContentLength = fileInfo.Length;
+
+            var url = $"{baseUrl}/api/jobs/{_job.Id}/artifacts?name={Uri.EscapeDataString(artifactName)}";
+
+            var response = await httpClient.PostAsync(url, content);
+            response.EnsureSuccessStatusCode();
+
+            var jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new UlidJsonConverter() }
+            };
+            var result = await response.Content.ReadFromJsonAsync<ArtifactUploadResponse>(jsonOptions);
+
+            _logger.LogInformation("Artifact uploaded: {Id} ({Name})", result!.Id, result.Name);
+
+            return new ArtifactRef
+            {
+                Id = result.Id.ToString(),
+                Name = result.Name,
+                Size = result.Size
+            };
+        };
+    }
+
     private static void SetAttributesNormal(DirectoryInfo dir)
     {
         foreach (var subDir in dir.GetDirectories())
@@ -214,4 +260,6 @@ public class JobRunner
             file.Attributes = FileAttributes.Normal;
         }
     }
+
+    private record ArtifactUploadResponse(Ulid Id, string Name, long Size);
 }

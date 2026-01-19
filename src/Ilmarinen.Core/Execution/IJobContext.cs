@@ -76,6 +76,13 @@ public interface IJobContext
     /// Wait for a service to be healthy.
     /// </summary>
     Task WaitForHealthy(string url, TimeSpan? timeout = null);
+
+    /// <summary>
+    /// Save a file from the container as an artifact.
+    /// </summary>
+    /// <param name="path">Path to the file (relative to /workspace or absolute)</param>
+    /// <param name="name">Optional artifact name. Defaults to the filename.</param>
+    Task<ArtifactRef> SaveArtifact(string path, string? name = null);
 }
 
 /// <summary>

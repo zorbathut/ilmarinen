@@ -26,6 +26,7 @@ public static class IlmarinenServerExtensions
         services.AddScoped<JobRepository>();
         services.AddScoped<JobLogRepository>();
         services.AddScoped<WorkerRepository>();
+        services.AddScoped<ArtifactRepository>();
         services.AddSingleton<JobScheduler>();
         services.AddSingleton<LogSubscriptionService>();
         services.AddSingleton<LogStreamService>();

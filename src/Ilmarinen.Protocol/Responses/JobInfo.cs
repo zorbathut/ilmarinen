@@ -16,4 +16,5 @@ public record JobInfo
     public DateTime CreatedAt { get; init; }
     public DateTime? StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
+    public IReadOnlyList<ArtifactInfo>? Artifacts { get; init; }
 }
