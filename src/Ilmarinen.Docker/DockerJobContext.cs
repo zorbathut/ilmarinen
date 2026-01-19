@@ -19,6 +19,8 @@ public class DockerJobContext : IJobContext
     private readonly string _networkName;
     private readonly Func<string, string?> _secretProvider;
     private readonly Action<string, string>? _onOutput;
+    private readonly string? _userSpec;
+    private readonly uint? _dockerSocketGid;
     private readonly List<string> _serviceContainerIds = [];
 
     public string Branch { get; }
@@ -33,7 +35,9 @@ public class DockerJobContext : IJobContext
         string branch,
         string commit,
         Func<string, string?> secretProvider,
-        Action<string, string>? onOutput = null)
+        Action<string, string>? onOutput = null,
+        string? userSpec = null,
+        uint? dockerSocketGid = null)
     {
         _client = client;
         _containerId = containerId;
@@ -44,6 +48,8 @@ public class DockerJobContext : IJobContext
         Commit = commit;
         _secretProvider = secretProvider;
         _onOutput = onOutput;
+        _userSpec = userSpec;
+        _dockerSocketGid = dockerSocketGid;
     }
 
     public async Task<CommandResult> TryExec(string command, params string[] args)
@@ -56,7 +62,8 @@ public class DockerJobContext : IJobContext
             Cmd = cmd,
             AttachStdout = true,
             AttachStderr = true,
-            WorkingDir = _workDir
+            WorkingDir = _workDir,
+            User = _userSpec
         });
 
         using var multiplexed = await _client.Exec.StartAndAttachContainerExecAsync(execCreate.ID, false);
@@ -126,7 +133,8 @@ public class DockerJobContext : IJobContext
             Cmd = cmd,
             AttachStdout = true,
             AttachStderr = true,
-            WorkingDir = _workDir
+            WorkingDir = _workDir,
+            User = _userSpec
         });
 
         using var multiplexed = await _client.Exec.StartAndAttachContainerExecAsync(execCreate.ID, false);
@@ -185,12 +193,24 @@ public class DockerJobContext : IJobContext
     }
 
     /// <summary>
+    /// Builds the docker run command with user/group and workspace settings.
+    /// </summary>
+    private string BuildDockerRunCommand(ImageRef image, string[] command)
+    {
+        var cmdStr = string.Join(" ", command.Select(c => c.Contains(' ') ? $"\"{c}\"" : c));
+        var userArg = _userSpec != null ? $"--user {_userSpec} " : "";
+        var groupArg = _dockerSocketGid.HasValue ? $"--group-add {_dockerSocketGid.Value} " : "";
+        // Set HOME and common cache dirs to /tmp when running as non-root (no passwd entry for the UID)
+        var envArg = _userSpec != null ? "-e HOME=/tmp -e DOCKER_CONFIG=/tmp/.docker " : "";
+        return $"docker run --rm {userArg}{groupArg}{envArg}-v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {image.Reference} {cmdStr}";
+    }
+
+    /// <summary>
     /// Runs a nested container with streaming output to the provided stream.
     /// </summary>
     public async Task<CommandResult> TryRunStreaming(Stream outputStream, ImageRef image, params string[] command)
     {
-        var cmdStr = string.Join(" ", command.Select(c => c.Contains(' ') ? $"\"{c}\"" : c));
-        return await TryShellStreaming(outputStream, $"docker run --rm -v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {image.Reference} {cmdStr}");
+        return await TryShellStreaming(outputStream, BuildDockerRunCommand(image, command));
     }
 
     public async Task<CommandResult> RunStreaming(Stream outputStream, ImageRef image, params string[] command)
@@ -265,9 +285,7 @@ public class DockerJobContext : IJobContext
 
     public async Task<CommandResult> TryRun(ImageRef image, params string[] command)
     {
-        var cmdStr = string.Join(" ", command.Select(c => c.Contains(' ') ? $"\"{c}\"" : c));
-        // Mount workspace and connect to network so nested containers can access files and services
-        return await TryShell($"docker run --rm -v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {image.Reference} {cmdStr}");
+        return await TryShell(BuildDockerRunCommand(image, command));
     }
 
     public async Task<CommandResult> Run(ImageRef image, params string[] command)

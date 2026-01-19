@@ -14,6 +14,8 @@ public class PipelineRunner
     private readonly string _workDir;
     private readonly Func<string, string?> _secretProvider;
     private readonly Action<string, string>? _onOutput;
+    private readonly string? _userSpec;
+    private readonly uint? _dockerSocketGid;
 
     /// <summary>
     /// Creates a new PipelineRunner.
@@ -27,6 +29,8 @@ public class PipelineRunner
         _workDir = workDir ?? Directory.GetCurrentDirectory();
         _secretProvider = secretProvider ?? (name => Environment.GetEnvironmentVariable(name));
         _onOutput = onOutput;
+        _userSpec = LinuxInterop.GetUserSpec();
+        _dockerSocketGid = LinuxInterop.GetDockerSocketGid();
     }
 
     private static DockerClient CreateDockerClient()
@@ -402,7 +406,9 @@ public class PipelineRunner
                 branch,
                 commit,
                 _secretProvider,
-                _onOutput);
+                _onOutput,
+                _userSpec,
+                _dockerSocketGid);
 
             // Set the context on the API server so CLI requests are routed correctly
             apiServer.SetContext(context);
@@ -470,7 +476,9 @@ public class PipelineRunner
         var env = new List<string>
         {
             $"ILMARINEN_API=http://host.docker.internal:{apiServer.Port}",
-            $"ILMARINEN_TOKEN={apiServer.Token}"
+            $"ILMARINEN_TOKEN={apiServer.Token}",
+            "HOME=/tmp",                  // Writable home dir when running as non-root (no passwd entry)
+            "DOCKER_CONFIG=/tmp/.docker"  // Docker CLI config dir when running as non-root
         };
 
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
@@ -482,12 +490,14 @@ public class PipelineRunner
             WorkingDir = "/workspace",
             Cmd = ["/bin/sh", "-c", "tail -f /dev/null"], // Keep container running
             Env = env,
+            User = _userSpec,
             HostConfig = new HostConfig
             {
                 Binds = binds,
                 NetworkMode = networkName,
                 AutoRemove = false,
-                ExtraHosts = ["host.docker.internal:host-gateway"]  // Enable host.docker.internal on Linux
+                ExtraHosts = ["host.docker.internal:host-gateway"],  // Enable host.docker.internal on Linux
+                GroupAdd = _dockerSocketGid.HasValue ? [_dockerSocketGid.Value.ToString()] : null
             }
         });
 
