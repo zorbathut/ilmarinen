@@ -118,7 +118,9 @@ public class JobRunner
             // 5. Run pipeline with log streaming
             _logger.LogInformation("Running {StepCount} step(s)...", scriptResult.Steps.Count);
 
-            var runner = new PipelineRunner(workDir, onOutput: logCollector.AsCallback());
+            // Compute host path for Docker bind mounts (may differ when running in Docker)
+            var hostWorkDir = Path.Combine(_config.GetHostWorkspacePath(), Path.GetFileName(workDir)!);
+            var runner = new PipelineRunner(workDir, hostWorkDir, onOutput: logCollector.AsCallback());
             var success = await runner.RunAsync(scriptResult.Steps);
 
             return new JobCompleted

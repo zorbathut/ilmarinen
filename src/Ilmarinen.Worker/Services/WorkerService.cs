@@ -1,3 +1,4 @@
+using Docker.DotNet;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
@@ -20,6 +21,9 @@ public class WorkerService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         Directory.CreateDirectory(_config.WorkspacePath);
+
+        // Discover host path for Docker bind mounts (when running in Docker)
+        _config.HostWorkspacePath = await DiscoverHostWorkspacePathAsync();
 
         _connection = new HubConnectionBuilder()
             .WithUrl($"{_config.ServerUrl}/workers")
@@ -148,5 +152,46 @@ public class WorkerService : BackgroundService
         }
 
         await base.StopAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Discovers the host-side path for the workspace when running inside Docker.
+    /// Uses Docker inspect on own container to find the mount source path.
+    /// </summary>
+    private async Task<string> DiscoverHostWorkspacePathAsync()
+    {
+        try
+        {
+            var dockerHost = Environment.GetEnvironmentVariable("DOCKER_HOST");
+            var uri = !string.IsNullOrEmpty(dockerHost)
+                ? new Uri(dockerHost)
+                : new Uri("unix:///var/run/docker.sock");
+
+            var client = new DockerClientConfiguration(uri).CreateClient();
+
+            // Container ID is typically the hostname when running in Docker
+            var containerId = System.Net.Dns.GetHostName();
+
+            var inspect = await client.Containers.InspectContainerAsync(containerId);
+            var mount = inspect.Mounts?.FirstOrDefault(m =>
+                m.Destination == _config.WorkspacePath);
+
+            if (mount?.Source != null)
+            {
+                _logger.LogInformation(
+                    "Discovered host workspace path: {HostPath} -> {ContainerPath}",
+                    mount.Source, mount.Destination);
+                return mount.Source;
+            }
+
+            _logger.LogDebug("No matching mount found for {WorkspacePath}", _config.WorkspacePath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not discover host path (not running in Docker?)");
+        }
+
+        // Fallback: assume we're not in Docker, paths are the same
+        return _config.WorkspacePath;
     }
 }

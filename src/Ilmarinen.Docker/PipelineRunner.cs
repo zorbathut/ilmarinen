@@ -12,6 +12,7 @@ public class PipelineRunner
 {
     private readonly DockerClient _client;
     private readonly string _workDir;
+    private readonly string _hostWorkDir;
     private readonly Func<string, string?> _secretProvider;
     private readonly Action<string, string>? _onOutput;
     private readonly string? _userSpec;
@@ -20,13 +21,20 @@ public class PipelineRunner
     /// <summary>
     /// Creates a new PipelineRunner.
     /// </summary>
-    /// <param name="workDir">Working directory (defaults to current directory)</param>
+    /// <param name="workDir">Working directory for local file operations (defaults to current directory)</param>
+    /// <param name="hostWorkDir">Host-side path for Docker bind mounts. When running in Docker, this should be the
+    /// actual host path that maps to workDir. Defaults to workDir (correct for non-containerized execution).</param>
     /// <param name="secretProvider">Function to resolve secrets (defaults to environment variables)</param>
     /// <param name="onOutput">Optional callback for log output. First parameter is type ("o" for stdout, "e" for stderr), second is data.</param>
-    public PipelineRunner(string? workDir = null, Func<string, string?>? secretProvider = null, Action<string, string>? onOutput = null)
+    public PipelineRunner(
+        string? workDir = null,
+        string? hostWorkDir = null,
+        Func<string, string?>? secretProvider = null,
+        Action<string, string>? onOutput = null)
     {
         _client = CreateDockerClient();
         _workDir = workDir ?? Directory.GetCurrentDirectory();
+        _hostWorkDir = hostWorkDir ?? _workDir;
         _secretProvider = secretProvider ?? (name => Environment.GetEnvironmentVariable(name));
         _onOutput = onOutput;
         _userSpec = LinuxInterop.GetUserSpec();
@@ -468,7 +476,7 @@ public class PipelineRunner
 
         var binds = new List<string>
         {
-            $"{_workDir}:/workspace",
+            $"{_hostWorkDir}:/workspace",  // Use host path for Docker bind mounts
             "/var/run/docker.sock:/var/run/docker.sock", // For nested containers
             $"{shellScriptPath}:/usr/local/bin/ilmarinen-agent:ro" // CLI shell script
         };
