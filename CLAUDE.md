@@ -140,6 +140,23 @@ SignalR hub methods:
 - **Bearer Token Auth**: AgentApiServer uses random UUID tokens per pipeline run
 - **Network Isolation**: Each pipeline run gets unique Docker network
 
+### Error Handling
+
+**Policy: Users should never trigger 500 errors.** HTTP 500 indicates a bug or infrastructure failure, not a user mistake.
+
+Use appropriate status codes:
+- **400 Bad Request** - Invalid input, malformed request
+- **404 Not Found** - Resource doesn't exist
+- **503 Service Unavailable** - Server misconfiguration (missing env vars, etc.)
+- **500 Internal Server Error** - Only for true bugs or infrastructure failures (DB down, disk full, data corruption)
+
+Implementation:
+- `ConfigurationException` → 503 with helpful message (e.g., missing `ILMARINEN_CREDENTIAL_KEY`)
+- `ExceptionHandlerMiddleware` returns ProblemDetails (RFC 7807) for all errors
+- Development mode includes full stack traces; production shows "check server logs"
+
+When adding new features, ask: "Can a user trigger this exception through normal API usage?" If yes, return a specific status code with a helpful message.
+
 ## Testing
 
 Tests use NUnit framework with `IntegrationTestFixture` for server/worker lifecycle management.

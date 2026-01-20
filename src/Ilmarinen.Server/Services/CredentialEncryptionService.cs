@@ -46,8 +46,7 @@ public class CredentialEncryptionService
         catch (FormatException)
         {
             throw new InvalidOperationException(
-                "ILMARINEN_CREDENTIAL_KEY must be valid base64. Generate one with: openssl rand -base64 32 " +
-                "and configure it in docker-compose.override.yml (see docker-compose.override.yml.example).");
+                "ILMARINEN_CREDENTIAL_KEY must be valid base64. Generate one with: openssl rand -base64 32");
         }
 
         _isPlaceholder = false;
@@ -69,18 +68,16 @@ public class CredentialEncryptionService
 
         if (_isPlaceholder)
         {
-            throw new InvalidOperationException(
+            throw new ConfigurationException(
                 "Cannot store Git tokens: ILMARINEN_CREDENTIAL_KEY is set to the placeholder value. " +
-                "Generate a real key with: openssl rand -base64 32 " +
-                "and configure it in docker-compose.override.yml (see docker-compose.override.yml.example).");
+                "The server administrator must generate a real key with: openssl rand -base64 32");
         }
 
         if (_key == null)
         {
-            throw new InvalidOperationException(
-                "Cannot store Git tokens: ILMARINEN_CREDENTIAL_KEY is not configured. " +
-                "Generate a key with: openssl rand -base64 32 " +
-                "and configure it in docker-compose.override.yml (see docker-compose.override.yml.example).");
+            throw new ConfigurationException(
+                "Cannot store Git tokens: the server does not have ILMARINEN_CREDENTIAL_KEY configured. " +
+                "The server administrator must generate a key with: openssl rand -base64 32");
         }
 
         var plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
@@ -110,14 +107,14 @@ public class CredentialEncryptionService
 
         if (_isPlaceholder)
         {
-            throw new InvalidOperationException(
+            throw new ConfigurationException(
                 "Cannot decrypt Git tokens: ILMARINEN_CREDENTIAL_KEY is set to the placeholder value. " +
                 "Configure the real key that was used to encrypt the data.");
         }
 
         if (_key == null)
         {
-            throw new InvalidOperationException(
+            throw new ConfigurationException(
                 "Cannot decrypt: ILMARINEN_CREDENTIAL_KEY not configured but encrypted data found.");
         }
 

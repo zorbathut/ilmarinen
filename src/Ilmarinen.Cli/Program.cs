@@ -100,9 +100,7 @@ public class Commands
 
         if (!response.IsSuccessStatusCode)
         {
-            Console.Error.WriteLine($"Error: {response.StatusCode}");
-            var error = await response.Content.ReadAsStringAsync();
-            Console.Error.WriteLine(error);
+            await WriteErrorAsync(response);
             return 1;
         }
 
@@ -125,7 +123,7 @@ public class Commands
 
         if (!response.IsSuccessStatusCode)
         {
-            Console.Error.WriteLine($"Error: {response.StatusCode}");
+            await WriteErrorAsync(response);
             return 1;
         }
 
@@ -149,9 +147,47 @@ public class Commands
 
         return job.Status == JobStatus.Success ? 0 : 1;
     }
+
+    private static async Task WriteErrorAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        var statusCode = (int)response.StatusCode;
+
+        // Try to parse as ProblemDetails (RFC 7807)
+        try
+        {
+            var problem = JsonSerializer.Deserialize<ProblemDetails>(body,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (!string.IsNullOrEmpty(problem?.Detail))
+            {
+                Console.Error.WriteLine($"Server error ({statusCode}): {problem.Detail}");
+                return;
+            }
+        }
+        catch (JsonException)
+        {
+            // Not valid JSON, fall through to raw output
+        }
+
+        // Fallback: show status code and raw body
+        Console.Error.WriteLine($"Server error: {statusCode} {response.ReasonPhrase}");
+        if (!string.IsNullOrWhiteSpace(body))
+            Console.Error.WriteLine(body);
+    }
 }
 
 record JobSubmissionResult
 {
     public required Ulid Id { get; init; }
+}
+
+/// <summary>
+/// RFC 7807 ProblemDetails for parsing server error responses.
+/// </summary>
+record ProblemDetails
+{
+    public int? Status { get; init; }
+    public string? Title { get; init; }
+    public string? Detail { get; init; }
 }

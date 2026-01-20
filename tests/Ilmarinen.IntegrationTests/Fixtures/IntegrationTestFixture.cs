@@ -86,7 +86,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     public async Task<Ulid> SubmitJobAsync(JobSubmission submission)
     {
         var response = await _httpClient.PostAsJsonAsync("/api/jobs", submission, JsonOptions);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
 
         var result = await response.Content.ReadFromJsonAsync<JobSubmissionResult>(JsonOptions);
         return result!.Id;
@@ -95,7 +95,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     public async Task<JobInfo> GetJobAsync(Ulid jobId)
     {
         var response = await _httpClient.GetAsync($"/api/jobs/{jobId}");
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
 
         return (await response.Content.ReadFromJsonAsync<JobInfo>(JsonOptions))!;
     }
@@ -128,7 +128,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     public async Task<IReadOnlyList<ArtifactInfo>> GetArtifactsAsync(Ulid jobId)
     {
         var response = await _httpClient.GetAsync($"/api/jobs/{jobId}/artifacts");
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
 
         return (await response.Content.ReadFromJsonAsync<List<ArtifactInfo>>(JsonOptions))!;
     }
@@ -136,7 +136,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     public async Task<byte[]> DownloadArtifactAsync(Ulid jobId, Ulid artifactId)
     {
         var response = await _httpClient.GetAsync($"/api/jobs/{jobId}/artifacts/{artifactId}/download");
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
 
         return await response.Content.ReadAsByteArrayAsync();
     }
@@ -166,5 +166,15 @@ public class IntegrationTestFixture : IAsyncDisposable
         await StopWorkerAsync();
         _httpClient?.Dispose();
         await _factory.DisposeAsync();
+    }
+
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response)
+    {
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            throw new HttpRequestException(
+                $"HTTP {(int)response.StatusCode} {response.StatusCode}: {body}");
+        }
     }
 }
