@@ -103,7 +103,7 @@ public class JobRunner
                     DeleteDirectory(tempDir);
 
                     // Validate and update existing workspace
-                    WorkspaceGitHelper.PrepareWorkspace(workDir, _job.RepoUrl, _job.Ref);
+                    WorkspaceGitHelper.PrepareWorkspace(workDir, _job.RepoUrl, _job.Ref, _job.GitToken);
                 }
                 else
                 {
@@ -176,7 +176,19 @@ public class JobRunner
 
     private void CloneRepository(string workDir)
     {
-        Repository.Clone(_job.RepoUrl, workDir);
+        var options = new CloneOptions();
+
+        if (!string.IsNullOrEmpty(_job.GitToken))
+        {
+            options.FetchOptions.CredentialsProvider = (url, user, types) =>
+                new UsernamePasswordCredentials
+                {
+                    Username = "git",
+                    Password = _job.GitToken
+                };
+        }
+
+        Repository.Clone(_job.RepoUrl, workDir, options);
     }
 
     private void CheckoutRef(string workDir)

@@ -96,7 +96,8 @@ public class JobScheduler
             Id = jobId,
             RepoUrl = submission.RepoUrl,
             Ref = submission.Ref,
-            ScriptPath = submission.ScriptPath
+            ScriptPath = submission.ScriptPath,
+            GitToken = submission.GitToken
         };
 
         await jobs.UpdateStatusAsync(jobId, JobStatus.Running, worker.Id);

@@ -12,11 +12,13 @@ public class JobRepository
 {
     private readonly IlmarinenDbContext _db;
     private readonly ArtifactRepository _artifacts;
+    private readonly CredentialEncryptionService _encryption;
 
-    public JobRepository(IlmarinenDbContext db, ArtifactRepository artifacts)
+    public JobRepository(IlmarinenDbContext db, ArtifactRepository artifacts, CredentialEncryptionService encryption)
     {
         _db = db;
         _artifacts = artifacts;
+        _encryption = encryption;
     }
 
     public async Task<JobInfo> CreateAsync(JobSubmission submission)
@@ -28,7 +30,8 @@ public class JobRepository
             RepoUrl = submission.RepoUrl,
             Ref = submission.Ref,
             ScriptPath = submission.ScriptPath,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            EncryptedGitToken = _encryption.Encrypt(submission.GitToken)
         };
 
         _db.Jobs.Add(job);
@@ -53,7 +56,8 @@ public class JobRepository
         {
             RepoUrl = job.RepoUrl,
             Ref = job.Ref,
-            ScriptPath = job.ScriptPath
+            ScriptPath = job.ScriptPath,
+            GitToken = _encryption.Decrypt(job.EncryptedGitToken)
         } : null;
     }
 
@@ -69,7 +73,10 @@ public class JobRepository
                 job.StartedAt = DateTime.UtcNow;
 
             if (status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled)
+            {
                 job.CompletedAt = DateTime.UtcNow;
+                job.EncryptedGitToken = null; // Clear token after job completion
+            }
 
             await _db.SaveChangesAsync();
         }

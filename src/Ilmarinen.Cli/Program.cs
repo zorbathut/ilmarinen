@@ -60,8 +60,12 @@ public class Commands
         [Option('s', Description = "Server URL")] string server,
         [Option('r', Description = "Repository URL")] string repo,
         [Option("ref", Description = "Git ref")] string gitRef = "main",
-        [Option(Description = "Script path")] string script = "pipeline.csx")
+        [Option(Description = "Script path")] string script = "pipeline.csx",
+        [Option('t', Description = "Git token for HTTPS authentication (or set ILMARINEN_GIT_TOKEN)")] string? token = null)
     {
+        // Use environment variable as fallback for token
+        var gitToken = token ?? Environment.GetEnvironmentVariable("ILMARINEN_GIT_TOKEN");
+
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         jsonOptions.Converters.Add(new UlidJsonConverter());
 
@@ -88,7 +92,8 @@ public class Commands
         {
             RepoUrl = repo,
             Ref = gitRef,
-            ScriptPath = script
+            ScriptPath = script,
+            GitToken = gitToken
         };
 
         var response = await http.PostAsJsonAsync($"{server}/api/jobs", submission);

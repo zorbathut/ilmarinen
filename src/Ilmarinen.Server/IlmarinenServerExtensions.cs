@@ -23,6 +23,7 @@ public static class IlmarinenServerExtensions
                 options.PayloadSerializerOptions.Converters.Add(new UlidJsonConverter());
             });
 
+        services.AddSingleton<CredentialEncryptionService>();
         services.AddScoped<JobRepository>();
         services.AddScoped<JobLogRepository>();
         services.AddScoped<WorkerRepository>();

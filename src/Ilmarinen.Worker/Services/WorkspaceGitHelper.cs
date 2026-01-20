@@ -13,10 +13,11 @@ public static class WorkspaceGitHelper
     /// <param name="path">Workspace directory path</param>
     /// <param name="repoUrl">Expected repository URL</param>
     /// <param name="gitRef">Git ref to checkout (branch, tag, or commit)</param>
+    /// <param name="gitToken">Optional Git token for HTTPS authentication</param>
     /// <exception cref="InvalidOperationException">
     /// Thrown if workspace exists but is not a git repo, repo URL doesn't match, or workspace has uncommitted changes.
     /// </exception>
-    public static void PrepareWorkspace(string path, string repoUrl, string gitRef)
+    public static void PrepareWorkspace(string path, string repoUrl, string gitRef, string? gitToken = null)
     {
         Directory.CreateDirectory(path);
         var gitDir = Path.Combine(path, ".git");
@@ -24,7 +25,17 @@ public static class WorkspaceGitHelper
         if (!Directory.Exists(gitDir))
         {
             // Empty workspace - clone
-            Repository.Clone(repoUrl, path);
+            var cloneOptions = new CloneOptions();
+            if (!string.IsNullOrEmpty(gitToken))
+            {
+                cloneOptions.FetchOptions.CredentialsProvider = (url, user, types) =>
+                    new UsernamePasswordCredentials
+                    {
+                        Username = "git",
+                        Password = gitToken
+                    };
+            }
+            Repository.Clone(repoUrl, path, cloneOptions);
         }
         else
         {
@@ -58,7 +69,17 @@ public static class WorkspaceGitHelper
             // Fetch latest
             var remote = repo.Network.Remotes["origin"];
             var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
-            Commands.Fetch(repo, remote.Name, refSpecs, new FetchOptions(), null);
+            var fetchOptions = new FetchOptions();
+            if (!string.IsNullOrEmpty(gitToken))
+            {
+                fetchOptions.CredentialsProvider = (url, user, types) =>
+                    new UsernamePasswordCredentials
+                    {
+                        Username = "git",
+                        Password = gitToken
+                    };
+            }
+            Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
         }
 
         // Checkout the ref

@@ -1,0 +1,8 @@
+# Copy this file to docker-compose.override.yml and add your real key.
+# docker-compose.override.yml is gitignored and will not be committed.
+#
+# Generate a key with: openssl rand -base64 32
+services:
+  server:
+    environment:
+      ILMARINEN_CREDENTIAL_KEY: "your-base64-key-here"

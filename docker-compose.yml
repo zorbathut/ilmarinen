@@ -24,6 +24,9 @@ services:
       ConnectionStrings__DefaultConnection: Host=postgres;Database=ilmarinen;Username=ilmarinen;Password=ilmarinen
       Server__PublicPort: 8080
       Server__WorkerPort: 8081
+      # IMPORTANT: Replace with a real 32-byte base64 key before using private repos
+      # Generate one with: openssl rand -base64 32
+      ILMARINEN_CREDENTIAL_KEY: "REPLACE-ME-WITH-REAL-KEY-GENERATED-VIA-openssl-rand-base64-32"
     volumes:
       - artifacts:/data/artifacts
     depends_on:
