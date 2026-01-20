@@ -19,24 +19,26 @@ public class JobRunner
     private readonly JobAssignment _job;
     private readonly HubConnection _connection;
     private readonly ILogger _logger;
+    private readonly LogCollector _logCollector;
 
     public JobRunner(
         WorkerConfig config,
         JobAssignment job,
         HubConnection connection,
-        ILogger logger)
+        ILogger logger,
+        LogCollector logCollector)
     {
         _config = config;
         _job = job;
         _connection = connection;
         _logger = logger;
+        _logCollector = logCollector;
     }
 
     public async Task<JobCompleted> ExecuteAsync()
     {
         // Start with a temporary directory to clone and read the script
         var tempDir = Path.Combine(_config.WorkspacePath, _job.Id.ToString());
-        var logCollector = new LogCollector(_job.Id, _connection);
         string? workDir = null;
         WorkspaceConfig? workspaceConfig = null;
 
@@ -125,7 +127,7 @@ public class JobRunner
             // Compute host path for Docker bind mounts (may differ when running in Docker)
             var hostWorkDir = Path.Combine(_config.GetHostWorkspacePath(), Path.GetFileName(workDir)!);
             var artifactSaver = CreateArtifactSaver();
-            var runner = new PipelineRunner(workDir, hostWorkDir, artifactSaver: artifactSaver, onOutput: logCollector.AsCallback());
+            var runner = new PipelineRunner(workDir, hostWorkDir, artifactSaver: artifactSaver, onOutput: _logCollector.AsCallback());
             var success = await runner.RunAsync(scriptResult.Steps);
 
             return new JobCompleted
@@ -139,7 +141,7 @@ public class JobRunner
             // Flush any remaining logs
             try
             {
-                await logCollector.FlushAsync();
+                await _logCollector.FlushAsync();
             }
             catch (Exception ex)
             {

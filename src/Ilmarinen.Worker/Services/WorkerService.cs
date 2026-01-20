@@ -114,12 +114,13 @@ public class WorkerService : BackgroundService
         _logger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
 
         var startTime = DateTime.UtcNow;
+        var logCollector = new LogCollector(job.Id, _connection!);
 
         try
         {
             await _connection!.SendAsync("JobStarted", job.Id);
 
-            var runner = new JobRunner(_config, job, _connection!, _logger);
+            var runner = new JobRunner(_config, job, _connection!, _logger, logCollector);
             var result = await runner.ExecuteAsync();
 
             result = result with { Duration = DateTime.UtcNow - startTime };
@@ -130,6 +131,10 @@ public class WorkerService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Job {JobId} failed with exception", job.Id);
+
+            // Stream exception to server logs
+            logCollector.WriteStderr($"Job failed with exception: {ex}");
+            await logCollector.FlushAsync();
 
             await _connection!.SendAsync("JobCompleted", job.Id, new JobCompleted
             {
