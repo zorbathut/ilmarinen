@@ -127,7 +127,12 @@ public class JobRunner
             // Compute host path for Docker bind mounts (may differ when running in Docker)
             var hostWorkDir = Path.Combine(_config.GetHostWorkspacePath(), Path.GetFileName(workDir)!);
             var artifactSaver = CreateArtifactSaver();
-            var runner = new PipelineRunner(workDir, hostWorkDir, artifactSaver: artifactSaver, onOutput: _logCollector.AsCallback());
+            var runner = new PipelineRunner(
+                workDir,
+                hostWorkDir,
+                _config.WorkerContainerId,
+                artifactSaver: artifactSaver,
+                onOutput: _logCollector.AsCallback());
             var success = await runner.RunAsync(scriptResult.Steps);
 
             return new JobCompleted

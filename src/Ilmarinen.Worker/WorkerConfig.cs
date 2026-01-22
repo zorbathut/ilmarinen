@@ -25,6 +25,13 @@ public class WorkerConfig
     /// </summary>
     public string HostWorkspacePath { get; set; } = "";
 
+    /// <summary>
+    /// Container ID of the worker when running in Docker-in-Docker.
+    /// Used to connect the worker to job networks for AgentApiServer communication.
+    /// Null when running outside of Docker.
+    /// </summary>
+    public string? WorkerContainerId { get; set; }
+
     public string GetHostWorkspacePath() =>
         string.IsNullOrEmpty(HostWorkspacePath) ? WorkspacePath : HostWorkspacePath;
 

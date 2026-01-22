@@ -22,8 +22,10 @@ public class WorkerService : BackgroundService
     {
         Directory.CreateDirectory(_config.WorkspacePath);
 
-        // Discover host path for Docker bind mounts (when running in Docker)
-        _config.HostWorkspacePath = await DiscoverHostWorkspacePathAsync();
+        // Discover Docker environment (host path for bind mounts, container ID for networking)
+        var (hostPath, containerId) = await DiscoverDockerEnvironmentAsync();
+        _config.HostWorkspacePath = hostPath;
+        _config.WorkerContainerId = containerId;
 
         _connection = new HubConnectionBuilder()
             .WithUrl($"{_config.ServerUrl}/workers")
@@ -162,8 +164,9 @@ public class WorkerService : BackgroundService
     /// <summary>
     /// Discovers the host-side path for the workspace when running inside Docker.
     /// Uses Docker inspect on own container to find the mount source path.
+    /// Also captures the worker container ID for Docker-in-Docker networking.
     /// </summary>
-    private async Task<string> DiscoverHostWorkspacePathAsync()
+    private async Task<(string hostPath, string? containerId)> DiscoverDockerEnvironmentAsync()
     {
         try
         {
@@ -186,7 +189,10 @@ public class WorkerService : BackgroundService
                 _logger.LogInformation(
                     "Discovered host workspace path: {HostPath} -> {ContainerPath}",
                     mount.Source, mount.Destination);
-                return mount.Source;
+                _logger.LogInformation(
+                    "Running in Docker container: {ContainerId}",
+                    containerId);
+                return (mount.Source, containerId);
             }
 
             _logger.LogDebug("No matching mount found for {WorkspacePath}", _config.WorkspacePath);
@@ -197,6 +203,6 @@ public class WorkerService : BackgroundService
         }
 
         // Fallback: assume we're not in Docker, paths are the same
-        return _config.WorkspacePath;
+        return (_config.WorkspacePath, null);
     }
 }

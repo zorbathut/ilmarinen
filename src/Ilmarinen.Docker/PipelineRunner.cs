@@ -14,6 +14,7 @@ public class PipelineRunner
     private readonly DockerClient _client;
     private readonly string _workDir;
     private readonly string _hostWorkDir;
+    private readonly string? _workerContainerId;
     private readonly Func<string, string?> _secretProvider;
     private readonly Func<string, string?, Task<ArtifactRef>>? _artifactSaver;
     private readonly Action<string, string>? _onOutput;
@@ -26,12 +27,15 @@ public class PipelineRunner
     /// <param name="workDir">Working directory for local file operations (defaults to current directory)</param>
     /// <param name="hostWorkDir">Host-side path for Docker bind mounts. When running in Docker, this should be the
     /// actual host path that maps to workDir. Defaults to workDir (correct for non-containerized execution).</param>
+    /// <param name="workerContainerId">Container ID of the worker when running in Docker-in-Docker.
+    /// Used to connect the worker to job networks for AgentApiServer communication.</param>
     /// <param name="secretProvider">Function to resolve secrets (defaults to environment variables)</param>
     /// <param name="artifactSaver">Optional custom artifact saver. If not provided, uses local filesystem storage.</param>
     /// <param name="onOutput">Optional callback for log output. First parameter is type ("o" for stdout, "e" for stderr), second is data.</param>
     public PipelineRunner(
         string? workDir = null,
         string? hostWorkDir = null,
+        string? workerContainerId = null,
         Func<string, string?>? secretProvider = null,
         Func<string, string?, Task<ArtifactRef>>? artifactSaver = null,
         Action<string, string>? onOutput = null)
@@ -39,6 +43,7 @@ public class PipelineRunner
         _client = CreateDockerClient();
         _workDir = workDir ?? Directory.GetCurrentDirectory();
         _hostWorkDir = hostWorkDir ?? _workDir;
+        _workerContainerId = workerContainerId;
         _secretProvider = secretProvider ?? (name => Environment.GetEnvironmentVariable(name));
         _artifactSaver = artifactSaver;
         _onOutput = onOutput;
@@ -126,22 +131,6 @@ public class PipelineRunner
             // Clean up the network
             await RemoveNetworkAsync(networkName);
         }
-    }
-
-    private static string? _shellScriptPath;
-
-    private static string GetOrCreateShellScript()
-    {
-        if (_shellScriptPath != null && File.Exists(_shellScriptPath))
-            return _shellScriptPath;
-
-        _shellScriptPath = Path.Combine(Path.GetTempPath(), $"ilmarinen-cli-{Guid.NewGuid():N}.sh");
-        File.WriteAllText(_shellScriptPath, ShellScript);
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(_shellScriptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-        }
-        return _shellScriptPath;
     }
 
     private const string ShellScript = """
@@ -374,6 +363,91 @@ public class PipelineRunner
         esac
         """;
 
+    /// <summary>
+    /// Creates a minimal POSIX tar archive containing a single executable script.
+    /// </summary>
+    /// <remarks>
+    /// Why inline tar creation instead of bind mounting the script?
+    ///
+    /// In Docker-in-Docker scenarios (e.g., workers running inside containers), bind mounts
+    /// reference paths on the Docker *host*, not the intermediate container. If we write
+    /// the script to /tmp/foo.sh inside a worker container and try to bind-mount it into
+    /// a job container, Docker looks for /tmp/foo.sh on the actual host where it doesn't
+    /// exist, causing "Permission denied" errors.
+    ///
+    /// By using ExtractArchiveToContainerAsync, we copy the script directly into the
+    /// container's filesystem, bypassing path mapping issues entirely. We create the tar
+    /// inline (rather than using a library) because POSIX tar is simple enough that adding
+    /// a dependency isn't worth it for a single small file.
+    /// </remarks>
+    private static MemoryStream CreateTarWithScript(string scriptContent, string fileName)
+    {
+        var stream = new MemoryStream();
+        var contentBytes = System.Text.Encoding.UTF8.GetBytes(scriptContent);
+
+        // Create 512-byte tar header
+        var header = new byte[512];
+
+        // Name (100 bytes at offset 0)
+        var nameBytes = System.Text.Encoding.ASCII.GetBytes(fileName);
+        Array.Copy(nameBytes, 0, header, 0, Math.Min(nameBytes.Length, 100));
+
+        // Mode (8 bytes at offset 100) - 0755 in octal ASCII
+        var modeBytes = System.Text.Encoding.ASCII.GetBytes("0000755\0");
+        Array.Copy(modeBytes, 0, header, 100, 8);
+
+        // UID (8 bytes at offset 108) - 0
+        var uidBytes = System.Text.Encoding.ASCII.GetBytes("0000000\0");
+        Array.Copy(uidBytes, 0, header, 108, 8);
+
+        // GID (8 bytes at offset 116) - 0
+        var gidBytes = System.Text.Encoding.ASCII.GetBytes("0000000\0");
+        Array.Copy(gidBytes, 0, header, 116, 8);
+
+        // Size (12 bytes at offset 124) - octal ASCII, space-terminated
+        var sizeOctal = Convert.ToString(contentBytes.Length, 8).PadLeft(11, '0');
+        var sizeBytes = System.Text.Encoding.ASCII.GetBytes(sizeOctal + " ");
+        Array.Copy(sizeBytes, 0, header, 124, 12);
+
+        // Mtime (12 bytes at offset 136) - 0
+        var mtimeBytes = System.Text.Encoding.ASCII.GetBytes("00000000000\0");
+        Array.Copy(mtimeBytes, 0, header, 136, 12);
+
+        // Checksum placeholder (8 bytes at offset 148) - spaces for calculation
+        for (int i = 148; i < 156; i++) header[i] = (byte)' ';
+
+        // Type flag (1 byte at offset 156) - '0' for regular file
+        header[156] = (byte)'0';
+
+        // Calculate checksum (sum of all header bytes treating checksum field as spaces)
+        int checksum = 0;
+        for (int i = 0; i < 512; i++) checksum += header[i];
+
+        // Write checksum (6 octal digits + null + space)
+        var checksumOctal = Convert.ToString(checksum, 8).PadLeft(6, '0');
+        var checksumBytes = System.Text.Encoding.ASCII.GetBytes(checksumOctal + "\0 ");
+        Array.Copy(checksumBytes, 0, header, 148, 8);
+
+        // Write header
+        stream.Write(header, 0, 512);
+
+        // Write file content
+        stream.Write(contentBytes, 0, contentBytes.Length);
+
+        // Pad to 512-byte boundary
+        var padding = (512 - (contentBytes.Length % 512)) % 512;
+        if (padding > 0)
+        {
+            stream.Write(new byte[padding], 0, padding);
+        }
+
+        // Write two 512-byte zero blocks as end marker
+        stream.Write(new byte[1024], 0, 1024);
+
+        stream.Position = 0;
+        return stream;
+    }
+
     private Func<string, string?, Task<ArtifactRef>> CreateLocalArtifactSaver(Ulid runId)
     {
         var artifactDir = Path.Combine(_workDir, ".ilmarinen", "artifacts", runId.ToString());
@@ -423,10 +497,36 @@ public class PipelineRunner
                 ["ilmarinen.test.pid"] = Environment.ProcessId.ToString()
             }
         });
+
+        // In Docker-in-Docker: connect worker container to the network so job containers
+        // can reach the AgentApiServer via Docker DNS
+        if (_workerContainerId != null)
+        {
+            await _client.Networks.ConnectNetworkAsync(name, new NetworkConnectParameters
+            {
+                Container = _workerContainerId
+            });
+        }
     }
 
     private async Task RemoveNetworkAsync(string name)
     {
+        // In Docker-in-Docker: disconnect worker container first
+        if (_workerContainerId != null)
+        {
+            try
+            {
+                await _client.Networks.DisconnectNetworkAsync(name, new NetworkDisconnectParameters
+                {
+                    Container = _workerContainerId
+                });
+            }
+            catch
+            {
+                // Best effort cleanup
+            }
+        }
+
         try
         {
             await _client.Networks.DeleteNetworkAsync(name);
@@ -448,6 +548,15 @@ public class PipelineRunner
         // Create and start the container
         var containerId = await CreateContainerAsync(image.Reference, networkName, apiServer);
 
+        // Copy agent script into container (avoids bind mount path issues in Docker-in-Docker)
+        using (var tarStream = CreateTarWithScript(ShellScript, "ilmarinen-agent"))
+        {
+            await _client.Containers.ExtractArchiveToContainerAsync(
+                containerId,
+                new ContainerPathStatParameters { Path = "/usr/local/bin", AllowOverwriteDirWithFile = false },
+                tarStream);
+        }
+
         try
         {
             await _client.Containers.StartContainerAsync(containerId, new ContainerStartParameters());
@@ -456,7 +565,7 @@ public class PipelineRunner
                 _client,
                 containerId,
                 "/workspace",
-                _workDir,
+                _hostWorkDir,
                 networkName,
                 branch,
                 commit,
@@ -520,18 +629,19 @@ public class PipelineRunner
     private async Task<string> CreateContainerAsync(string image, string networkName,
         AgentApiServer apiServer)
     {
-        var shellScriptPath = GetOrCreateShellScript();
-
         var binds = new List<string>
         {
             $"{_hostWorkDir}:/workspace",  // Use host path for Docker bind mounts
-            "/var/run/docker.sock:/var/run/docker.sock", // For nested containers
-            $"{shellScriptPath}:/usr/local/bin/ilmarinen-agent:ro" // CLI shell script
+            "/var/run/docker.sock:/var/run/docker.sock" // For nested containers
         };
+
+        // In Docker-in-Docker: use the worker container ID as the API host (Docker DNS resolves it)
+        // Otherwise: use host.docker.internal to reach the host machine
+        var apiHost = _workerContainerId ?? "host.docker.internal";
 
         var env = new List<string>
         {
-            $"ILMARINEN_API=http://host.docker.internal:{apiServer.Port}",
+            $"ILMARINEN_API=http://{apiHost}:{apiServer.Port}",
             $"ILMARINEN_TOKEN={apiServer.Token}",
             "HOME=/tmp",                  // Writable home dir when running as non-root (no passwd entry)
             "DOCKER_CONFIG=/tmp/.docker"  // Docker CLI config dir when running as non-root
