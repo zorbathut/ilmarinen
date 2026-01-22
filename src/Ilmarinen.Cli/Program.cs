@@ -105,7 +105,8 @@ public class Commands
         }
 
         var result = await response.Content.ReadFromJsonAsync<JobSubmissionResult>(jsonOptions);
-        Console.WriteLine($"Job submitted: {result?.Id}");
+        var jobUrl = $"{server.TrimEnd('/')}/jobs/{result?.Id}";
+        Console.WriteLine($"Job submitted: {jobUrl}");
         return 0;
     }
 
