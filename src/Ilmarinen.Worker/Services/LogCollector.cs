@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using Ilmarinen.Protocol.Requests;
@@ -16,9 +17,11 @@ public class LogCollector
     private readonly HubConnection _connection;
     private readonly StringBuilder _buffer = new();
     private readonly object _lock = new();
+    private readonly ConcurrentQueue<Task> _pendingFlushes = new();
     private int _sequenceNumber;
     private long _totalBytes;
     private DateTime _lastFlush = DateTime.UtcNow;
+    private volatile bool _draining;
 
     private const int FlushBytes = 4096;
     private const int FlushMs = 100;
@@ -37,7 +40,7 @@ public class LogCollector
     /// </summary>
     public void Write(string type, string data)
     {
-        if (string.IsNullOrEmpty(data)) return;
+        if (string.IsNullOrEmpty(data) || _draining) return;
 
         var entry = JsonSerializer.Serialize(new
         {
@@ -52,7 +55,32 @@ public class LogCollector
             _totalBytes += data.Length;
         }
 
-        _ = TryFlushAsync();
+        // Track pending flush task to ensure we can drain before shutdown
+        var flushTask = TryFlushAsync();
+        _pendingFlushes.Enqueue(flushTask);
+
+        // Periodically clean up completed tasks to prevent unbounded growth
+        CleanupCompletedFlushes();
+    }
+
+    private void CleanupCompletedFlushes()
+    {
+        // Only clean up occasionally to avoid overhead
+        if (_pendingFlushes.Count < 100) return;
+
+        var remaining = new List<Task>();
+        while (_pendingFlushes.TryDequeue(out var task))
+        {
+            if (!task.IsCompleted)
+            {
+                remaining.Add(task);
+            }
+        }
+
+        foreach (var task in remaining)
+        {
+            _pendingFlushes.Enqueue(task);
+        }
     }
 
     public void WriteStdout(string data) => Write("o", data);
@@ -65,6 +93,9 @@ public class LogCollector
 
     private async Task TryFlushAsync()
     {
+        // Don't flush if we're draining - FlushAsync will handle it
+        if (_draining) return;
+
         string? chunk = null;
         int seq = 0;
 
@@ -87,10 +118,15 @@ public class LogCollector
     }
 
     /// <summary>
-    /// Flush any remaining buffered output.
+    /// Flush any remaining buffered output and wait for all pending flushes to complete.
+    /// After calling this method, no new writes will be accepted.
     /// </summary>
     public async Task FlushAsync()
     {
+        // Prevent new writes from queuing more flushes
+        _draining = true;
+
+        // Flush the current buffer
         string chunk;
         int seq;
 
@@ -104,6 +140,18 @@ public class LogCollector
         if (!string.IsNullOrEmpty(chunk))
         {
             await SendChunkAsync(seq, chunk);
+        }
+
+        // Wait for all pending flush tasks to complete
+        var pendingTasks = new List<Task>();
+        while (_pendingFlushes.TryDequeue(out var task))
+        {
+            pendingTasks.Add(task);
+        }
+
+        if (pendingTasks.Count > 0)
+        {
+            await Task.WhenAll(pendingTasks);
         }
     }
 
