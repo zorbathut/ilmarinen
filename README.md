@@ -19,7 +19,7 @@ A container-native CI/CD system where pipelines are defined in C#.
 
 ```bash
 # Run a pipeline locally
-dotnet run --project src/Ilmarinen.Cli -- examples/hello.csx
+dotnet run --project src/Ilmarinen.Cli -- examples/hello.ilmarinen.csx
 ```
 
 ### Server Mode
@@ -193,10 +193,10 @@ dotnet build
 dotnet test
 
 # Run locally
-dotnet run --project src/Ilmarinen.Cli -- examples/hello.csx
+dotnet run --project src/Ilmarinen.Cli -- examples/hello.ilmarinen.csx
 
 # Enable debug mode (full stack traces)
-DEBUG=1 dotnet run --project src/Ilmarinen.Cli -- examples/hello.csx
+DEBUG=1 dotnet run --project src/Ilmarinen.Cli -- examples/hello.ilmarinen.csx
 ```
 
 ## Requirements

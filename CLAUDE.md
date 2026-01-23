@@ -25,10 +25,10 @@ dotnet test --filter "Category=Integration"
 dotnet format
 
 # Run the CLI with a pipeline (local execution)
-dotnet run --project src/Ilmarinen.Cli/Ilmarinen.Cli.csproj -- examples/hello.csx
+dotnet run --project src/Ilmarinen.Cli/Ilmarinen.Cli.csproj -- examples/hello.ilmarinen.csx
 
 # Enable debug mode (full stack traces)
-DEBUG=1 dotnet run --project src/Ilmarinen.Cli/Ilmarinen.Cli.csproj -- examples/hello.csx
+DEBUG=1 dotnet run --project src/Ilmarinen.Cli/Ilmarinen.Cli.csproj -- examples/hello.ilmarinen.csx
 
 # Run server (distributed mode)
 dotnet run --project src/Ilmarinen.Server/Ilmarinen.Server.csproj
