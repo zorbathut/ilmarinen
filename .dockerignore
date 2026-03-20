@@ -8,5 +8,6 @@
 docs/
 tests/
 *.md
+.git/
 .dockerignore
 docker-compose*.yml

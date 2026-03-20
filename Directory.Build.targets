@@ -2,7 +2,8 @@
   <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile"
           Inputs="$(MSBuildProjectFile)"
           Outputs="$(IntermediateOutputPath)BuildInfo.g.cs">
-    <Exec Command="git rev-parse --short HEAD" ConsoleToMsBuild="true" StandardOutputImportance="low">
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMsBuild="true" StandardOutputImportance="low"
+          Condition="'$(GitCommit)' == ''">
       <Output TaskParameter="ConsoleOutput" PropertyName="GitCommit" />
     </Exec>
     <Exec Command="printf 'namespace Ilmarinen;\ninternal static class BuildInfo\n{\n    public const string GitCommit = &quot;$(GitCommit)&quot;;\n}\n' > $(IntermediateOutputPath)BuildInfo.g.cs" />

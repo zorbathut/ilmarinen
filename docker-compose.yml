@@ -17,6 +17,8 @@ services:
     build:
       context: .
       dockerfile: src/Ilmarinen.Server/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
     ports:
       # Only expose public port externally; worker port (8081) is internal only
       - "1551:8080"
@@ -42,6 +44,8 @@ services:
     build:
       context: .
       dockerfile: src/Ilmarinen.Worker/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
     command: ["--server", "http://server:8081"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
