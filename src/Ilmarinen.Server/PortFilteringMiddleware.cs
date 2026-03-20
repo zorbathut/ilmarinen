@@ -26,8 +26,8 @@ public class PortFilteringMiddleware
         var localPort = context.Connection.LocalPort;
         var path = context.Request.Path.Value ?? "";
 
-        // Worker endpoints (/workers) only allowed on worker port
-        if (path.StartsWith("/workers", StringComparison.OrdinalIgnoreCase))
+        // Worker endpoints (/hub/workers) only allowed on worker port
+        if (path.StartsWith("/hub/workers", StringComparison.OrdinalIgnoreCase))
         {
             if (localPort != _config.WorkerPort)
             {

@@ -30,7 +30,7 @@ public class WorkerService : BackgroundService
         _config.WorkerContainerId = containerId;
 
         _connection = new HubConnectionBuilder()
-            .WithUrl($"{_config.ServerUrl}/workers")
+            .WithUrl($"{_config.ServerUrl}/hub/workers")
             .WithAutomaticReconnect()
             .AddJsonProtocol(options =>
             {

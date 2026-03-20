@@ -43,7 +43,7 @@ public static class IlmarinenServerExtensions
     public static IEndpointRouteBuilder MapPublicEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapControllers();
-        endpoints.MapHub<JobLogsHub>("/job-logs");
+        endpoints.MapHub<JobLogsHub>("/hub/job-logs");
         return endpoints;
     }
 
@@ -53,7 +53,7 @@ public static class IlmarinenServerExtensions
     /// </summary>
     public static IEndpointRouteBuilder MapWorkerEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapHub<WorkerHub>("/workers");
+        endpoints.MapHub<WorkerHub>("/hub/workers");
         return endpoints;
     }
 }
