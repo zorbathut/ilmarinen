@@ -9,12 +9,14 @@ namespace Ilmarinen.Worker.Services;
 public class WorkerService : BackgroundService
 {
     private readonly WorkerConfig _config;
+    private readonly WorkspaceManager _workspaceManager;
     private readonly ILogger<WorkerService> _logger;
     private HubConnection? _connection;
 
-    public WorkerService(WorkerConfig config, ILogger<WorkerService> logger)
+    public WorkerService(WorkerConfig config, WorkspaceManager workspaceManager, ILogger<WorkerService> logger)
     {
         _config = config;
+        _workspaceManager = workspaceManager;
         _logger = logger;
     }
 
@@ -38,6 +40,7 @@ public class WorkerService : BackgroundService
             .Build();
 
         _connection.On<JobAssignment>("AssignJob", OnJobAssigned);
+        _connection.On<string>("DeleteWorkspace", OnDeleteWorkspace);
 
         _connection.Reconnecting += _ =>
         {
@@ -105,7 +108,8 @@ public class WorkerService : BackgroundService
         await _connection!.SendAsync("Register", new WorkerRegister
         {
             WorkerId = _config.WorkerId,
-            BuildId = BuildInfo.GitCommit
+            BuildId = BuildInfo.GitCommit,
+            Workspaces = _workspaceManager.DiscoverWorkspaces()
         });
 
         await _connection!.SendAsync("Ready");
@@ -122,10 +126,14 @@ public class WorkerService : BackgroundService
         {
             await _connection!.SendAsync("JobStarted", job.Id);
 
-            var runner = new JobRunner(_config, job, _connection!, _logger, logCollector);
+            var runner = new JobRunner(_config, _workspaceManager, job, _connection!, _logger, logCollector);
             var result = await runner.ExecuteAsync();
 
-            result = result with { Duration = DateTime.UtcNow - startTime };
+            result = result with
+            {
+                Duration = DateTime.UtcNow - startTime,
+                Workspaces = _workspaceManager.DiscoverWorkspaces()
+            };
 
             await _connection!.SendAsync("JobCompleted", job.Id, result);
             _logger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
@@ -142,12 +150,20 @@ public class WorkerService : BackgroundService
             {
                 Id = job.Id,
                 Status = JobStatus.Failed,
-                Duration = DateTime.UtcNow - startTime
+                Duration = DateTime.UtcNow - startTime,
+                Workspaces = _workspaceManager.DiscoverWorkspaces()
             });
         }
 
         // Signal ready for next job
         await _connection!.SendAsync("Ready");
+    }
+
+    private async Task OnDeleteWorkspace(string name)
+    {
+        _logger.LogInformation("Received workspace deletion request: {WorkspaceName}", name);
+        var result = _workspaceManager.TryDelete(name);
+        await _connection!.SendAsync("WorkspaceDeleted", name, result);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

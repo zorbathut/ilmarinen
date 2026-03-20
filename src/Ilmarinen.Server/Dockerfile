@@ -5,6 +5,7 @@ WORKDIR /src
 COPY Directory.Build.targets ./
 
 # Copy csproj files and restore
+COPY src/Ilmarinen.Core/Ilmarinen.Core.csproj src/Ilmarinen.Core/
 COPY src/Ilmarinen.Protocol/Ilmarinen.Protocol.csproj src/Ilmarinen.Protocol/
 COPY src/Ilmarinen.Database/Ilmarinen.Database.csproj src/Ilmarinen.Database/
 COPY src/Ilmarinen.Server/Ilmarinen.Server.csproj src/Ilmarinen.Server/

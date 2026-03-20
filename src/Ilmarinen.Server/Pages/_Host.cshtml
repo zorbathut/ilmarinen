@@ -180,6 +180,28 @@
             background-color: var(--accent);
             text-decoration: none;
         }
+        .workspace-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.2rem 0.5rem;
+            background-color: var(--bg-tertiary);
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            margin: 0.125rem;
+        }
+        .workspace-delete {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.7rem;
+            padding: 0 0.2rem;
+            line-height: 1;
+            border-radius: 0.125rem;
+        }
+        .workspace-delete:hover { color: var(--error); }
+        .workspace-delete:disabled { opacity: 0.3; cursor: not-allowed; }
     </style>
 </head>
 <body>

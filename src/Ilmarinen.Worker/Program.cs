@@ -23,6 +23,7 @@ Log.Logger = new LoggerConfiguration()
 builder.Services.AddSerilog();
 
 builder.Services.AddSingleton(config);
+builder.Services.AddSingleton<WorkspaceManager>();
 builder.Services.AddHostedService<WorkerService>();
 
 Log.Information("Starting worker {WorkerId}", config.WorkerId);

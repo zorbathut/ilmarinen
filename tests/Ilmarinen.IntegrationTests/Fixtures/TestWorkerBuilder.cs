@@ -44,6 +44,7 @@ public class TestWorkerBuilder
         builder.Logging.AddFilter("Ilmarinen", LogLevel.Information);
 
         builder.Services.AddSingleton(config);
+        builder.Services.AddSingleton<WorkspaceManager>();
         builder.Services.AddHostedService<WorkerService>();
 
         return builder.Build();

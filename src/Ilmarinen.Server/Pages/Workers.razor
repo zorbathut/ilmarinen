@@ -1,6 +1,12 @@
 @page "/workers"
+@using Ilmarinen.Server.Hubs
 @using Ilmarinen.Server.Services
+@using Ilmarinen.Models
+@using Ilmarinen.Protocol.Requests
+@using Microsoft.AspNetCore.SignalR
 @inject WorkerRepository WorkerRepo
+@inject WorkspaceDeletionService DeletionService
+@inject IHubContext<WorkerHub, IWorkerClient> HubContext
 
 <h1 class="page-title">Workers</h1>
 
@@ -11,6 +17,7 @@
                 <th>Status</th>
                 <th>ID</th>
                 <th>Current Job</th>
+                <th>Workspaces</th>
                 <th>First Seen</th>
                 <th>Last Seen</th>
             </tr>
@@ -36,6 +43,27 @@
                                 <span>-</span>
                             }
                         </td>
+                        <td>
+                            @if (worker.Workspaces.Count > 0)
+                            {
+                                @foreach (var ws in worker.Workspaces)
+                                {
+                                    <span class="workspace-tag">
+                                        @ws
+                                        @if (worker.IsConnected)
+                                        {
+                                            <button class="workspace-delete"
+                                                    disabled="@IsDeleting(worker.Id, ws)"
+                                                    @onclick="() => DeleteWorkspace(worker.Id, ws)">x</button>
+                                        }
+                                    </span>
+                                }
+                            }
+                            else
+                            {
+                                <span>-</span>
+                            }
+                        </td>
                         <td>@worker.FirstSeen.ToString("yyyy-MM-dd HH:mm")</td>
                         <td>@worker.LastSeen.ToString("HH:mm:ss")</td>
                     </tr>
@@ -45,11 +73,67 @@
     </table>
 </div>
 
+@if (deleteError != null)
+{
+    <div class="card" style="margin-top: 1rem; border-left: 3px solid var(--error);">
+        <span style="color: var(--error);">@deleteError</span>
+    </div>
+}
+
 @code {
     private IReadOnlyList<WorkerView>? workers;
+    private HashSet<string> deletingWorkspaces = new();
+    private string? deleteError;
 
     protected override async Task OnInitializedAsync()
     {
         workers = await WorkerRepo.GetAllAsync();
+    }
+
+    private bool IsDeleting(NUlid.Ulid workerId, string workspace) =>
+        deletingWorkspaces.Contains($"{workerId}:{workspace}");
+
+    private async Task DeleteWorkspace(NUlid.Ulid workerId, string workspace)
+    {
+        var deleteKey = $"{workerId}:{workspace}";
+        deletingWorkspaces.Add(deleteKey);
+        deleteError = null;
+        StateHasChanged();
+
+        try
+        {
+            if (!WorkspaceConfig.IsValidName(workspace, out var validationError))
+            {
+                deleteError = validationError;
+                return;
+            }
+
+            var connectionId = WorkerRepo.FindConnectionIdByWorkerId(workerId);
+            if (connectionId == null)
+            {
+                deleteError = "Worker not found or not connected.";
+                return;
+            }
+
+            var key = DeletionService.CreatePending(connectionId, workspace);
+            await HubContext.Clients.Client(connectionId).DeleteWorkspace(workspace);
+            var result = await DeletionService.WaitForResultAsync(key, TimeSpan.FromSeconds(30));
+
+            if (result.Success)
+            {
+                WorkerRepo.RemoveWorkspace(connectionId, workspace);
+            }
+            else
+            {
+                deleteError = result.Error ?? "Workspace deletion failed.";
+            }
+
+            workers = await WorkerRepo.GetAllAsync();
+        }
+        finally
+        {
+            deletingWorkspaces.Remove(deleteKey);
+            StateHasChanged();
+        }
     }
 }

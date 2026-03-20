@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using Ilmarinen.Database;
 using Ilmarinen.Database.Entities;
 using Ilmarinen.Protocol.Requests;
@@ -13,6 +14,9 @@ public class WorkerRepository
 
     // In-memory mapping of SignalR connection ID to worker ID
     private static readonly ConcurrentDictionary<string, Ulid> _connectionToWorker = new();
+
+    // In-memory mapping of connection ID to workspace names
+    private static readonly ConcurrentDictionary<string, ImmutableList<string>> _workerWorkspaces = new();
 
     public WorkerRepository(IlmarinenDbContext db)
     {
@@ -54,6 +58,8 @@ public class WorkerRepository
 
     public async Task SetDisconnectedAsync(string connectionId)
     {
+        _workerWorkspaces.TryRemove(connectionId, out _);
+
         if (_connectionToWorker.TryRemove(connectionId, out var workerId))
         {
             var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
@@ -141,20 +147,53 @@ public class WorkerRepository
         return null;
     }
 
+    public void SetWorkspaces(string connectionId, IReadOnlyList<string>? workspaces)
+    {
+        if (workspaces != null)
+            _workerWorkspaces[connectionId] = workspaces.ToImmutableList();
+    }
+
+    public void RemoveWorkspace(string connectionId, string name)
+    {
+        _workerWorkspaces.AddOrUpdate(
+            connectionId,
+            _ => ImmutableList<string>.Empty,
+            (_, list) => list.Remove(name));
+    }
+
+    public string? FindConnectionIdByWorkerId(Ulid workerId)
+    {
+        foreach (var (connectionId, id) in _connectionToWorker)
+        {
+            if (id == workerId)
+                return connectionId;
+        }
+        return null;
+    }
+
     public async Task<IReadOnlyList<WorkerView>> GetAllAsync()
     {
         var workers = await _db.Workers
             .OrderByDescending(w => w.LastSeen)
             .ToListAsync();
 
-        return workers.Select(w => new WorkerView
+        return workers.Select(w =>
         {
-            Id = w.Id,
-            IsConnected = w.IsConnected,
-            IsReady = w.IsReady,
-            CurrentJobId = w.CurrentJobId,
-            FirstSeen = w.FirstSeen,
-            LastSeen = w.LastSeen
+            var connectionId = FindConnectionIdByWorkerId(w.Id);
+            ImmutableList<string>? workspaces = null;
+            if (connectionId != null)
+                _workerWorkspaces.TryGetValue(connectionId, out workspaces);
+
+            return new WorkerView
+            {
+                Id = w.Id,
+                IsConnected = w.IsConnected,
+                IsReady = w.IsReady,
+                CurrentJobId = w.CurrentJobId,
+                FirstSeen = w.FirstSeen,
+                LastSeen = w.LastSeen,
+                Workspaces = workspaces ?? []
+            };
         }).ToList();
     }
 }
@@ -175,4 +214,5 @@ public class WorkerView
     public Ulid? CurrentJobId { get; init; }
     public DateTime FirstSeen { get; init; }
     public DateTime LastSeen { get; init; }
+    public IReadOnlyList<string> Workspaces { get; init; } = [];
 }

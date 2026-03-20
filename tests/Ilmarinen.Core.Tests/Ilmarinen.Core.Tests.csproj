@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\Ilmarinen.Core\Ilmarinen.Core.csproj" />
     <ProjectReference Include="..\..\src\Ilmarinen.Scripting\Ilmarinen.Scripting.csproj" />
     <ProjectReference Include="..\..\src\Ilmarinen.Docker\Ilmarinen.Docker.csproj" />
+    <ProjectReference Include="..\..\src\Ilmarinen.Worker\Ilmarinen.Worker.csproj" />
   </ItemGroup>
 
 </Project>

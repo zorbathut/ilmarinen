@@ -31,6 +31,7 @@ public static class IlmarinenServerExtensions
         services.AddSingleton<JobScheduler>();
         services.AddSingleton<LogSubscriptionService>();
         services.AddSingleton<LogStreamService>();
+        services.AddSingleton<WorkspaceDeletionService>();
 
         return services;
     }

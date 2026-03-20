@@ -9,4 +9,5 @@ public record WorkerRegister
 {
     public required Ulid WorkerId { get; init; }
     public required string BuildId { get; init; }
+    public IReadOnlyList<string>? Workspaces { get; init; }
 }

@@ -35,6 +35,7 @@ public class WorkerHub : Hub<IWorkerClient>
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         var workerId = await workers.RegisterOrUpdateAsync(Context.ConnectionId, info);
+        workers.SetWorkspaces(Context.ConnectionId, info.Workspaces);
         _logger.LogInformation("Worker registered: {WorkerId}", workerId);
     }
 
@@ -79,7 +80,24 @@ public class WorkerHub : Hub<IWorkerClient>
         await logService.NotifyJobCompletedAsync(jobId, result.Status);
         await workers.SetCurrentJobAsync(Context.ConnectionId, null);
 
+        if (result.Workspaces != null)
+            workers.SetWorkspaces(Context.ConnectionId, result.Workspaces);
+
         await scheduler.TryAssignJobAsync(Context.ConnectionId);
+    }
+
+    public Task WorkspaceDeleted(string name, DeleteWorkspaceResult result)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var deletionService = scope.ServiceProvider.GetRequiredService<WorkspaceDeletionService>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        deletionService.Complete(Context.ConnectionId, name, result);
+
+        if (result.Success)
+            workers.RemoveWorkspace(Context.ConnectionId, name);
+
+        return Task.CompletedTask;
     }
 
     public async Task Heartbeat(WorkerHeartbeat status)

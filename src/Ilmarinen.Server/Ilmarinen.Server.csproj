@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Ilmarinen.Core\Ilmarinen.Core.csproj" />
     <ProjectReference Include="..\Ilmarinen.Database\Ilmarinen.Database.csproj" />
     <ProjectReference Include="..\Ilmarinen.Protocol\Ilmarinen.Protocol.csproj" />
   </ItemGroup>

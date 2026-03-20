@@ -16,6 +16,7 @@ namespace Ilmarinen.Worker.Services;
 public class JobRunner
 {
     private readonly WorkerConfig _config;
+    private readonly WorkspaceManager _workspaceManager;
     private readonly JobAssignment _job;
     private readonly HubConnection _connection;
     private readonly ILogger _logger;
@@ -23,12 +24,14 @@ public class JobRunner
 
     public JobRunner(
         WorkerConfig config,
+        WorkspaceManager workspaceManager,
         JobAssignment job,
         HubConnection connection,
         ILogger logger,
         LogCollector logCollector)
     {
         _config = config;
+        _workspaceManager = workspaceManager;
         _job = job;
         _connection = connection;
         _logger = logger;
@@ -97,6 +100,7 @@ public class JobRunner
                 }
 
                 _logger.LogInformation("Using persistent workspace: {WorkspaceName}", wsName);
+                _workspaceManager.SetActiveWorkspace(wsName);
 
                 if (Directory.Exists(workDir))
                 {
@@ -143,6 +147,8 @@ public class JobRunner
         }
         finally
         {
+            _workspaceManager.SetActiveWorkspace(null);
+
             // Flush any remaining logs
             try
             {
