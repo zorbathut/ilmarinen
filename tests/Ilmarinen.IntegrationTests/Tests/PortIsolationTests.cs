@@ -27,16 +27,16 @@ public class PortIsolationTests
     [Test]
     public async Task WorkerHub_OnPublicPort_ReturnsNotFound()
     {
-        // Arrange - Try to connect to /workers on the public port
+        // Arrange - Try to connect to /hub/workers on the public port
         var connection = new HubConnectionBuilder()
-            .WithUrl($"{_fixture.ServerUrl}/workers")
+            .WithUrl($"{_fixture.ServerUrl}/hub/workers")
             .Build();
 
-        // Act & Assert - Connection should fail because /workers is blocked on public port
+        // Act & Assert - Connection should fail because /hub/workers is blocked on public port
         var ex = Assert.ThrowsAsync<HttpRequestException>(
             async () => await connection.StartAsync());
 
-        // The middleware returns 404 Not Found
+        // The middleware returns 404
         Assert.That(ex!.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
 
         await connection.DisposeAsync();
@@ -61,9 +61,9 @@ public class PortIsolationTests
     [Test]
     public async Task WorkerHub_OnWorkerPort_Succeeds()
     {
-        // Arrange - Connect to /workers on the correct worker port
+        // Arrange - Connect to /hub/workers on the correct worker port
         var connection = new HubConnectionBuilder()
-            .WithUrl($"{_fixture.WorkerUrl}/workers")
+            .WithUrl($"{_fixture.WorkerUrl}/hub/workers")
             .Build();
 
         // Act
