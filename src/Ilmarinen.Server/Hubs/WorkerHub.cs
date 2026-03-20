@@ -62,8 +62,8 @@ public class WorkerHub : Hub<IWorkerClient>
 
     public async Task StreamLogs(LogChunk chunk)
     {
-        var logService = _scopeFactory.CreateScope()
-            .ServiceProvider.GetRequiredService<LogStreamService>();
+        using var scope = _scopeFactory.CreateScope();
+        var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
 
         await logService.ProcessChunkAsync(chunk);
     }
