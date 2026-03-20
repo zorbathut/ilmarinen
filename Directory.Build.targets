@@ -1,7 +1,5 @@
 <Project>
-  <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile"
-          Inputs="$(MSBuildProjectFile)"
-          Outputs="$(IntermediateOutputPath)BuildInfo.g.cs">
+  <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile">
     <Exec Command="git rev-parse --short HEAD" ConsoleToMsBuild="true" StandardOutputImportance="low"
           Condition="'$(GitCommit)' == ''">
       <Output TaskParameter="ConsoleOutput" PropertyName="GitCommit" />
