@@ -33,6 +33,10 @@
             <label>Git Token (optional)</label>
             <input type="password" @bind="newGitToken" placeholder="Token for private repos" />
         </div>
+        <div>
+            <label>Schedule (optional, cron)</label>
+            <input type="text" @bind="newSchedule" placeholder="0 2 * * *" />
+        </div>
     </div>
     <button class="btn" @onclick="CreatePipeline" disabled="@creating">
         @(creating ? "Creating..." : "Create Pipeline")
@@ -47,6 +51,7 @@
                 <th>Repository</th>
                 <th>Default Ref</th>
                 <th>Script</th>
+                <th>Schedule</th>
                 <th>Created</th>
             </tr>
         </thead>
@@ -60,6 +65,7 @@
                         <td>@GetShortRepoUrl(pipeline.RepoUrl)</td>
                         <td>@pipeline.DefaultRef</td>
                         <td>@pipeline.ScriptPath</td>
+                        <td>@(pipeline.Schedule ?? "-")</td>
                         <td>@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
                     </tr>
                 }
@@ -75,6 +81,7 @@
     private string newDefaultRef = "main";
     private string newScriptPath = "";
     private string newGitToken = "";
+    private string newSchedule = "";
     private string? error;
     private bool creating;
 
@@ -102,7 +109,8 @@
                 RepoUrl = newRepoUrl.Trim(),
                 Ref = newDefaultRef.Trim(),
                 ScriptPath = newScriptPath.Trim(),
-                GitToken = string.IsNullOrWhiteSpace(newGitToken) ? null : newGitToken.Trim()
+                GitToken = string.IsNullOrWhiteSpace(newGitToken) ? null : newGitToken.Trim(),
+                Schedule = string.IsNullOrWhiteSpace(newSchedule) ? null : newSchedule.Trim()
             };
 
             await PipelineRepo.CreateAsync(submission);
@@ -112,6 +120,7 @@
             newDefaultRef = "main";
             newScriptPath = "";
             newGitToken = "";
+            newSchedule = "";
 
             pipelines = await PipelineRepo.GetAllAsync();
         }

@@ -11,4 +11,6 @@ public record PipelineInfo
     public required string ScriptPath { get; init; }
     public bool HasGitToken { get; init; }
     public DateTime CreatedAt { get; init; }
+    public string? Schedule { get; init; }
+    public DateTime? LastTriggeredAt { get; init; }
 }

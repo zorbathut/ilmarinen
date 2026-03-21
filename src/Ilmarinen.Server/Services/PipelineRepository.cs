@@ -28,7 +28,8 @@ public class PipelineRepository
             DefaultRef = submission.Ref,
             ScriptPath = submission.ScriptPath,
             EncryptedGitToken = _encryption.Encrypt(submission.GitToken),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            Schedule = submission.Schedule
         };
 
         _db.Pipelines.Add(pipeline);
@@ -76,6 +77,10 @@ public class PipelineRepository
             pipeline.ScriptPath = update.ScriptPath;
         if (update.UpdateGitToken)
             pipeline.EncryptedGitToken = _encryption.Encrypt(string.IsNullOrEmpty(update.GitToken) ? null : update.GitToken);
+        if (update.ClearSchedule)
+            pipeline.Schedule = null;
+        else if (update.Schedule != null)
+            pipeline.Schedule = update.Schedule;
 
         await _db.SaveChangesAsync();
         return ToPipelineInfo(pipeline);
@@ -95,6 +100,20 @@ public class PipelineRepository
         };
     }
 
+    public async Task<IReadOnlyList<Pipeline>> GetScheduledPipelinesAsync()
+    {
+        return await _db.Pipelines
+            .Where(p => p.Schedule != null)
+            .ToListAsync();
+    }
+
+    public async Task UpdateLastTriggeredAtAsync(Ulid id, DateTime triggeredAt)
+    {
+        await _db.Pipelines
+            .Where(p => p.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.LastTriggeredAt, triggeredAt));
+    }
+
     private static PipelineInfo ToPipelineInfo(Pipeline pipeline) => new()
     {
         Id = pipeline.Id,
@@ -103,6 +122,8 @@ public class PipelineRepository
         DefaultRef = pipeline.DefaultRef,
         ScriptPath = pipeline.ScriptPath,
         HasGitToken = pipeline.EncryptedGitToken != null,
-        CreatedAt = pipeline.CreatedAt
+        CreatedAt = pipeline.CreatedAt,
+        Schedule = pipeline.Schedule,
+        LastTriggeredAt = pipeline.LastTriggeredAt
     };
 }

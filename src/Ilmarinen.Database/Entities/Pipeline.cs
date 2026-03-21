@@ -11,4 +11,6 @@ public class Pipeline
     public required string ScriptPath { get; set; }
     public string? EncryptedGitToken { get; set; }
     public DateTime CreatedAt { get; set; }
+    public string? Schedule { get; set; }
+    public DateTime? LastTriggeredAt { get; set; }
 }

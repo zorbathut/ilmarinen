@@ -7,4 +7,5 @@ public record PipelineSubmission
     public required string Ref { get; init; }
     public required string ScriptPath { get; init; }
     public string? GitToken { get; init; }
+    public string? Schedule { get; init; }
 }

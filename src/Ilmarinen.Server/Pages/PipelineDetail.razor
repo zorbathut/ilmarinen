@@ -45,6 +45,23 @@
                     }
                 </span>
 
+                <span class="detail-label">Schedule</span>
+                <span class="detail-value">
+                    @if (clearingSchedule)
+                    {
+                        <span style="opacity: 0.5;">Will be removed</span>
+                        <button class="btn" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => clearingSchedule = false">Undo</button>
+                    }
+                    else
+                    {
+                        <input type="text" @bind="editSchedule" placeholder="@(pipeline.Schedule != null ? "Leave blank to keep current" : "0 2 * * * (optional)")" />
+                        @if (pipeline.Schedule != null)
+                        {
+                            <button class="btn btn-danger" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => clearingSchedule = true">Remove</button>
+                        }
+                    }
+                </span>
+
                 <span class="detail-label">Created</span>
                 <span class="detail-value">@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
             </div>
@@ -75,6 +92,15 @@
 
                     <span class="detail-label">Git Token</span>
                     <span class="detail-value">@(pipeline.HasGitToken ? "Configured" : "Not set")</span>
+
+                    <span class="detail-label">Schedule</span>
+                    <span class="detail-value">@(pipeline.Schedule ?? "Not set")</span>
+
+                    @if (pipeline.LastTriggeredAt != null)
+                    {
+                        <span class="detail-label">Last Triggered</span>
+                        <span class="detail-value">@pipeline.LastTriggeredAt.Value.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                    }
 
                     <span class="detail-label">Created</span>
                     <span class="detail-value">@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
@@ -161,6 +187,8 @@ else
     private string editScriptPath = "";
     private string editGitToken = "";
     private bool removingToken;
+    private string editSchedule = "";
+    private bool clearingSchedule;
 
     protected override async Task OnInitializedAsync()
     {
@@ -203,6 +231,8 @@ else
         editScriptPath = pipeline.ScriptPath;
         editGitToken = "";
         removingToken = false;
+        editSchedule = "";
+        clearingSchedule = false;
         editError = null;
         editing = true;
     }
@@ -228,7 +258,9 @@ else
                 Ref = editRef != pipeline.DefaultRef ? editRef : null,
                 ScriptPath = editScriptPath != pipeline.ScriptPath ? editScriptPath : null,
                 UpdateGitToken = removingToken || !string.IsNullOrEmpty(editGitToken),
-                GitToken = removingToken ? null : (string.IsNullOrEmpty(editGitToken) ? null : editGitToken)
+                GitToken = removingToken ? null : (string.IsNullOrEmpty(editGitToken) ? null : editGitToken),
+                ClearSchedule = clearingSchedule,
+                Schedule = clearingSchedule ? null : (string.IsNullOrWhiteSpace(editSchedule) ? null : editSchedule.Trim())
             };
 
             var updated = await Pipelines.UpdateAsync(ulid, update);

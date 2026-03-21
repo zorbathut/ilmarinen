@@ -240,6 +240,114 @@ public class PipelineTests
     }
 
     [Test]
+    public async Task CreatePipeline_WithSchedule_StoresSchedule()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "scheduled-pipeline",
+            RepoUrl = _repo.Url,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            Schedule = "0 2 * * *"
+        });
+
+        Assert.That(pipeline.Schedule, Is.EqualTo("0 2 * * *"));
+
+        var fetched = await _fixture.GetPipelineAsync(pipeline.Id);
+        Assert.That(fetched.Schedule, Is.EqualTo("0 2 * * *"));
+    }
+
+    [Test]
+    public async Task CreatePipeline_WithInvalidSchedule_Returns400()
+    {
+        var response = await _fixture.HttpClient.PostAsJsonAsync(
+            "/api/pipelines",
+            new PipelineSubmission
+            {
+                Name = "bad-schedule",
+                RepoUrl = _repo.Url,
+                Ref = "master",
+                ScriptPath = "pipeline.csx",
+                Schedule = "not a cron expression"
+            },
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new UlidJsonConverter() }
+            });
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(400));
+    }
+
+    [Test]
+    public async Task UpdatePipeline_Schedule_CanSetAndClear()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "schedule-update-test",
+            RepoUrl = _repo.Url,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        Assert.That(pipeline.Schedule, Is.Null);
+
+        var withSchedule = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate
+        {
+            Schedule = "0 3 * * *"
+        });
+        Assert.That(withSchedule.Schedule, Is.EqualTo("0 3 * * *"));
+
+        var cleared = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate
+        {
+            ClearSchedule = true
+        });
+        Assert.That(cleared.Schedule, Is.Null);
+    }
+
+    [Test]
+    public async Task ScheduledPipeline_TriggersAutomatically()
+    {
+        await _fixture.StartWorkerAsync();
+
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "auto-trigger-test",
+            RepoUrl = _repo.Url,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            Schedule = "* * * * *"
+        });
+
+        // Wait for the scheduler to pick it up (runs every 60s)
+        var deadline = DateTime.UtcNow.AddSeconds(90);
+        Ilmarinen.Protocol.Responses.JobInfo? job = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var jobs = await _fixture.HttpClient.GetFromJsonAsync<List<Ilmarinen.Protocol.Responses.JobInfo>>(
+                "/api/jobs",
+                new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    Converters = { new UlidJsonConverter() }
+                });
+
+            job = jobs?.FirstOrDefault(j => j.PipelineId == pipeline.Id);
+            if (job != null) break;
+
+            await Task.Delay(2000);
+        }
+
+        Assert.That(job, Is.Not.Null, "Scheduled pipeline should have triggered a job");
+        Assert.That(job!.PipelineId, Is.EqualTo(pipeline.Id));
+
+        // Verify LastTriggeredAt was updated
+        var updated = await _fixture.GetPipelineAsync(pipeline.Id);
+        Assert.That(updated.LastTriggeredAt, Is.Not.Null);
+    }
+
+    [Test]
     public async Task CreatePipeline_DuplicateName_Returns409OrError()
     {
         var submission = new PipelineSubmission

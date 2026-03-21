@@ -22,6 +22,9 @@ public class PipelinesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<PipelineInfo>> CreatePipeline([FromBody] PipelineSubmission submission)
     {
+        if (submission.Schedule != null && !CronValidator.TryParse(submission.Schedule, out _))
+            return BadRequest("Invalid cron expression for schedule");
+
         var pipeline = await _pipelines.CreateAsync(submission);
         return CreatedAtAction(nameof(GetPipeline), new { id = pipeline.Id.ToString() }, pipeline);
     }
@@ -47,6 +50,9 @@ public class PipelinesController : ControllerBase
     {
         if (!Ulid.TryParse(id, out var ulid))
             return BadRequest("Invalid pipeline ID");
+
+        if (update.Schedule != null && !CronValidator.TryParse(update.Schedule, out _))
+            return BadRequest("Invalid cron expression for schedule");
 
         var pipeline = await _pipelines.UpdateAsync(ulid, update);
         return pipeline != null ? Ok(pipeline) : NotFound();

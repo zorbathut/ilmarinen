@@ -16,4 +16,7 @@ public record PipelineUpdate
     /// Must be set to true to update the git token (distinguishes null meaning "not provided" from "remove").
     /// </summary>
     public bool UpdateGitToken { get; init; }
+
+    public string? Schedule { get; init; }
+    public bool ClearSchedule { get; init; }
 }
