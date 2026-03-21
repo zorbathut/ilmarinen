@@ -1,6 +1,6 @@
 using NUlid;
 
-namespace Ilmarinen.Protocol.Requests;
+namespace Ilmarinen.Protocol.Responses;
 
 /// <summary>
 /// Worker → Server: Report job completion via SignalR Hub.JobCompleted()

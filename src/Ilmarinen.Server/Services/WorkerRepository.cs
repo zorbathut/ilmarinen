@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using Ilmarinen.Database;
 using Ilmarinen.Database.Entities;
-using Ilmarinen.Protocol.Requests;
 using Microsoft.EntityFrameworkCore;
 using NUlid;
 

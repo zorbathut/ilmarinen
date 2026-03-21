@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol.Responses;
 
 namespace Ilmarinen.Server.Services;
 

@@ -1,5 +1,5 @@
 using Ilmarinen.Models;
-using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol.Responses;
 using NUlid;
 
 namespace Ilmarinen.Worker.Services;

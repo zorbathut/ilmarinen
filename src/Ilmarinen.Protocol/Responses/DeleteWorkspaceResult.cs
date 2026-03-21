@@ -1,4 +1,4 @@
-namespace Ilmarinen.Protocol.Requests;
+namespace Ilmarinen.Protocol.Responses;
 
 /// <summary>
 /// Worker → Server: Result of a workspace deletion attempt.

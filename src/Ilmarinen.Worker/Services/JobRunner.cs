@@ -4,7 +4,6 @@ using System.Text.Json;
 using Ilmarinen.Docker;
 using Ilmarinen.Models;
 using Ilmarinen.Protocol;
-using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Scripting;
 using LibGit2Sharp;
