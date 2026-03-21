@@ -1,5 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
 using Docker.DotNet;
 using Ilmarinen.Protocol;
+using NUlid;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -9,6 +12,7 @@ namespace Ilmarinen.Worker.Services;
 public class WorkerService : BackgroundService
 {
     private readonly WorkerConfig _config;
+    private readonly Ulid _workerId;
     private readonly WorkspaceManager _workspaceManager;
     private readonly ILogger<WorkerService> _logger;
     private HubConnection? _connection;
@@ -16,6 +20,7 @@ public class WorkerService : BackgroundService
     public WorkerService(WorkerConfig config, WorkspaceManager workspaceManager, ILogger<WorkerService> logger)
     {
         _config = config;
+        _workerId = config.GetWorkerId();
         _workspaceManager = workspaceManager;
         _logger = logger;
     }
@@ -50,14 +55,14 @@ public class WorkerService : BackgroundService
 
         _connection.Reconnected += async _ =>
         {
-            _logger.LogInformation("Reconnected to server, re-registering...");
-            await RegisterAndReady();
+            _logger.LogInformation("Reconnected to server, re-authenticating...");
+            await ConnectAndReady();
         };
 
         await ConnectWithRetryAsync(stoppingToken);
-        await RegisterAndReady();
+        await ConnectAndReady();
 
-        _logger.LogInformation("Worker {WorkerId} connected and ready", _config.WorkerId);
+        _logger.LogInformation("Worker {WorkerId} connected and ready", _workerId);
 
         // Heartbeat loop
         while (!stoppingToken.IsCancellationRequested)
@@ -69,7 +74,7 @@ public class WorkerService : BackgroundService
                 {
                     await _connection.SendAsync("Heartbeat", new WorkerHeartbeat
                     {
-                        WorkerId = _config.WorkerId,
+                        WorkerId = _workerId,
                         IsReady = true
                     }, stoppingToken);
                 }
@@ -103,12 +108,35 @@ public class WorkerService : BackgroundService
         }
     }
 
-    private async Task RegisterAndReady()
+    private async Task ConnectAndReady()
     {
-        await _connection!.SendAsync("Register", new WorkerRegister
+        // Step 1: Initiate connection with our nonce, get challenge
+        var workerNonce = RandomNumberGenerator.GetBytes(32);
+        var challenge = await _connection!.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
         {
-            WorkerId = _config.WorkerId,
+            WorkerId = _workerId,
             BuildId = BuildInfo.GitCommit,
+            Nonce = workerNonce
+        });
+
+        // Step 2: Verify server identity (server signed both nonces)
+        using var serverKey = _config.GetServerPublicKey();
+        var challengeData = Encoding.UTF8.GetBytes(
+            $"{_workerId}:{Convert.ToBase64String(workerNonce)}:{Convert.ToBase64String(challenge.Nonce)}");
+
+        if (!serverKey.VerifyData(challengeData, challenge.ServerSignature, HashAlgorithmName.SHA256))
+        {
+            _logger.LogError("Server signature verification failed — wrong server or MITM?");
+            throw new InvalidOperationException("Server identity verification failed.");
+        }
+
+        // Step 3: Sign the same data and authenticate
+        using var workerKey = _config.GetWorkerPrivateKey();
+        var signature = workerKey.SignData(challengeData, HashAlgorithmName.SHA256);
+
+        await _connection!.SendAsync("Authenticate", new WorkerAuthenticate
+        {
+            Signature = signature,
             Workspaces = _workspaceManager.DiscoverWorkspaces()
         });
 

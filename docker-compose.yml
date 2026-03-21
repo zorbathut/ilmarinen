@@ -26,9 +26,10 @@ services:
       ConnectionStrings__DefaultConnection: Host=postgres;Database=ilmarinen;Username=ilmarinen;Password=ilmarinen
       Server__PublicPort: 8080
       Server__WorkerPort: 8081
-      # IMPORTANT: Replace with a real 32-byte base64 key before using private repos
-      # Generate one with: openssl rand -base64 32
-      ILMARINEN_CREDENTIAL_KEY: "REPLACE-ME-WITH-REAL-KEY-GENERATED-VIA-openssl-rand-base64-32"
+      # IMPORTANT: Replace with a real 32-byte base64 key before production use
+      # Generate with: openssl rand -base64 32
+      # Used for worker authentication (ECDSA) and credential encryption (AES via HKDF)
+      ILMARINEN_SERVER_KEY: "REPLACE-ME-WITH-REAL-KEY-GENERATED-VIA-openssl-rand-base64-32"
     volumes:
       - artifacts:/data/artifacts
     depends_on:
@@ -47,6 +48,9 @@ services:
       args:
         GIT_COMMIT: ${GIT_COMMIT:-dev}
     command: ["--server", "http://server:8081"]
+    environment:
+      # Set after registering a worker via the server UI or POST /api/workers
+      ILMARINEN_WORKER_KEY: "register-worker-on-server-first"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - worker-workspace:/tmp/ilmarinen-worker

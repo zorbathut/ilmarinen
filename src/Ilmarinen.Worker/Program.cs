@@ -3,10 +3,14 @@ using Ilmarinen.Worker.Services;
 using Serilog;
 
 var serverUrl = GetArg(args, "--server") ?? "http://localhost:8081";
+var workerKey = Environment.GetEnvironmentVariable("ILMARINEN_WORKER_KEY")
+    ?? throw new InvalidOperationException(
+        "ILMARINEN_WORKER_KEY is not set. Register this worker on the server first.");
 
 var config = new WorkerConfig
 {
-    ServerUrl = serverUrl
+    ServerUrl = serverUrl,
+    WorkerKey = workerKey
 };
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -26,7 +30,7 @@ builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<WorkspaceManager>();
 builder.Services.AddHostedService<WorkerService>();
 
-Log.Information("Starting worker {WorkerId}", config.WorkerId);
+Log.Information("Starting worker {WorkerId}", config.GetWorkerId());
 Log.Information("Connecting to server: {ServerUrl}", config.ServerUrl);
 
 var host = builder.Build();

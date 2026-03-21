@@ -23,37 +23,24 @@ public class WorkerRepository
         _db = db;
     }
 
-    public async Task<Ulid> RegisterOrUpdateAsync(string connectionId, WorkerRegister info)
+    public async Task ConnectAsync(string connectionId, Ulid workerId)
     {
-        var workerId = info.WorkerId;
+        var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId)
+            ?? throw new InvalidOperationException($"Worker {workerId} not found in database.");
 
-        var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
-        var now = DateTime.UtcNow;
-
-        if (worker == null)
-        {
-            worker = new Worker
-            {
-                Id = workerId,
-                IsConnected = true,
-                IsReady = false,
-                FirstSeen = now,
-                LastSeen = now
-            };
-            _db.Workers.Add(worker);
-        }
-        else
-        {
-            worker.IsConnected = true;
-            worker.IsReady = false;
-            worker.LastSeen = now;
-        }
+        worker.IsConnected = true;
+        worker.IsReady = false;
+        worker.LastSeen = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
 
         _connectionToWorker[connectionId] = workerId;
+    }
 
-        return workerId;
+    public async Task<byte[]?> GetWorkerPublicKeyAsync(Ulid workerId)
+    {
+        var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
+        return worker?.PublicKey;
     }
 
     public async Task SetDisconnectedAsync(string connectionId)
@@ -187,10 +174,11 @@ public class WorkerRepository
             return new WorkerView
             {
                 Id = w.Id,
+                Name = w.Name,
                 IsConnected = w.IsConnected,
                 IsReady = w.IsReady,
                 CurrentJobId = w.CurrentJobId,
-                FirstSeen = w.FirstSeen,
+                RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 Workspaces = workspaces ?? []
             };
@@ -209,10 +197,11 @@ public class ConnectedWorker
 public class WorkerView
 {
     public required Ulid Id { get; init; }
+    public required string Name { get; init; }
     public bool IsConnected { get; init; }
     public bool IsReady { get; init; }
     public Ulid? CurrentJobId { get; init; }
-    public DateTime FirstSeen { get; init; }
+    public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
     public IReadOnlyList<string> Workspaces { get; init; } = [];
 }

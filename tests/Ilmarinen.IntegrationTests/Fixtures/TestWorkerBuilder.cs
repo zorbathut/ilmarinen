@@ -11,14 +11,17 @@ public class TestWorkerBuilder
 {
     private readonly string _serverUrl;
     private readonly string? _publicApiUrl;
+    private readonly string _workerKey;
     private readonly Ulid _workerId;
     private readonly string _workspacePath;
 
-    public TestWorkerBuilder(string serverUrl, string? publicApiUrl = null)
+    public TestWorkerBuilder(string serverUrl, string? publicApiUrl, string workerKey)
     {
         _serverUrl = serverUrl;
         _publicApiUrl = publicApiUrl;
-        _workerId = Ulid.NewUlid();
+        _workerKey = workerKey;
+        // Parse the worker ID from the key (format: {name}:{ulid}:{priv}:{pub})
+        _workerId = Ulid.Parse(workerKey.Split(':')[1]);
         _workspacePath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-worker-{_workerId}");
     }
 
@@ -31,8 +34,8 @@ public class TestWorkerBuilder
         {
             ServerUrl = _serverUrl,
             PublicApiUrl = _publicApiUrl,
-            WorkerId = _workerId,
-            WorkspacePath = _workspacePath
+            WorkspacePath = _workspacePath,
+            WorkerKey = _workerKey
         };
 
         var builder = Host.CreateApplicationBuilder();

@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using NUlid;
 
 namespace Ilmarinen.Worker;
@@ -15,7 +16,12 @@ public class WorkerConfig
     /// </summary>
     public string? PublicApiUrl { get; init; }
 
-    public Ulid WorkerId { get; init; } = Ulid.NewUlid();
+    /// <summary>
+    /// Combined worker key: {name}:{ulidBase64}:{workerPrivBase64}:{serverPubBase64}
+    /// Set via ILMARINEN_WORKER_KEY environment variable.
+    /// The name is for human readability; the ULID is the actual identity.
+    /// </summary>
+    public required string WorkerKey { get; init; }
     public string WorkspacePath { get; init; } = Path.Combine(Path.GetTempPath(), "ilmarinen-worker");
 
 
@@ -42,5 +48,41 @@ public class WorkerConfig
 
         // Default: replace port 8081 with 8080
         return ServerUrl.Replace(":8081", ":8080");
+    }
+
+    public Ulid GetWorkerId()
+    {
+        var parts = GetKeyParts();
+        return Ulid.Parse(parts.id);
+    }
+
+    public ECDsa GetWorkerPrivateKey()
+    {
+        var parts = GetKeyParts();
+        var privateScalar = Convert.FromBase64String(parts.workerPriv);
+        return ECDsa.Create(new ECParameters
+        {
+            Curve = ECCurve.NamedCurves.nistP256,
+            D = privateScalar
+        });
+    }
+
+    public ECDsa GetServerPublicKey()
+    {
+        var parts = GetKeyParts();
+        var publicKeyBytes = Convert.FromBase64String(parts.serverPub);
+        var ecdsa = ECDsa.Create();
+        ecdsa.ImportSubjectPublicKeyInfo(publicKeyBytes, out _);
+        return ecdsa;
+    }
+
+    private (string name, string id, string workerPriv, string serverPub) GetKeyParts()
+    {
+        var parts = WorkerKey.Split(':');
+        if (parts.Length != 4)
+            throw new InvalidOperationException(
+                "ILMARINEN_WORKER_KEY is malformed. Expected format: {name}:{id}:{workerPrivBase64}:{serverPubBase64}");
+
+        return (parts[0], parts[1], parts[2], parts[3]);
     }
 }

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using Ilmarinen.Database;
 using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
@@ -39,6 +40,11 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         _initialized = true;
 
         await _postgres.StartAsync();
+
+        // Generate a test server key for worker authentication
+        using var testKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var serverKeyBase64 = Convert.ToBase64String(testKey.ExportParameters(true).D!);
+        Environment.SetEnvironmentVariable("ILMARINEN_SERVER_KEY", serverKeyBase64);
 
         var publicPort = GetAvailablePort();
         var workerPort = GetAvailablePort();

@@ -3,11 +3,11 @@ using NUlid;
 namespace Ilmarinen.Protocol.Requests;
 
 /// <summary>
-/// Worker → Server: Register worker via SignalR Hub.Register()
+/// Worker → Server: Initiate connection and request an authentication challenge.
 /// </summary>
-public record WorkerRegister
+public record WorkerConnect
 {
     public required Ulid WorkerId { get; init; }
     public required string BuildId { get; init; }
-    public IReadOnlyList<string>? Workspaces { get; init; }
+    public required byte[] Nonce { get; init; }
 }

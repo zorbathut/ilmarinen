@@ -1,8 +1,12 @@
-# Copy this file to docker-compose.override.yml and add your real key.
+# Copy this file to docker-compose.override.yml and add your real keys.
 # docker-compose.override.yml is gitignored and will not be committed.
 #
-# Generate a key with: openssl rand -base64 32
+# Generate server key with: openssl rand -base64 32
+# Get worker key by registering via the server UI or POST /api/workers
 services:
   server:
     environment:
-      ILMARINEN_CREDENTIAL_KEY: "your-base64-key-here"
+      ILMARINEN_SERVER_KEY: "your-base64-key-here"
+  worker:
+    environment:
+      ILMARINEN_WORKER_KEY: "your-worker-key-here"

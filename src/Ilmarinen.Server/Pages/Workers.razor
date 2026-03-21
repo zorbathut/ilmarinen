@@ -5,21 +5,52 @@
 @using Ilmarinen.Protocol.Requests
 @using Microsoft.AspNetCore.SignalR
 @inject WorkerRepository WorkerRepo
+@inject WorkerRegistrationService RegistrationService
 @inject WorkspaceDeletionService DeletionService
 @inject IHubContext<WorkerHub, IWorkerClient> HubContext
 
 <h1 class="page-title">Workers</h1>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h3>Register Worker</h3>
+    <form @onsubmit="RegisterWorker" style="display: flex; gap: 0.5rem; align-items: flex-end;">
+        <div>
+            <label for="workerName">Name</label>
+            <input id="workerName" type="text" @bind="newWorkerName" placeholder="e.g. build-worker-1" />
+        </div>
+        <button type="submit" disabled="@isRegistering">Register</button>
+    </form>
+    @if (registrationError != null)
+    {
+        <div style="margin-top: 0.5rem; color: var(--error);">@registrationError</div>
+    }
+</div>
+
+@if (registrationResult != null)
+{
+    <div class="card" style="margin-bottom: 1rem; border-left: 3px solid var(--warning, orange);">
+        <h3>Worker Registered</h3>
+        <p><strong>Worker ID:</strong> @registrationResult.WorkerId</p>
+        <p><strong>Worker Key:</strong></p>
+        <code style="display: block; padding: 0.5rem; background: var(--bg-secondary, #1a1a1a); word-break: break-all; font-size: 0.85em;">@registrationResult.WorkerKey</code>
+        <p style="margin-top: 0.5rem;">Set as <code>ILMARINEN_WORKER_KEY</code> environment variable on the worker.</p>
+        <p style="color: var(--warning, orange);"><strong>Save this key now. It cannot be retrieved again.</strong></p>
+        <button @onclick="DismissRegistration">Dismiss</button>
+    </div>
+}
 
 <div class="card">
     <table>
         <thead>
             <tr>
                 <th>Status</th>
+                <th>Name</th>
                 <th>ID</th>
                 <th>Current Job</th>
                 <th>Workspaces</th>
-                <th>First Seen</th>
+                <th>Registered</th>
                 <th>Last Seen</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -32,6 +63,7 @@
                             <span class="connection-badge @(worker.IsConnected ? "connected" : "disconnected")"></span>
                             @(worker.IsConnected ? (worker.IsReady ? "Ready" : "Busy") : "Offline")
                         </td>
+                        <td>@worker.Name</td>
                         <td>@worker.Id.ToString()[..8]</td>
                         <td>
                             @if (worker.CurrentJobId.HasValue)
@@ -64,8 +96,13 @@
                                 <span>-</span>
                             }
                         </td>
-                        <td>@worker.FirstSeen.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td>@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm")</td>
                         <td>@worker.LastSeen.ToString("HH:mm:ss")</td>
+                        <td>
+                            <button class="btn-danger"
+                                    disabled="@IsRevoking(worker.Id)"
+                                    @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
+                        </td>
                     </tr>
                 }
             }
@@ -83,7 +120,12 @@
 @code {
     private IReadOnlyList<WorkerView>? workers;
     private HashSet<string> deletingWorkspaces = new();
+    private HashSet<string> revokingWorkers = new();
     private string? deleteError;
+    private string newWorkerName = "";
+    private bool isRegistering;
+    private string? registrationError;
+    private WorkerRegistrationResult? registrationResult;
 
     protected override async Task OnInitializedAsync()
     {
@@ -92,6 +134,71 @@
 
     private bool IsDeleting(NUlid.Ulid workerId, string workspace) =>
         deletingWorkspaces.Contains($"{workerId}:{workspace}");
+
+    private bool IsRevoking(NUlid.Ulid workerId) =>
+        revokingWorkers.Contains(workerId.ToString());
+
+    private async Task RegisterWorker()
+    {
+        isRegistering = true;
+        registrationError = null;
+        registrationResult = null;
+        StateHasChanged();
+
+        try
+        {
+            registrationResult = await RegistrationService.RegisterWorkerAsync(newWorkerName.Trim());
+            newWorkerName = "";
+            workers = await WorkerRepo.GetAllAsync();
+        }
+        catch (ArgumentException ex)
+        {
+            registrationError = ex.Message;
+        }
+        catch (ConfigurationException ex)
+        {
+            registrationError = ex.Message;
+        }
+        finally
+        {
+            isRegistering = false;
+            StateHasChanged();
+        }
+    }
+
+    private void DismissRegistration()
+    {
+        registrationResult = null;
+    }
+
+    private async Task RevokeWorker(NUlid.Ulid workerId)
+    {
+        var key = workerId.ToString();
+        revokingWorkers.Add(key);
+        deleteError = null;
+        StateHasChanged();
+
+        try
+        {
+            var connectionId = WorkerRepo.FindConnectionIdByWorkerId(workerId);
+            if (connectionId != null)
+            {
+                await WorkerRepo.SetDisconnectedAsync(connectionId);
+            }
+
+            await RegistrationService.RevokeWorkerAsync(workerId);
+            workers = await WorkerRepo.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            deleteError = $"Failed to revoke worker: {ex.Message}";
+        }
+        finally
+        {
+            revokingWorkers.Remove(key);
+            StateHasChanged();
+        }
+    }
 
     private async Task DeleteWorkspace(NUlid.Ulid workerId, string workspace)
     {

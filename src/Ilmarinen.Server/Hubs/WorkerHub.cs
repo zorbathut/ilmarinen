@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.SignalR;
 using NUlid;
@@ -9,34 +12,100 @@ namespace Ilmarinen.Server.Hubs;
 public class WorkerHub : Hub<IWorkerClient>
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ServerKeyService _serverKey;
     private readonly ILogger<WorkerHub> _logger;
 
-    public WorkerHub(IServiceScopeFactory scopeFactory, ILogger<WorkerHub> logger)
+    private static readonly ConcurrentDictionary<string, PendingAuth> _pendingAuths = new();
+
+    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, ILogger<WorkerHub> logger)
     {
         _scopeFactory = scopeFactory;
+        _serverKey = serverKey;
         _logger = logger;
     }
 
-    public async Task Register(WorkerRegister info)
+    public async Task<AuthChallenge> Connect(WorkerConnect request)
     {
-        // Validate build compatibility
-        if (info.BuildId != BuildInfo.GitCommit)
+        // Validate build compatibility early
+        if (request.BuildId != BuildInfo.GitCommit)
         {
             _logger.LogError(
                 "Worker {WorkerId} rejected: build mismatch (worker: {WorkerBuild}, server: {ServerBuild})",
-                info.WorkerId, info.BuildId, BuildInfo.GitCommit);
+                request.WorkerId, request.BuildId, BuildInfo.GitCommit);
 
             throw new HubException(
-                $"Build mismatch. Worker is '{info.BuildId}', server is '{BuildInfo.GitCommit}'. " +
+                $"Build mismatch. Worker is '{request.BuildId}', server is '{BuildInfo.GitCommit}'. " +
                 "Rebuild both from the same commit.");
         }
 
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-        var workerId = await workers.RegisterOrUpdateAsync(Context.ConnectionId, info);
+        var publicKey = await workers.GetWorkerPublicKeyAsync(request.WorkerId);
+        if (publicKey == null)
+        {
+            _logger.LogWarning("Connection failed: unknown worker {WorkerId}", request.WorkerId);
+            throw new HubException("Unknown worker. Register this worker via the API first.");
+        }
+
+        var serverNonce = RandomNumberGenerator.GetBytes(32);
+        var challengeData = ServerKeyService.BuildChallengeData(
+            request.WorkerId.ToString(), request.Nonce, serverNonce);
+        var serverSignature = _serverKey.Sign(challengeData);
+
+        _pendingAuths[Context.ConnectionId] = new PendingAuth
+        {
+            WorkerId = request.WorkerId,
+            WorkerNonce = request.Nonce,
+            ServerNonce = serverNonce,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _logger.LogDebug("Issued auth challenge for worker {WorkerId}", request.WorkerId);
+
+        return new AuthChallenge
+        {
+            Nonce = serverNonce,
+            ServerSignature = serverSignature
+        };
+    }
+
+    public async Task Authenticate(WorkerAuthenticate info)
+    {
+        if (!_pendingAuths.TryRemove(Context.ConnectionId, out var pending))
+        {
+            throw new HubException("No pending authentication challenge. Call Connect first.");
+        }
+
+        if (pending.CreatedAt.AddSeconds(60) < DateTime.UtcNow)
+        {
+            throw new HubException("Authentication challenge expired. Call Connect again.");
+        }
+
+        // Verify worker signature
+        using var scope = _scopeFactory.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        var publicKeyBytes = await workers.GetWorkerPublicKeyAsync(pending.WorkerId);
+        if (publicKeyBytes == null)
+        {
+            throw new HubException("Unknown worker.");
+        }
+
+        using var workerEcdsa = ECDsa.Create();
+        workerEcdsa.ImportSubjectPublicKeyInfo(publicKeyBytes, out _);
+
+        var challengeData = ServerKeyService.BuildChallengeData(
+            pending.WorkerId.ToString(), pending.WorkerNonce, pending.ServerNonce);
+        if (!workerEcdsa.VerifyData(challengeData, info.Signature, HashAlgorithmName.SHA256))
+        {
+            _logger.LogWarning("Worker {WorkerId} rejected: invalid signature", pending.WorkerId);
+            throw new HubException("Invalid signature. Check that the worker key is correct.");
+        }
+
+        await workers.ConnectAsync(Context.ConnectionId, pending.WorkerId);
         workers.SetWorkspaces(Context.ConnectionId, info.Workspaces);
-        _logger.LogInformation("Worker registered: {WorkerId}", workerId);
+        _logger.LogInformation("Worker authenticated: {WorkerId}", pending.WorkerId);
     }
 
     public async Task Ready()
@@ -110,6 +179,8 @@ public class WorkerHub : Hub<IWorkerClient>
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        _pendingAuths.TryRemove(Context.ConnectionId, out _);
+
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
@@ -130,4 +201,12 @@ public class WorkerHub : Hub<IWorkerClient>
         await workers.SetDisconnectedAsync(Context.ConnectionId);
         await base.OnDisconnectedAsync(exception);
     }
+}
+
+internal class PendingAuth
+{
+    public required Ulid WorkerId { get; init; }
+    public required byte[] WorkerNonce { get; init; }
+    public required byte[] ServerNonce { get; init; }
+    public required DateTime CreatedAt { get; init; }
 }

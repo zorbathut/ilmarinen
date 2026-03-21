@@ -24,6 +24,8 @@ public static class IlmarinenServerExtensions
             });
 
         services.AddSingleton<CredentialEncryptionService>();
+        services.AddSingleton<ServerKeyService>();
+        services.AddScoped<WorkerRegistrationService>();
         services.AddScoped<JobRepository>();
         services.AddScoped<JobLogRepository>();
         services.AddScoped<WorkerRepository>();

@@ -5,6 +5,7 @@ using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Controllers;
+using Ilmarinen.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -47,9 +48,17 @@ public class IntegrationTestFixture : IAsyncDisposable
         await db.Database.MigrateAsync();
     }
 
+    private int _workerCount;
+
     public async Task<Ulid> StartWorkerAsync()
     {
-        _workerBuilder = new TestWorkerBuilder(WorkerUrl, ServerUrl);
+        // Pre-register the worker on the server to get auth credentials
+        _workerCount++;
+        using var scope = _factory.Services.CreateScope();
+        var registrationService = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
+        var result = await registrationService.RegisterWorkerAsync($"test-worker-{_workerCount}");
+
+        _workerBuilder = new TestWorkerBuilder(WorkerUrl, ServerUrl, result.WorkerKey);
         _workerHost = _workerBuilder.Build();
         _workerCts = new CancellationTokenSource();
 

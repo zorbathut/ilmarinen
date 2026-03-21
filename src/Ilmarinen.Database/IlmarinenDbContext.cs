@@ -41,6 +41,11 @@ public class IlmarinenDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<Worker>(e =>
+        {
+            e.HasIndex(w => w.Name).IsUnique();
+        });
+
         modelBuilder.Entity<JobArtifact>(e =>
         {
             e.HasIndex(a => a.JobId);

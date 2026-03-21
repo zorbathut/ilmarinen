@@ -12,15 +12,18 @@ namespace Ilmarinen.Server.Controllers;
 public class WorkersController : ControllerBase
 {
     private readonly WorkerRepository _workers;
+    private readonly WorkerRegistrationService _registration;
     private readonly WorkspaceDeletionService _deletionService;
     private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
 
     public WorkersController(
         WorkerRepository workers,
+        WorkerRegistrationService registration,
         WorkspaceDeletionService deletionService,
         IHubContext<WorkerHub, IWorkerClient> hubContext)
     {
         _workers = workers;
+        _registration = registration;
         _deletionService = deletionService;
         _hubContext = hubContext;
     }
@@ -29,6 +32,44 @@ public class WorkersController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<WorkerView>>> GetWorkers()
     {
         return Ok(await _workers.GetAllAsync());
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<WorkerRegistrationResult>> RegisterWorker([FromBody] RegisterWorkerRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(new { error = "Worker name is required." });
+
+        try
+        {
+            var result = await _registration.RegisterWorkerAsync(request.Name);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpDelete("{workerId}")]
+    public async Task<ActionResult> RevokeWorker(Ulid workerId)
+    {
+        try
+        {
+            // Disconnect if currently connected
+            var connectionId = _workers.FindConnectionIdByWorkerId(workerId);
+            if (connectionId != null)
+            {
+                await _workers.SetDisconnectedAsync(connectionId);
+            }
+
+            await _registration.RevokeWorkerAsync(workerId);
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Worker not found." });
+        }
     }
 
     [HttpDelete("{workerId}/workspaces/{workspaceName}")]
@@ -61,4 +102,9 @@ public class WorkersController : ControllerBase
 
         return BadRequest(new { error = result.Error });
     }
+}
+
+public record RegisterWorkerRequest
+{
+    public string Name { get; init; } = "";
 }

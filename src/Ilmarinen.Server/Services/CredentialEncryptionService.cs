@@ -5,87 +5,41 @@ namespace Ilmarinen.Server.Services;
 
 /// <summary>
 /// Encrypts and decrypts credentials (e.g., Git tokens) using AES-256-GCM.
-/// Key is read from ILMARINEN_CREDENTIAL_KEY environment variable.
+/// The encryption key is derived from ILMARINEN_SERVER_KEY via HKDF.
 /// </summary>
 public class CredentialEncryptionService
 {
     private const int NonceSize = 12;
     private const int TagSize = 16;
-    private const string PlaceholderKey = "REPLACE-ME-WITH-REAL-KEY-GENERATED-VIA-openssl-rand-base64-32";
 
-    private readonly byte[]? _key;
-    private readonly bool _isPlaceholder;
+    private readonly ServerKeyService _serverKey;
 
-    public CredentialEncryptionService()
+    public CredentialEncryptionService(ServerKeyService serverKey)
     {
-        var keyBase64 = Environment.GetEnvironmentVariable("ILMARINEN_CREDENTIAL_KEY");
-
-        if (string.IsNullOrEmpty(keyBase64))
-        {
-            _key = null;
-            _isPlaceholder = false;
-            return;
-        }
-
-        if (keyBase64 == PlaceholderKey)
-        {
-            _key = null;
-            _isPlaceholder = true;
-            return;
-        }
-
-        try
-        {
-            _key = Convert.FromBase64String(keyBase64);
-            if (_key.Length != 32)
-            {
-                throw new InvalidOperationException(
-                    "ILMARINEN_CREDENTIAL_KEY must be a 32-byte (256-bit) key encoded as base64.");
-            }
-        }
-        catch (FormatException)
-        {
-            throw new InvalidOperationException(
-                "ILMARINEN_CREDENTIAL_KEY must be valid base64. Generate one with: openssl rand -base64 32");
-        }
-
-        _isPlaceholder = false;
+        _serverKey = serverKey;
     }
 
     /// <summary>
     /// True if a valid encryption key is configured.
     /// </summary>
-    public bool IsEnabled => _key != null;
+    public bool IsEnabled => _serverKey.IsEnabled;
 
     /// <summary>
     /// Encrypts a plaintext token. Returns base64-encoded ciphertext (nonce + ciphertext + tag).
-    /// Throws if encryption is not properly configured (placeholder or missing key).
     /// </summary>
     public string? Encrypt(string? plaintext)
     {
         if (string.IsNullOrEmpty(plaintext))
             return null;
 
-        if (_isPlaceholder)
-        {
-            throw new ConfigurationException(
-                "Cannot store Git tokens: ILMARINEN_CREDENTIAL_KEY is set to the placeholder value. " +
-                "The server administrator must generate a real key with: openssl rand -base64 32");
-        }
-
-        if (_key == null)
-        {
-            throw new ConfigurationException(
-                "Cannot store Git tokens: the server does not have ILMARINEN_CREDENTIAL_KEY configured. " +
-                "The server administrator must generate a key with: openssl rand -base64 32");
-        }
+        var key = _serverKey.GetEncryptionKey();
 
         var plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
         var nonce = RandomNumberGenerator.GetBytes(NonceSize);
         var ciphertext = new byte[plaintextBytes.Length];
         var tag = new byte[TagSize];
 
-        using var aes = new AesGcm(_key, TagSize);
+        using var aes = new AesGcm(key, TagSize);
         aes.Encrypt(nonce, plaintextBytes, ciphertext, tag);
 
         // Combine: nonce + ciphertext + tag
@@ -105,18 +59,7 @@ public class CredentialEncryptionService
         if (string.IsNullOrEmpty(encrypted))
             return null;
 
-        if (_isPlaceholder)
-        {
-            throw new ConfigurationException(
-                "Cannot decrypt Git tokens: ILMARINEN_CREDENTIAL_KEY is set to the placeholder value. " +
-                "Configure the real key that was used to encrypt the data.");
-        }
-
-        if (_key == null)
-        {
-            throw new ConfigurationException(
-                "Cannot decrypt: ILMARINEN_CREDENTIAL_KEY not configured but encrypted data found.");
-        }
+        var key = _serverKey.GetEncryptionKey();
 
         var combined = Convert.FromBase64String(encrypted);
         if (combined.Length < NonceSize + TagSize)
@@ -134,7 +77,7 @@ public class CredentialEncryptionService
         Buffer.BlockCopy(combined, NonceSize, ciphertext, 0, ciphertextLength);
         Buffer.BlockCopy(combined, NonceSize + ciphertextLength, tag, 0, TagSize);
 
-        using var aes = new AesGcm(_key, TagSize);
+        using var aes = new AesGcm(key, TagSize);
         aes.Decrypt(nonce, ciphertext, tag, plaintext);
 
         return Encoding.UTF8.GetString(plaintext);

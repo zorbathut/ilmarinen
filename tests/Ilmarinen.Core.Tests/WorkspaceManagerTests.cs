@@ -20,7 +20,8 @@ public class WorkspaceManagerTests
         var config = new WorkerConfig
         {
             ServerUrl = "http://localhost",
-            WorkspacePath = _tempDir
+            WorkspacePath = _tempDir,
+            WorkerKey = "test:01DUMMY00000000000000000000:AAAA:BBBB"
         };
 
         _manager = new WorkspaceManager(config, NullLogger<WorkspaceManager>.Instance);
