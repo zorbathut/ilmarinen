@@ -1,0 +1,136 @@
+@page "/pipelines"
+@using Ilmarinen.Protocol.Requests
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@inject PipelineRepository PipelineRepo
+
+<h1 class="page-title">Pipelines</h1>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Create Pipeline</h2>
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <div class="error-message">@error</div>
+    }
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+        <div>
+            <label>Name</label>
+            <input type="text" @bind="newName" placeholder="my-pipeline" />
+        </div>
+        <div>
+            <label>Repository URL</label>
+            <input type="text" @bind="newRepoUrl" placeholder="https://github.com/org/repo" />
+        </div>
+        <div>
+            <label>Default Ref</label>
+            <input type="text" @bind="newDefaultRef" placeholder="main" />
+        </div>
+        <div>
+            <label>Script Path</label>
+            <input type="text" @bind="newScriptPath" placeholder="pipeline.csx" />
+        </div>
+        <div>
+            <label>Git Token (optional)</label>
+            <input type="password" @bind="newGitToken" placeholder="Token for private repos" />
+        </div>
+    </div>
+    <button class="btn" @onclick="CreatePipeline" disabled="@creating">
+        @(creating ? "Creating..." : "Create Pipeline")
+    </button>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Repository</th>
+                <th>Default Ref</th>
+                <th>Script</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (pipelines != null)
+            {
+                @foreach (var pipeline in pipelines)
+                {
+                    <tr>
+                        <td><a href="/pipelines/@pipeline.Id">@pipeline.Name</a></td>
+                        <td>@GetShortRepoUrl(pipeline.RepoUrl)</td>
+                        <td>@pipeline.DefaultRef</td>
+                        <td>@pipeline.ScriptPath</td>
+                        <td>@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private IReadOnlyList<PipelineInfo>? pipelines;
+    private string newName = "";
+    private string newRepoUrl = "";
+    private string newDefaultRef = "main";
+    private string newScriptPath = "";
+    private string newGitToken = "";
+    private string? error;
+    private bool creating;
+
+    protected override async Task OnInitializedAsync()
+    {
+        pipelines = await PipelineRepo.GetAllAsync();
+    }
+
+    private async Task CreatePipeline()
+    {
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(newName) || string.IsNullOrWhiteSpace(newRepoUrl) || string.IsNullOrWhiteSpace(newScriptPath))
+        {
+            error = "Name, Repository URL, and Script Path are required.";
+            return;
+        }
+
+        creating = true;
+        try
+        {
+            var submission = new PipelineSubmission
+            {
+                Name = newName.Trim(),
+                RepoUrl = newRepoUrl.Trim(),
+                Ref = newDefaultRef.Trim(),
+                ScriptPath = newScriptPath.Trim(),
+                GitToken = string.IsNullOrWhiteSpace(newGitToken) ? null : newGitToken.Trim()
+            };
+
+            await PipelineRepo.CreateAsync(submission);
+
+            newName = "";
+            newRepoUrl = "";
+            newDefaultRef = "main";
+            newScriptPath = "";
+            newGitToken = "";
+
+            pipelines = await PipelineRepo.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            creating = false;
+        }
+    }
+
+    private string GetShortRepoUrl(string url)
+    {
+        if (url.StartsWith("https://github.com/"))
+            return url.Replace("https://github.com/", "");
+        if (url.StartsWith("git@github.com:"))
+            return url.Replace("git@github.com:", "").Replace(".git", "");
+        return url;
+    }
+}

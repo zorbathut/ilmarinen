@@ -1,0 +1,145 @@
+@page "/pipelines/{Id}"
+@using Ilmarinen.Protocol.Requests
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using NUlid
+@inject PipelineRepository Pipelines
+@inject JobRepository Jobs
+@inject JobScheduler Scheduler
+@inject NavigationManager Navigation
+
+<h1 class="page-title">Pipeline</h1>
+
+@if (pipeline != null)
+{
+    <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div class="detail-grid">
+                <span class="detail-label">Name</span>
+                <span class="detail-value">@pipeline.Name</span>
+
+                <span class="detail-label">Repository</span>
+                <span class="detail-value">@pipeline.RepoUrl</span>
+
+                <span class="detail-label">Default Ref</span>
+                <span class="detail-value">@pipeline.DefaultRef</span>
+
+                <span class="detail-label">Script</span>
+                <span class="detail-value">@pipeline.ScriptPath</span>
+
+                <span class="detail-label">Created</span>
+                <span class="detail-value">@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <button class="btn btn-danger" @onclick="DeletePipeline">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Trigger Run</h2>
+        <div style="display: flex; gap: 0.75rem; align-items: end;">
+            <div>
+                <label>Ref override (optional)</label>
+                <input type="text" @bind="refOverride" placeholder="@pipeline.DefaultRef" />
+            </div>
+            <button class="btn" @onclick="TriggerRun" disabled="@triggering">
+                @(triggering ? "Triggering..." : "Run")
+            </button>
+        </div>
+    </div>
+
+    <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Jobs</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Ref</th>
+                    <th>Worker</th>
+                    <th>Created</th>
+                    <th>Completed</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (jobs != null)
+                {
+                    @foreach (var job in jobs)
+                    {
+                        <tr>
+                            <td><a href="/jobs/@job.Id">@job.Id.ToString()[..8]</a></td>
+                            <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
+                            <td>@job.Ref</td>
+                            <td>@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</td>
+                            <td>@job.CreatedAt.ToString("HH:mm:ss")</td>
+                            <td>@(job.CompletedAt?.ToString("HH:mm:ss") ?? "-")</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else if (loading)
+{
+    <div class="card">Loading...</div>
+}
+else
+{
+    <div class="card">Pipeline not found</div>
+}
+
+@code {
+    [Parameter]
+    public string Id { get; set; } = "";
+
+    private PipelineInfo? pipeline;
+    private IReadOnlyList<JobInfo>? jobs;
+    private string refOverride = "";
+    private bool loading = true;
+    private bool triggering;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Ulid.TryParse(Id, out var ulid))
+        {
+            pipeline = await Pipelines.GetAsync(ulid);
+            if (pipeline != null)
+            {
+                jobs = await Jobs.GetByPipelineAsync(ulid);
+            }
+        }
+        loading = false;
+    }
+
+    private async Task TriggerRun()
+    {
+        if (!Ulid.TryParse(Id, out var ulid)) return;
+
+        triggering = true;
+        try
+        {
+            var submission = await Pipelines.BuildSubmissionAsync(ulid, string.IsNullOrWhiteSpace(refOverride) ? null : refOverride.Trim());
+            if (submission != null)
+            {
+                var jobId = await Scheduler.EnqueueJobAsync(submission, ulid);
+                Navigation.NavigateTo($"/jobs/{jobId}");
+            }
+        }
+        finally
+        {
+            triggering = false;
+        }
+    }
+
+    private async Task DeletePipeline()
+    {
+        if (Ulid.TryParse(Id, out var ulid))
+        {
+            await Pipelines.DeleteAsync(ulid);
+            Navigation.NavigateTo("/pipelines");
+        }
+    }
+}

@@ -18,6 +18,7 @@ public class DashboardService
     {
         var jobs = await _db.Jobs.ToListAsync();
         var workers = await _db.Workers.ToListAsync();
+        var pipelineCount = await _db.Pipelines.CountAsync();
 
         return new DashboardStats
         {
@@ -27,7 +28,8 @@ public class DashboardService
             SuccessfulJobs = jobs.Count(j => j.Status == JobStatus.Success),
             FailedJobs = jobs.Count(j => j.Status == JobStatus.Failed),
             TotalWorkers = workers.Count,
-            ConnectedWorkers = workers.Count(w => w.IsConnected)
+            ConnectedWorkers = workers.Count(w => w.IsConnected),
+            TotalPipelines = pipelineCount
         };
     }
 
@@ -63,6 +65,7 @@ public record DashboardStats
     public int FailedJobs { get; init; }
     public int TotalWorkers { get; init; }
     public int ConnectedWorkers { get; init; }
+    public int TotalPipelines { get; init; }
 }
 
 public record RecentJob

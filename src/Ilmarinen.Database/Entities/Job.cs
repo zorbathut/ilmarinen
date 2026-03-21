@@ -15,4 +15,5 @@ public class Job
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string? EncryptedGitToken { get; set; }
+    public Ulid? PipelineId { get; set; }
 }

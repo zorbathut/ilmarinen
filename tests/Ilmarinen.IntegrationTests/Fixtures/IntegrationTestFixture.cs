@@ -150,6 +150,45 @@ public class IntegrationTestFixture : IAsyncDisposable
         return await response.Content.ReadAsByteArrayAsync();
     }
 
+    public async Task<PipelineInfo> CreatePipelineAsync(PipelineSubmission submission)
+    {
+        var response = await _httpClient.PostAsJsonAsync("/api/pipelines", submission, JsonOptions);
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<PipelineInfo>(JsonOptions))!;
+    }
+
+    public async Task<PipelineInfo> GetPipelineAsync(Ulid id)
+    {
+        var response = await _httpClient.GetAsync($"/api/pipelines/{id}");
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<PipelineInfo>(JsonOptions))!;
+    }
+
+    public async Task<List<PipelineInfo>> GetAllPipelinesAsync()
+    {
+        var response = await _httpClient.GetAsync("/api/pipelines");
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<List<PipelineInfo>>(JsonOptions))!;
+    }
+
+    public async Task<Ulid> TriggerPipelineAsync(Ulid id, PipelineTrigger? trigger = null)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"/api/pipelines/{id}/trigger", trigger, JsonOptions);
+        await EnsureSuccessAsync(response);
+
+        var result = await response.Content.ReadFromJsonAsync<JobSubmissionResult>(JsonOptions);
+        return result!.Id;
+    }
+
+    public async Task<bool> DeletePipelineAsync(Ulid id)
+    {
+        var response = await _httpClient.DeleteAsync($"/api/pipelines/{id}");
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task StopWorkerAsync()
     {
         if (_workerCts != null)

@@ -50,7 +50,7 @@ public class JobScheduler
         _logger.LogInformation("Loaded {Count} queued jobs from database", queuedIds.Count);
     }
 
-    public async Task<Ulid> EnqueueJobAsync(JobSubmission submission)
+    public async Task<Ulid> EnqueueJobAsync(JobSubmission submission, Ulid? pipelineId = null)
     {
         await EnsureInitializedAsync();
 
@@ -58,7 +58,7 @@ public class JobScheduler
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-        var info = await jobs.CreateAsync(submission);
+        var info = await jobs.CreateAsync(submission, pipelineId);
         await jobs.UpdateStatusAsync(info.Id, JobStatus.Queued);
         _pendingJobs.Enqueue(info.Id);
 

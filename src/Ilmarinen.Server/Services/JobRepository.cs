@@ -21,7 +21,7 @@ public class JobRepository
         _encryption = encryption;
     }
 
-    public async Task<JobInfo> CreateAsync(JobSubmission submission)
+    public async Task<JobInfo> CreateAsync(JobSubmission submission, Ulid? pipelineId = null)
     {
         var job = new Job
         {
@@ -31,7 +31,8 @@ public class JobRepository
             Ref = submission.Ref,
             ScriptPath = submission.ScriptPath,
             CreatedAt = DateTime.UtcNow,
-            EncryptedGitToken = _encryption.Encrypt(submission.GitToken)
+            EncryptedGitToken = _encryption.Encrypt(submission.GitToken),
+            PipelineId = pipelineId
         };
 
         _db.Jobs.Add(job);
@@ -49,7 +50,10 @@ public class JobRepository
         var workerName = job.WorkerId != null
             ? await _db.Workers.Where(w => w.Id == job.WorkerId).Select(w => w.Name).FirstOrDefaultAsync()
             : null;
-        return ToJobInfo(job, artifacts, workerName);
+        var pipelineName = job.PipelineId != null
+            ? await _db.Pipelines.Where(p => p.Id == job.PipelineId).Select(p => p.Name).FirstOrDefaultAsync()
+            : null;
+        return ToJobInfo(job, artifacts, workerName, pipelineName);
     }
 
     public async Task<JobSubmission?> GetSubmissionAsync(Ulid id)
@@ -88,12 +92,30 @@ public class JobRepository
     public async Task<IReadOnlyList<JobInfo>> GetAllAsync()
     {
         var workerNames = await _db.Workers.ToDictionaryAsync(w => w.Id, w => w.Name);
+        var pipelineNames = await _db.Pipelines.ToDictionaryAsync(p => p.Id, p => p.Name);
 
         var jobs = await _db.Jobs
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
 
-        return jobs.Select(j => ToJobInfo(j, workerName: j.WorkerId != null && workerNames.TryGetValue(j.WorkerId.Value, out var name) ? name : null)).ToList();
+        return jobs.Select(j => ToJobInfo(j,
+            workerName: j.WorkerId != null && workerNames.TryGetValue(j.WorkerId.Value, out var wName) ? wName : null,
+            pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null)).ToList();
+    }
+
+    public async Task<IReadOnlyList<JobInfo>> GetByPipelineAsync(Ulid pipelineId)
+    {
+        var workerNames = await _db.Workers.ToDictionaryAsync(w => w.Id, w => w.Name);
+        var pipelineName = await _db.Pipelines.Where(p => p.Id == pipelineId).Select(p => p.Name).FirstOrDefaultAsync();
+
+        var jobs = await _db.Jobs
+            .Where(j => j.PipelineId == pipelineId)
+            .OrderByDescending(j => j.CreatedAt)
+            .ToListAsync();
+
+        return jobs.Select(j => ToJobInfo(j,
+            workerName: j.WorkerId != null && workerNames.TryGetValue(j.WorkerId.Value, out var wName) ? wName : null,
+            pipelineName: pipelineName)).ToList();
     }
 
     public async Task<IReadOnlyList<Ulid>> GetQueuedJobIdsAsync()
@@ -120,7 +142,7 @@ public class JobRepository
         return rows > 0;
     }
 
-    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null, string? workerName = null) => new()
+    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null, string? workerName = null, string? pipelineName = null) => new()
     {
         Id = job.Id,
         Status = job.Status,
@@ -132,6 +154,8 @@ public class JobRepository
         CreatedAt = job.CreatedAt,
         StartedAt = job.StartedAt,
         CompletedAt = job.CompletedAt,
-        Artifacts = artifacts
+        Artifacts = artifacts,
+        PipelineId = job.PipelineId,
+        PipelineName = pipelineName
     };
 }

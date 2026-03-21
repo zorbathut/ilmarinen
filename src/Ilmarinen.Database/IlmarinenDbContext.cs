@@ -16,6 +16,7 @@ public class IlmarinenDbContext : DbContext
     public DbSet<Worker> Workers => Set<Worker>();
     public DbSet<JobLogChunk> JobLogChunks => Set<JobLogChunk>();
     public DbSet<JobArtifact> JobArtifacts => Set<JobArtifact>();
+    public DbSet<Pipeline> Pipelines => Set<Pipeline>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -30,6 +31,12 @@ public class IlmarinenDbContext : DbContext
         {
             e.HasIndex(j => j.Status);
             e.HasIndex(j => j.CreatedAt);
+            e.HasIndex(j => j.PipelineId);
+        });
+
+        modelBuilder.Entity<Pipeline>(e =>
+        {
+            e.HasIndex(p => p.Name).IsUnique();
         });
 
         modelBuilder.Entity<JobLogChunk>(e =>
