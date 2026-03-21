@@ -19,8 +19,21 @@ namespace Ilmarinen.Database.Migrations
                 name: "Name",
                 table: "Workers",
                 type: "text",
+                nullable: true);
+
+            // Backfill existing workers with a unique name derived from their ID
+            migrationBuilder.Sql(
+                """UPDATE "Workers" SET "Name" = 'worker-' || "Id" WHERE "Name" IS NULL""");
+
+            migrationBuilder.AlterColumn<string>(
+                name: "Name",
+                table: "Workers",
+                type: "text",
                 nullable: false,
-                defaultValue: "");
+                defaultValue: "",
+                oldClrType: typeof(string),
+                oldType: "text",
+                oldNullable: true);
 
             migrationBuilder.AddColumn<byte[]>(
                 name: "PublicKey",
