@@ -42,6 +42,16 @@ public class PipelinesController : ControllerBase
         return pipeline != null ? Ok(pipeline) : NotFound();
     }
 
+    [HttpPut("{id}")]
+    public async Task<ActionResult<PipelineInfo>> UpdatePipeline(string id, [FromBody] PipelineUpdate update)
+    {
+        if (!Ulid.TryParse(id, out var ulid))
+            return BadRequest("Invalid pipeline ID");
+
+        var pipeline = await _pipelines.UpdateAsync(ulid, update);
+        return pipeline != null ? Ok(pipeline) : NotFound();
+    }
+
     [HttpDelete("{id}")]
     public async Task<ActionResult> DeletePipeline(string id)
     {

@@ -171,6 +171,75 @@ public class PipelineTests
     }
 
     [Test]
+    public async Task UpdatePipeline_ChangesFields()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "update-test",
+            RepoUrl = _repo.Url,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        var updated = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate
+        {
+            Name = "updated-name",
+            Ref = "main"
+        });
+
+        Assert.That(updated.Name, Is.EqualTo("updated-name"));
+        Assert.That(updated.DefaultRef, Is.EqualTo("main"));
+        Assert.That(updated.RepoUrl, Is.EqualTo(_repo.Url));
+        Assert.That(updated.ScriptPath, Is.EqualTo("pipeline.csx"));
+    }
+
+    [Test]
+    public async Task UpdatePipeline_SetAndRemoveGitToken()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "token-test",
+            RepoUrl = _repo.Url,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        Assert.That(pipeline.HasGitToken, Is.False);
+
+        var withToken = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate
+        {
+            UpdateGitToken = true,
+            GitToken = "ghp_test123"
+        });
+
+        Assert.That(withToken.HasGitToken, Is.True);
+
+        var withoutToken = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate
+        {
+            UpdateGitToken = true,
+            GitToken = null
+        });
+
+        Assert.That(withoutToken.HasGitToken, Is.False);
+    }
+
+    [Test]
+    public async Task UpdatePipeline_NonExistent_Returns404()
+    {
+        var fakeId = Ulid.NewUlid();
+        var response = await _fixture.HttpClient.PutAsJsonAsync(
+            $"/api/pipelines/{fakeId}",
+            new PipelineUpdate { Name = "nope" },
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new Ilmarinen.Protocol.UlidJsonConverter() }
+            });
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(404));
+    }
+
+    [Test]
     public async Task CreatePipeline_DuplicateName_Returns409OrError()
     {
         var submission = new PipelineSubmission

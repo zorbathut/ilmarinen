@@ -13,28 +13,79 @@
 @if (pipeline != null)
 {
     <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: start;">
+        @if (editing)
+        {
             <div class="detail-grid">
                 <span class="detail-label">Name</span>
-                <span class="detail-value">@pipeline.Name</span>
+                <span class="detail-value"><input type="text" @bind="editName" /></span>
 
                 <span class="detail-label">Repository</span>
-                <span class="detail-value">@pipeline.RepoUrl</span>
+                <span class="detail-value"><input type="text" @bind="editRepoUrl" /></span>
 
                 <span class="detail-label">Default Ref</span>
-                <span class="detail-value">@pipeline.DefaultRef</span>
+                <span class="detail-value"><input type="text" @bind="editRef" /></span>
 
                 <span class="detail-label">Script</span>
-                <span class="detail-value">@pipeline.ScriptPath</span>
+                <span class="detail-value"><input type="text" @bind="editScriptPath" /></span>
+
+                <span class="detail-label">Git Token</span>
+                <span class="detail-value">
+                    @if (removingToken)
+                    {
+                        <span style="opacity: 0.5;">Will be removed</span>
+                        <button class="btn" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = false">Undo</button>
+                    }
+                    else
+                    {
+                        <input type="password" @bind="editGitToken" placeholder="@(pipeline.HasGitToken ? "Leave blank to keep current" : "Optional")" />
+                        @if (pipeline.HasGitToken)
+                        {
+                            <button class="btn btn-danger" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = true">Remove</button>
+                        }
+                    }
+                </span>
 
                 <span class="detail-label">Created</span>
                 <span class="detail-value">@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
             </div>
-
-            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                <button class="btn btn-danger" @onclick="DeletePipeline">Delete</button>
+            <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                <button class="btn" @onclick="SaveEdit" disabled="@saving">@(saving ? "Saving..." : "Save")</button>
+                <button class="btn" @onclick="CancelEdit">Cancel</button>
             </div>
-        </div>
+            @if (editError != null)
+            {
+                <div style="color: var(--danger); margin-top: 0.5rem;">@editError</div>
+            }
+        }
+        else
+        {
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div class="detail-grid">
+                    <span class="detail-label">Name</span>
+                    <span class="detail-value">@pipeline.Name</span>
+
+                    <span class="detail-label">Repository</span>
+                    <span class="detail-value">@pipeline.RepoUrl</span>
+
+                    <span class="detail-label">Default Ref</span>
+                    <span class="detail-value">@pipeline.DefaultRef</span>
+
+                    <span class="detail-label">Script</span>
+                    <span class="detail-value">@pipeline.ScriptPath</span>
+
+                    <span class="detail-label">Git Token</span>
+                    <span class="detail-value">@(pipeline.HasGitToken ? "Configured" : "Not set")</span>
+
+                    <span class="detail-label">Created</span>
+                    <span class="detail-value">@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <button class="btn" @onclick="StartEdit">Edit</button>
+                    <button class="btn btn-danger" @onclick="DeletePipeline">Delete</button>
+                </div>
+            </div>
+        }
     </div>
 
     <div class="card" style="margin-top: 1rem;">
@@ -101,6 +152,16 @@ else
     private bool loading = true;
     private bool triggering;
 
+    private bool editing;
+    private bool saving;
+    private string? editError;
+    private string editName = "";
+    private string editRepoUrl = "";
+    private string editRef = "";
+    private string editScriptPath = "";
+    private string editGitToken = "";
+    private bool removingToken;
+
     protected override async Task OnInitializedAsync()
     {
         if (Ulid.TryParse(Id, out var ulid))
@@ -131,6 +192,63 @@ else
         finally
         {
             triggering = false;
+        }
+    }
+
+    private void StartEdit()
+    {
+        editName = pipeline!.Name;
+        editRepoUrl = pipeline.RepoUrl;
+        editRef = pipeline.DefaultRef;
+        editScriptPath = pipeline.ScriptPath;
+        editGitToken = "";
+        removingToken = false;
+        editError = null;
+        editing = true;
+    }
+
+    private void CancelEdit()
+    {
+        editing = false;
+        editError = null;
+    }
+
+    private async Task SaveEdit()
+    {
+        if (!Ulid.TryParse(Id, out var ulid)) return;
+
+        saving = true;
+        editError = null;
+        try
+        {
+            var update = new PipelineUpdate
+            {
+                Name = editName != pipeline!.Name ? editName : null,
+                RepoUrl = editRepoUrl != pipeline.RepoUrl ? editRepoUrl : null,
+                Ref = editRef != pipeline.DefaultRef ? editRef : null,
+                ScriptPath = editScriptPath != pipeline.ScriptPath ? editScriptPath : null,
+                UpdateGitToken = removingToken || !string.IsNullOrEmpty(editGitToken),
+                GitToken = removingToken ? null : (string.IsNullOrEmpty(editGitToken) ? null : editGitToken)
+            };
+
+            var updated = await Pipelines.UpdateAsync(ulid, update);
+            if (updated != null)
+            {
+                pipeline = updated;
+                editing = false;
+            }
+            else
+            {
+                editError = "Pipeline not found.";
+            }
+        }
+        catch (Exception ex)
+        {
+            editError = ex.Message;
+        }
+        finally
+        {
+            saving = false;
         }
     }
 

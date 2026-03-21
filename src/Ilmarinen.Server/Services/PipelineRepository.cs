@@ -61,6 +61,26 @@ public class PipelineRepository
         return rows > 0;
     }
 
+    public async Task<PipelineInfo?> UpdateAsync(Ulid id, PipelineUpdate update)
+    {
+        var pipeline = await _db.Pipelines.FirstOrDefaultAsync(p => p.Id == id);
+        if (pipeline == null) return null;
+
+        if (update.Name != null)
+            pipeline.Name = update.Name;
+        if (update.RepoUrl != null)
+            pipeline.RepoUrl = update.RepoUrl;
+        if (update.Ref != null)
+            pipeline.DefaultRef = update.Ref;
+        if (update.ScriptPath != null)
+            pipeline.ScriptPath = update.ScriptPath;
+        if (update.UpdateGitToken)
+            pipeline.EncryptedGitToken = _encryption.Encrypt(string.IsNullOrEmpty(update.GitToken) ? null : update.GitToken);
+
+        await _db.SaveChangesAsync();
+        return ToPipelineInfo(pipeline);
+    }
+
     public async Task<JobSubmission?> BuildSubmissionAsync(Ulid id, string? refOverride)
     {
         var pipeline = await _db.Pipelines.FirstOrDefaultAsync(p => p.Id == id);
@@ -82,6 +102,7 @@ public class PipelineRepository
         RepoUrl = pipeline.RepoUrl,
         DefaultRef = pipeline.DefaultRef,
         ScriptPath = pipeline.ScriptPath,
+        HasGitToken = pipeline.EncryptedGitToken != null,
         CreatedAt = pipeline.CreatedAt
     };
 }

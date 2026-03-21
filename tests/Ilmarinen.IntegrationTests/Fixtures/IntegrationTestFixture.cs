@@ -183,6 +183,14 @@ public class IntegrationTestFixture : IAsyncDisposable
         return result!.Id;
     }
 
+    public async Task<PipelineInfo> UpdatePipelineAsync(Ulid id, PipelineUpdate update)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"/api/pipelines/{id}", update, JsonOptions);
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<PipelineInfo>(JsonOptions))!;
+    }
+
     public async Task<bool> DeletePipelineAsync(Ulid id)
     {
         var response = await _httpClient.DeleteAsync($"/api/pipelines/{id}");
