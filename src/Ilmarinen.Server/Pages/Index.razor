@@ -58,7 +58,7 @@
                         <td>@GetShortRepoUrl(job.RepoUrl)</td>
                         <td>@job.Ref</td>
                         <td>@job.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                        <td>@(job.WorkerId?.ToString()[..8] ?? "-")</td>
+                        <td>@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</td>
                     </tr>
                 }
             }

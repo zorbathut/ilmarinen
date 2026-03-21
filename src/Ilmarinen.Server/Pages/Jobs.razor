@@ -29,7 +29,7 @@
                         <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
                         <td>@GetShortRepoUrl(job.RepoUrl)</td>
                         <td>@job.Ref</td>
-                        <td>@(job.WorkerId?.ToString()[..8] ?? "-")</td>
+                        <td>@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</td>
                         <td>@job.CreatedAt.ToString("HH:mm:ss")</td>
                         <td>@(job.StartedAt?.ToString("HH:mm:ss") ?? "-")</td>
                         <td>@(job.CompletedAt?.ToString("HH:mm:ss") ?? "-")</td>

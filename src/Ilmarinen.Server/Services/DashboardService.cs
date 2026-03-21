@@ -36,17 +36,21 @@ public class DashboardService
         var jobs = await _db.Jobs
             .OrderByDescending(j => j.CreatedAt)
             .Take(count)
+            .Select(j => new RecentJob
+            {
+                Id = j.Id,
+                Status = j.Status,
+                RepoUrl = j.RepoUrl,
+                Ref = j.Ref,
+                CreatedAt = j.CreatedAt,
+                WorkerId = j.WorkerId,
+                WorkerName = j.WorkerId != null
+                    ? _db.Workers.Where(w => w.Id == j.WorkerId).Select(w => w.Name).FirstOrDefault()
+                    : null
+            })
             .ToListAsync();
 
-        return jobs.Select(j => new RecentJob
-        {
-            Id = j.Id,
-            Status = j.Status,
-            RepoUrl = j.RepoUrl,
-            Ref = j.Ref,
-            CreatedAt = j.CreatedAt,
-            WorkerId = j.WorkerId
-        }).ToList();
+        return jobs;
     }
 }
 
@@ -69,4 +73,5 @@ public record RecentJob
     public required string Ref { get; init; }
     public required DateTime CreatedAt { get; init; }
     public Ulid? WorkerId { get; init; }
+    public string? WorkerName { get; init; }
 }

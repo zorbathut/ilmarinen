@@ -13,6 +13,7 @@ public record JobInfo
     public required string Ref { get; init; }
     public required string ScriptPath { get; init; }
     public Ulid? WorkerId { get; init; }
+    public string? WorkerName { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime? StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }

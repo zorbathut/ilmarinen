@@ -46,7 +46,10 @@ public class JobRepository
         if (job == null) return null;
 
         var artifacts = await _artifacts.GetByJobIdAsync(id);
-        return ToJobInfo(job, artifacts);
+        var workerName = job.WorkerId != null
+            ? await _db.Workers.Where(w => w.Id == job.WorkerId).Select(w => w.Name).FirstOrDefaultAsync()
+            : null;
+        return ToJobInfo(job, artifacts, workerName);
     }
 
     public async Task<JobSubmission?> GetSubmissionAsync(Ulid id)
@@ -84,11 +87,13 @@ public class JobRepository
 
     public async Task<IReadOnlyList<JobInfo>> GetAllAsync()
     {
+        var workerNames = await _db.Workers.ToDictionaryAsync(w => w.Id, w => w.Name);
+
         var jobs = await _db.Jobs
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
 
-        return jobs.Select(j => ToJobInfo(j)).ToList();
+        return jobs.Select(j => ToJobInfo(j, workerName: j.WorkerId != null && workerNames.TryGetValue(j.WorkerId.Value, out var name) ? name : null)).ToList();
     }
 
     public async Task<IReadOnlyList<Ulid>> GetQueuedJobIdsAsync()
@@ -115,7 +120,7 @@ public class JobRepository
         return rows > 0;
     }
 
-    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null) => new()
+    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null, string? workerName = null) => new()
     {
         Id = job.Id,
         Status = job.Status,
@@ -123,6 +128,7 @@ public class JobRepository
         Ref = job.Ref,
         ScriptPath = job.ScriptPath,
         WorkerId = job.WorkerId,
+        WorkerName = workerName,
         CreatedAt = job.CreatedAt,
         StartedAt = job.StartedAt,
         CompletedAt = job.CompletedAt,
