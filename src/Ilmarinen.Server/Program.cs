@@ -30,7 +30,6 @@ builder.Services.AddDbContext<IlmarinenDbContext>(options =>
     options.UseNpgsql(dataSource));
 
 builder.Services.AddIlmarinenServer();
-builder.Services.AddScoped<DashboardService>();
 
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
