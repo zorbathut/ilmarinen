@@ -3,9 +3,9 @@ using NUlid;
 namespace Ilmarinen.Protocol.Responses;
 
 /// <summary>
-/// Worker → Server: Report job completion via SignalR Hub.JobCompleted()
+/// Worker → Server: Report job result via SignalR Hub.JobCompleted()
 /// </summary>
-public record JobCompleted
+public record JobResult
 {
     public required Ulid Id { get; init; }
     public required JobStatus Status { get; init; }

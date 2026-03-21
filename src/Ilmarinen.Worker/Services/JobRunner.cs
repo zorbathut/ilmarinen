@@ -37,7 +37,7 @@ public class JobRunner
         _logCollector = logCollector;
     }
 
-    public async Task<JobCompleted> ExecuteAsync()
+    public async Task<JobResult> ExecuteAsync()
     {
         // Start with a temporary directory to clone and read the script
         var tempDir = Path.Combine(_config.WorkspacePath, _job.Id.ToString());
@@ -59,7 +59,7 @@ public class JobRunner
             if (!File.Exists(scriptPath))
             {
                 _logger.LogError("Pipeline script not found: {ScriptPath}", _job.ScriptPath);
-                return new JobCompleted { Id = _job.Id, Status = JobStatus.Failed };
+                return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
             }
 
             _logger.LogInformation("Loading pipeline: {ScriptPath}", _job.ScriptPath);
@@ -69,7 +69,7 @@ public class JobRunner
             if (scriptResult.Steps.Count == 0)
             {
                 _logger.LogError("Pipeline has no steps");
-                return new JobCompleted { Id = _job.Id, Status = JobStatus.Failed };
+                return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
             }
 
             // 4. Determine workspace path and prepare it
@@ -81,7 +81,7 @@ public class JobRunner
                 {
                     _logger.LogError("Invalid workspace name rejected: {WorkspaceName} - {Error}",
                         wsName, validationError);
-                    return new JobCompleted { Id = _job.Id, Status = JobStatus.Failed };
+                    return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
                 }
 
                 workDir = Path.Combine(_config.WorkspacePath, wsName);
@@ -95,7 +95,7 @@ public class JobRunner
                     _logger.LogError(
                         "Workspace path escape detected: {ResolvedPath} is not under {WorkspaceRoot}",
                         resolvedPath, workspaceRoot);
-                    return new JobCompleted { Id = _job.Id, Status = JobStatus.Failed };
+                    return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
                 }
 
                 _logger.LogInformation("Using persistent workspace: {WorkspaceName}", wsName);
@@ -138,7 +138,7 @@ public class JobRunner
                 onOutput: _logCollector.AsCallback());
             var success = await runner.RunAsync(scriptResult.Steps);
 
-            return new JobCompleted
+            return new JobResult
             {
                 Id = _job.Id,
                 Status = success ? JobStatus.Success : JobStatus.Failed

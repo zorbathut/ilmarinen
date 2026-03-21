@@ -137,7 +137,7 @@ public class WorkerHub : Hub<IWorkerClient>
         await logService.ProcessChunkAsync(chunk);
     }
 
-    public async Task JobCompleted(Ulid jobId, JobCompleted result)
+    public async Task JobCompleted(Ulid jobId, JobResult result)
     {
         using var scope = _scopeFactory.CreateScope();
         var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();

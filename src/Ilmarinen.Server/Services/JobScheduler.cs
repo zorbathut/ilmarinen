@@ -107,7 +107,7 @@ public class JobScheduler
         return true;
     }
 
-    public async Task CompleteJobAsync(Ulid jobId, JobCompleted result)
+    public async Task CompleteJobAsync(Ulid jobId, JobResult result)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();

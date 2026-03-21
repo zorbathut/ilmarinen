@@ -174,7 +174,7 @@ public class WorkerService : BackgroundService
             logCollector.WriteStderr($"Job failed with exception: {ex}");
             await logCollector.FlushAsync();
 
-            await _connection!.SendAsync("JobCompleted", job.Id, new JobCompleted
+            await _connection!.SendAsync("JobCompleted", job.Id, new JobResult
             {
                 Id = job.Id,
                 Status = JobStatus.Failed,
