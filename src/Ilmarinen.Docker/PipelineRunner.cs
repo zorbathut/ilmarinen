@@ -486,8 +486,38 @@ public class PipelineRunner
         return string.Concat(name.Select(c => invalid.Contains(c) ? '_' : c));
     }
 
+    private async Task PruneStaleNetworksAsync()
+    {
+        var networks = await _client.Networks.ListNetworksAsync(new NetworksListParameters
+        {
+            Filters = new Dictionary<string, IDictionary<string, bool>>
+            {
+                ["label"] = new Dictionary<string, bool> { ["ilmarinen.test.pid"] = true }
+            }
+        });
+
+        foreach (var network in networks)
+        {
+            if (network.Labels.TryGetValue("ilmarinen.test.pid", out var pidStr)
+                && int.TryParse(pidStr, out var pid))
+            {
+                try
+                {
+                    System.Diagnostics.Process.GetProcessById(pid);
+                }
+                catch (ArgumentException)
+                {
+                    // Process doesn't exist — network is stale
+                    await _client.Networks.DeleteNetworkAsync(network.ID);
+                }
+            }
+        }
+    }
+
     private async Task CreateNetworkAsync(string name)
     {
+        await PruneStaleNetworksAsync();
+
         await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
         {
             Name = name,
