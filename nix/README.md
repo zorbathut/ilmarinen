@@ -2,10 +2,8 @@
 
 ## Development Shell
 
-From the repo root:
-
 ```bash
-nix-shell
+nix-shell nix/shell.nix
 ```
 
 This gives you a shell with the .NET 9.0 SDK.
@@ -53,7 +51,7 @@ that is **not** checked into source control:
 1. Generate `nix/deps.json` if it hasn't been done yet:
 
    ```bash
-   nix-shell
+   nix-shell nix/shell.nix
    nix-build -A fetch-deps && ./result nix/deps.json
    ```
 
@@ -83,7 +81,7 @@ sudo systemctl restart ilmarinen-worker
 If NuGet dependencies changed, regenerate deps first:
 
 ```bash
-nix-shell
+nix-shell nix/shell.nix
 nix-build -A fetch-deps && ./result nix/deps.json
 ```
 
