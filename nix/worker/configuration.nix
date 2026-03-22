@@ -78,6 +78,9 @@ in
     };
   };
 
+  # Allow running dynamically linked executables (e.g. self-contained .NET publish)
+  programs.nix-ld.enable = true;
+
   # Firewall - worker only needs outbound connections
   networking.firewall.enable = true;
 
