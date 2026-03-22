@@ -112,6 +112,9 @@ public class JobScheduler
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
         await jobs.UpdateStatusAsync(jobId, result.Status);
+
+        var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
+        await notifications.CreateForActiveSubscribersAsync(jobId, "JobCompleted");
     }
 
     public async Task<bool> CancelJobAsync(Ulid jobId)

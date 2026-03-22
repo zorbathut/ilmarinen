@@ -197,6 +197,62 @@ public class IntegrationTestFixture : IAsyncDisposable
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<SubscriberInfo> RegisterSubscriberAsync(SubscriberRegistration registration)
+    {
+        var response = await _httpClient.PostAsJsonAsync("/api/subscribers", registration, JsonOptions);
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<SubscriberInfo>(JsonOptions))!;
+    }
+
+    public async Task<SubscriberInfo> GetSubscriberAsync(Ulid id)
+    {
+        var response = await _httpClient.GetAsync($"/api/subscribers/{id}");
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<SubscriberInfo>(JsonOptions))!;
+    }
+
+    public async Task SubscriberHeartbeatAsync(Ulid id)
+    {
+        var response = await _httpClient.PostAsync($"/api/subscribers/{id}/heartbeat", null);
+        await EnsureSuccessAsync(response);
+    }
+
+    public async Task<List<JobNotification>> PullNotificationsAsync(Ulid subscriberId, int limit = 10)
+    {
+        var response = await _httpClient.PostAsync(
+            $"/api/subscribers/{subscriberId}/notifications?limit={limit}", null);
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<List<JobNotification>>(JsonOptions))!;
+    }
+
+    public async Task AcknowledgeNotificationsAsync(Ulid subscriberId, List<Ulid> notificationIds)
+    {
+        var response = await _httpClient.PostAsJsonAsync(
+            $"/api/subscribers/{subscriberId}/notifications/ack", notificationIds, JsonOptions);
+        await EnsureSuccessAsync(response);
+    }
+
+    public async Task<List<JobNotification>> WaitForNotificationsAsync(
+        Ulid subscriberId, int expectedCount = 1, int timeoutMs = 30000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var notifications = await PullNotificationsAsync(subscriberId);
+            if (notifications.Count >= expectedCount)
+                return notifications;
+
+            await Task.Delay(500);
+        }
+
+        throw new TimeoutException(
+            $"Expected {expectedCount} notification(s) for subscriber {subscriberId} within {timeoutMs}ms");
+    }
+
     public async Task StopWorkerAsync()
     {
         if (_workerCts != null)

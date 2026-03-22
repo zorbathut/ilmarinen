@@ -17,6 +17,8 @@ public class IlmarinenDbContext : DbContext
     public DbSet<JobLogChunk> JobLogChunks => Set<JobLogChunk>();
     public DbSet<JobArtifact> JobArtifacts => Set<JobArtifact>();
     public DbSet<Pipeline> Pipelines => Set<Pipeline>();
+    public DbSet<Subscriber> Subscribers => Set<Subscriber>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -59,6 +61,24 @@ public class IlmarinenDbContext : DbContext
             e.HasOne(a => a.Job)
                 .WithMany()
                 .HasForeignKey(a => a.JobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Subscriber>(e =>
+        {
+            e.HasIndex(s => s.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<Notification>(e =>
+        {
+            e.HasIndex(n => new { n.SubscriberId, n.IsProcessed });
+            e.HasOne(n => n.Subscriber)
+                .WithMany()
+                .HasForeignKey(n => n.SubscriberId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(n => n.Job)
+                .WithMany()
+                .HasForeignKey(n => n.JobId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

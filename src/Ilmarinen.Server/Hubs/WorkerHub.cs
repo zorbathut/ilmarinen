@@ -195,6 +195,9 @@ public class WorkerHub : Hub<IWorkerClient>
             {
                 await logService.NotifyJobCompletedAsync(worker.CurrentJobId.Value, JobStatus.Failed);
                 await jobs.UpdateStatusAsync(worker.CurrentJobId.Value, JobStatus.Failed);
+
+                var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
+                await notifications.CreateForActiveSubscribersAsync(worker.CurrentJobId.Value, "JobCompleted");
             }
         }
 

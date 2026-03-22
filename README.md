@@ -127,6 +127,8 @@ Step("nested")
 | **Ilmarinen.Scripting** | Roslyn-based .csx script compilation |
 | **Ilmarinen.Protocol** | Shared types for server/worker communication |
 | **Ilmarinen.Database** | PostgreSQL persistence with Entity Framework Core |
+| **Ilmarinen.NotificationClient** | Shared library for subscribing to job notifications |
+| **Ilmarinen.DiscordBot** | Discord bot that reports build successes and failures |
 
 ### Execution Model
 
@@ -183,6 +185,66 @@ Step("example")
 - Each worker clones the repo, loads the pipeline script, and executes it
 - Job status updates flow back through SignalR
 
+## Notifications
+
+Ilmarinen includes a notification framework that pushes job completion events to external subscribers. The first built-in subscriber is a Discord bot.
+
+### Discord Bot
+
+The Discord bot posts build results (success/failure) to a Discord channel as rich embeds showing repository, branch, duration, and pipeline info.
+
+**Setup:**
+
+1. Create a Discord bot at the [Discord Developer Portal](https://discord.com/developers/applications) and get the bot token
+2. Copy the example config and fill in your values:
+   ```bash
+   cp config/discord-bot.json.example config/discord-bot.json
+   ```
+   ```json
+   {
+     "botToken": "your-bot-token",
+     "channelId": "your-channel-id",
+     "serverUrl": "http://localhost:1551",
+     "subscriberName": "discord-bot",
+     "mentionRoleId": null
+   }
+   ```
+3. Set `mentionRoleId` to a Discord role ID to ping that role on build failures (optional)
+
+**Running with Docker Compose:**
+
+The Discord bot is disabled by default. Enable it with the `discord` profile:
+
+```bash
+# Start everything including the Discord bot
+docker-compose --profile discord up -d
+
+# Or start just the core services (no bot)
+docker-compose up -d
+```
+
+When running with Docker Compose, set `serverUrl` to `http://server:8080` in your config since the bot connects to the server over the Docker network.
+
+**Running standalone:**
+
+```bash
+dotnet run --project src/Ilmarinen.DiscordBot
+```
+
+### Custom Notification Subscribers
+
+The notification framework is extensible. To build a custom subscriber (Slack, email, etc.):
+
+1. Reference `Ilmarinen.NotificationClient`
+2. Use `IlmarinenNotificationClient` to register, send heartbeats, pull notifications, and acknowledge them
+3. Implement `INotificationHandler` for your delivery logic
+
+The server exposes subscriber management via REST:
+- `POST /api/subscribers` — register
+- `POST /api/subscribers/{id}/heartbeat` — keep-alive
+- `POST /api/subscribers/{id}/notifications` — pull pending notifications
+- `POST /api/subscribers/{id}/notifications/ack` — acknowledge processed notifications
+
 ## Development
 
 ```bash
@@ -201,7 +263,7 @@ DEBUG=1 dotnet run --project src/Ilmarinen.Cli -- examples/hello.ilmarinen.csx
 
 ## Requirements
 
-- .NET 8.0 SDK
+- .NET 10.0 SDK
 - Docker (with API access for the CLI/worker)
 - PostgreSQL (for server mode, included in docker-compose)
 

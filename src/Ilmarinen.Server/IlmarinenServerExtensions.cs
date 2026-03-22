@@ -31,12 +31,15 @@ public static class IlmarinenServerExtensions
         services.AddScoped<WorkerRepository>();
         services.AddScoped<ArtifactRepository>();
         services.AddScoped<PipelineRepository>();
+        services.AddScoped<SubscriberRepository>();
+        services.AddScoped<NotificationRepository>();
         services.AddSingleton<JobScheduler>();
         services.AddSingleton<LogSubscriptionService>();
         services.AddSingleton<LogStreamService>();
         services.AddSingleton<WorkspaceDeletionService>();
         services.AddScoped<DashboardService>();
         services.AddHostedService<PipelineSchedulerService>();
+        services.AddHostedService<NotificationCleanupService>();
 
         return services;
     }
