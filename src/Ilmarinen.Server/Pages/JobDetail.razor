@@ -53,19 +53,19 @@
         <LogViewer JobId="@jobUlid" IsStreaming="@(job.Status == JobStatus.Running)" />
     </div>
 
-    @if (job.Status is JobStatus.Success or JobStatus.Failed && job.Artifacts?.Count > 0)
-    {
-        <div class="card" style="margin-top: 1rem;">
-            <h2 class="card-title">Artifacts</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Size</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
+    <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title">Artifacts</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Size</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (job.Artifacts?.Count > 0)
+                {
                     @foreach (var artifact in job.Artifacts)
                     {
                         <tr>
@@ -74,10 +74,16 @@
                             <td><a href="/api/jobs/@job.Id/artifacts/@artifact.Id/download" class="btn-download">Download</a></td>
                         </tr>
                     }
-                </tbody>
-            </table>
-        </div>
-    }
+                }
+                else
+                {
+                    <tr>
+                        <td colspan="3" style="text-align: center; color: var(--text-secondary);">No artifacts</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
 }
 else if (loading)
 {
