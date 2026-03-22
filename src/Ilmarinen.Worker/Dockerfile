@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
 # Copy csproj files and restore
@@ -13,7 +13,7 @@ RUN dotnet restore src/Ilmarinen.Worker/Ilmarinen.Worker.csproj
 COPY src/ src/
 RUN dotnet publish src/Ilmarinen.Worker/Ilmarinen.Worker.csproj -c Release -o /app
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0
+FROM mcr.microsoft.com/dotnet/runtime:9.0
 
 # Install Docker CLI (worker needs to spawn containers)
 RUN apt-get update && apt-get install -y \
