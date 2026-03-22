@@ -4,10 +4,7 @@ let
   # Import secrets from a separate file that won't be checked into source control
   ilmarinenSecrets = import ./ilmarinen-secrets.nix;
 
-  # .NET runtime from nixpkgs - change this if you need a different version
-  dotnetRuntime = pkgs.dotnetCorePackages.runtime_10_0;
-
-  # Path where deploy.sh installs the published worker
+  # Path where deploy.sh installs the self-contained published worker
   workerDir = "/opt/ilmarinen-worker";
 in
 {
@@ -43,20 +40,19 @@ in
       PrivateDevices = false;
       ProtectKernelTunables = false;
 
-      ExecStart = "${dotnetRuntime}/bin/dotnet ${workerDir}/ilmarinen-worker.dll";
+      ExecStart = "${workerDir}/ilmarinen-worker";
     };
 
     environment = {
       ILMARINEN_SERVER_URL = ilmarinenSecrets.serverUrl;
       ILMARINEN_WORKER_KEY = ilmarinenSecrets.workerKey;
-      DOTNET_ROOT = "${dotnetRuntime}";
       HOME = "/var/lib/ilmarinen-worker";
       PATH = lib.mkForce (lib.makeBinPath (with pkgs; [
         git
         docker
         bash
         coreutils
-      ]) + ":${dotnetRuntime}/bin");
+      ]));
     };
   };
 

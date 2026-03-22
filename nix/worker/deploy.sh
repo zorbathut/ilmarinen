@@ -10,6 +10,8 @@ GIT_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
 
 dotnet publish "$REPO_ROOT/src/Ilmarinen.Worker/Ilmarinen.Worker.csproj" \
   -c Release \
+  --self-contained \
+  -r linux-x64 \
   -o /tmp/ilmarinen-worker-publish \
   -p:GitCommit="$GIT_COMMIT"
 

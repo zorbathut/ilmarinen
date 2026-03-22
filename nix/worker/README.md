@@ -5,8 +5,10 @@ NixOS configuration for running an Ilmarinen CI/CD worker. Follows the same patt
 ## Prerequisites
 
 - A NixOS system (WSL2, VM, or bare metal)
-- .NET 10 SDK on the build machine (for `dotnet publish`)
+- .NET 10 SDK on the build machine (for `dotnet publish --self-contained`)
 - The Ilmarinen server running and accessible
+
+The worker is published as a self-contained executable — no .NET runtime is needed on the NixOS target. Run `deploy.sh` from any machine with the .NET SDK (e.g. your dev machine), then apply the NixOS config on the target.
 
 ## Quick Start
 
@@ -70,4 +72,4 @@ Secrets are stored in `ilmarinen-secrets.nix` (gitignored):
 | `serverUrl` | SignalR hub URL (worker port, typically 8081) |
 | `workerKey` | Authentication key from server registration |
 
-The .NET runtime version can be changed by editing the `dotnetRuntime` variable at the top of `configuration.nix`.
+The worker is published self-contained, so no .NET runtime is needed on the NixOS machine. The target runtime can be changed by passing a different `-r` flag in `deploy.sh` (default: `linux-x64`).
