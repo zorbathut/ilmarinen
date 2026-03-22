@@ -46,6 +46,7 @@ in
     environment = {
       ILMARINEN_SERVER_URL = ilmarinenSecrets.serverUrl;
       ILMARINEN_WORKER_KEY = ilmarinenSecrets.workerKey;
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
       HOME = "/var/lib/ilmarinen-worker";
       PATH = lib.mkForce (lib.makeBinPath (with pkgs; [
         git
