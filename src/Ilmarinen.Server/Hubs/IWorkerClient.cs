@@ -1,4 +1,5 @@
 using Ilmarinen.Protocol.Responses;
+using System.Threading.Tasks;
 
 namespace Ilmarinen.Server.Hubs;
 

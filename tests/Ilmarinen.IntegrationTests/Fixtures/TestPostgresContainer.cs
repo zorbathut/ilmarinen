@@ -1,8 +1,12 @@
+using Docker.DotNet.Models;
+using Docker.DotNet;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using Docker.DotNet;
-using Docker.DotNet.Models;
+using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
 

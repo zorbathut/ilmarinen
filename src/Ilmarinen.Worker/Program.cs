@@ -1,6 +1,9 @@
-using Ilmarinen.Worker;
 using Ilmarinen.Worker.Services;
+using Ilmarinen.Worker;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Serilog;
+using System;
 
 var serverUrl = Environment.GetEnvironmentVariable("ILMARINEN_SERVER_URL")
     ?? throw new InvalidOperationException(

@@ -1,5 +1,4 @@
 using Ilmarinen.Protocol;
-using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Builder;

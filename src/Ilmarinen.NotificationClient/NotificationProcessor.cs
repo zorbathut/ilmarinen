@@ -1,6 +1,11 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NUlid;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading.Tasks;
+using System.Threading;
+using System;
 
 namespace Ilmarinen.NotificationClient;
 

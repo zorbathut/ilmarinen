@@ -1,4 +1,5 @@
 using NUlid;
+using System;
 
 namespace Ilmarinen.Protocol.Requests;
 

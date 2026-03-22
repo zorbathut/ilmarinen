@@ -1,5 +1,6 @@
 using Ilmarinen.Protocol;
 using NUlid;
+using System;
 
 namespace Ilmarinen.Database.Entities;
 

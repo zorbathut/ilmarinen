@@ -1,10 +1,19 @@
-using System.Text.Json;
-using Discord;
 using Discord.WebSocket;
+using Discord;
 using Ilmarinen.NotificationClient;
-using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using NUlid;
+using System.Collections.Generic;
+using System.IO;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading.Tasks;
+using System.Threading;
+using System;
 
 namespace Ilmarinen.DiscordBot;
 

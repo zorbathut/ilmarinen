@@ -1,7 +1,10 @@
-using System.Net;
 using Ilmarinen.IntegrationTests.Fixtures;
 using Microsoft.AspNetCore.SignalR.Client;
 using NUnit.Framework;
+using System.Net.Http;
+using System.Net;
+using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 

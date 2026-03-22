@@ -1,5 +1,5 @@
-using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Ilmarinen.Server.Controllers;

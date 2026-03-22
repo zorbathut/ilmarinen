@@ -1,5 +1,8 @@
 using Ilmarinen.DiscordBot;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Serilog;
+using System;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()

@@ -1,3 +1,5 @@
+using System;
+
 namespace Ilmarinen.NotificationClient;
 
 public class NotificationProcessorOptions

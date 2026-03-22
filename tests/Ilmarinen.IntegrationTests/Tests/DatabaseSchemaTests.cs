@@ -1,12 +1,12 @@
 using Ilmarinen.Database;
 using Ilmarinen.IntegrationTests.Fixtures;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Npgsql;
+using Microsoft.EntityFrameworkCore;
 using NUnit.Framework;
+using Npgsql;
+using System.Threading.Tasks;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 

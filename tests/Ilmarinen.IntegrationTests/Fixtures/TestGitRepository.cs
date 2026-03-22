@@ -1,4 +1,7 @@
 using LibGit2Sharp;
+using System.Collections.Generic;
+using System.IO;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
 

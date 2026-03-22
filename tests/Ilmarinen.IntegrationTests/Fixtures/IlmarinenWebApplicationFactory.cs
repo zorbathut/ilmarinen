@@ -1,6 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
-using System.Security.Cryptography;
 using Ilmarinen.Database;
 using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
@@ -8,6 +5,13 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using System.IO;
+using System.Net.Http;
+using System.Net.Sockets;
+using System.Net;
+using System.Security.Cryptography;
+using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
 

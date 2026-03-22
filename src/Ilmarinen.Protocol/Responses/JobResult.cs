@@ -1,4 +1,6 @@
 using NUlid;
+using System.Collections.Generic;
+using System;
 
 namespace Ilmarinen.Protocol.Responses;
 
