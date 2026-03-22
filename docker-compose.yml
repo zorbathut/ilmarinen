@@ -41,40 +41,6 @@ services:
       timeout: 5s
       retries: 10
 
-  worker:
-    build:
-      context: .
-      dockerfile: src/Ilmarinen.Worker/Dockerfile
-      args:
-        GIT_COMMIT: ${GIT_COMMIT:-dev}
-    command: ["--server", "http://server:8081"]
-    environment:
-      # Set after registering a worker via the server UI or POST /api/workers
-      ILMARINEN_WORKER_KEY: "register-worker-on-server-first"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - worker-workspace:/tmp/ilmarinen-worker
-    depends_on:
-      server:
-        condition: service_healthy
-
-  discord-bot:
-    build:
-      context: .
-      dockerfile: src/Ilmarinen.DiscordBot/Dockerfile
-      args:
-        GIT_COMMIT: ${GIT_COMMIT:-dev}
-    profiles:
-      - discord
-    environment:
-      ILMARINEN_SERVER_URL: http://server:8080
-    volumes:
-      - ./config:/app/config:ro
-    depends_on:
-      server:
-        condition: service_healthy
-
 volumes:
   pgdata:
-  worker-workspace:
   artifacts:

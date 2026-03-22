@@ -209,7 +209,6 @@ postgresql-data/
 !**/aspnetcore-https.pem
 
 # Environment files
-.env
 .env.local
 .env.*.local
 .env.production.local

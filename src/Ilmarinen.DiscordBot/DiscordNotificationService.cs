@@ -143,6 +143,13 @@ public class DiscordNotificationService : BackgroundService
     {
         var serverUrl = Environment.GetEnvironmentVariable("ILMARINEN_SERVER_URL")
             ?? _config!.ServerUrl;
+
+        if (string.IsNullOrWhiteSpace(serverUrl))
+        {
+            throw new InvalidOperationException(
+                "Server URL not configured. Set ILMARINEN_SERVER_URL or serverUrl in config.");
+        }
+
         _notificationClient = new IlmarinenNotificationClient(serverUrl);
 
         var maxRetries = 10;

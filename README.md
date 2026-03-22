@@ -24,10 +24,25 @@ dotnet run --project src/Ilmarinen.Cli -- examples/hello.ilmarinen.csx
 
 ### Server Mode
 
-```bash
-# Start the server and worker with Docker Compose
-docker-compose up -d
+The infrastructure is split into layered Docker Compose files. The `.env` file controls which services start by default:
 
+```bash
+# Start server + worker (default, configured in .env)
+docker compose up -d
+
+# Start server only
+docker compose -f docker-compose.yml up -d
+
+# Start server + worker + Discord bot
+docker compose -f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.discord.yml up -d
+```
+
+To permanently add the Discord bot, edit `.env`:
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml:docker-compose.discord.yml
+```
+
+```bash
 # Submit a job
 dotnet run --project src/Ilmarinen.Cli -- submit \
   --server http://localhost:1551 \
@@ -213,17 +228,16 @@ The Discord bot posts build results (success/failure) to a Discord channel as ri
 
 **Running with Docker Compose:**
 
-The Discord bot is disabled by default. Enable it with the `discord` profile:
+Add `docker-compose.discord.yml` to your compose stack:
 
 ```bash
-# Start everything including the Discord bot
-docker-compose --profile discord up -d
-
-# Or start just the core services (no bot)
-docker-compose up -d
+docker compose -f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.discord.yml up -d
 ```
 
-When running with Docker Compose, set `serverUrl` to `http://server:8080` in your config since the bot connects to the server over the Docker network.
+Or add it permanently to `.env`:
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.worker.yml:docker-compose.discord.yml
+```
 
 **Running standalone:**
 

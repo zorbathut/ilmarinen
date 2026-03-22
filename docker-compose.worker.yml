@@ -1,0 +1,17 @@
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: src/Ilmarinen.Worker/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+    environment:
+      ILMARINEN_SERVER_URL: http://server:8081
+      # Set after registering a worker via the server UI or POST /api/workers
+      ILMARINEN_WORKER_KEY: "register-worker-on-server-first"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - worker-workspace:/tmp/ilmarinen-worker
+
+volumes:
+  worker-workspace:

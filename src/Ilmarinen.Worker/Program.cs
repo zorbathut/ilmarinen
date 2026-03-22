@@ -2,7 +2,9 @@ using Ilmarinen.Worker;
 using Ilmarinen.Worker.Services;
 using Serilog;
 
-var serverUrl = GetArg(args, "--server") ?? "http://localhost:8081";
+var serverUrl = Environment.GetEnvironmentVariable("ILMARINEN_SERVER_URL")
+    ?? throw new InvalidOperationException(
+        "ILMARINEN_SERVER_URL is not set.");
 var workerKey = Environment.GetEnvironmentVariable("ILMARINEN_WORKER_KEY")
     ?? throw new InvalidOperationException(
         "ILMARINEN_WORKER_KEY is not set. Register this worker on the server first.");
@@ -35,13 +37,3 @@ Log.Information("Connecting to server: {ServerUrl}", config.ServerUrl);
 
 var host = builder.Build();
 host.Run();
-
-static string? GetArg(string[] args, string name)
-{
-    for (int i = 0; i < args.Length - 1; i++)
-    {
-        if (args[i] == name)
-            return args[i + 1];
-    }
-    return null;
-}

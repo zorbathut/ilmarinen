@@ -1,0 +1,11 @@
+services:
+  discord-bot:
+    build:
+      context: .
+      dockerfile: src/Ilmarinen.DiscordBot/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+    environment:
+      ILMARINEN_SERVER_URL: http://server:8080
+    volumes:
+      - ./config:/app/config:ro
