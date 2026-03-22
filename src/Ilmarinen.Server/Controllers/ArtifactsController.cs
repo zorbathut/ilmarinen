@@ -19,40 +19,6 @@ public class ArtifactsController : ControllerBase
     }
 
     /// <summary>
-    /// Upload an artifact for a job.
-    /// Streams the request body directly to disk without buffering.
-    /// </summary>
-    [HttpPost]
-    [DisableRequestSizeLimit]
-    [RequestFormLimits(MultipartBodyLengthLimit = 1_073_741_824)] // 1GB
-    public async Task<ActionResult<ArtifactInfo>> Upload(
-        string jobId,
-        [FromQuery] string name)
-    {
-        if (!Ulid.TryParse(jobId, out var jobUlid))
-            return BadRequest("Invalid job ID");
-
-        if (string.IsNullOrWhiteSpace(name))
-            return BadRequest("Artifact name is required");
-
-        // Get content length from header if available
-        var contentLength = Request.ContentLength ?? 0;
-
-        _logger.LogInformation("Receiving artifact {Name} ({Size} bytes) for job {JobId}",
-            name, contentLength, jobId);
-
-        var artifact = await _artifacts.SaveAsync(
-            jobUlid,
-            name,
-            contentLength,
-            Request.Body);
-
-        _logger.LogInformation("Artifact saved: {Id} ({Name})", artifact.Id, artifact.Name);
-
-        return Ok(artifact);
-    }
-
-    /// <summary>
     /// List all artifacts for a job.
     /// </summary>
     [HttpGet]

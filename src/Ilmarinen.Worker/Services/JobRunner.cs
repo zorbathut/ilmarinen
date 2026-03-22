@@ -234,7 +234,7 @@ public class JobRunner
     private Func<string, string?, Task<ArtifactRef>> CreateArtifactSaver()
     {
         var httpClient = new HttpClient();
-        var baseUrl = _config.GetPublicApiUrl();
+        var baseUrl = _config.ServerUrl;
 
         return async (hostPath, name) =>
         {
@@ -249,7 +249,7 @@ public class JobRunner
             content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
             content.Headers.ContentLength = fileInfo.Length;
 
-            var url = $"{baseUrl}/api/jobs/{_job.Id}/artifacts?name={Uri.EscapeDataString(artifactName)}";
+            var url = $"{baseUrl}/hub/workers/jobs/{_job.Id}/artifacts?name={Uri.EscapeDataString(artifactName)}";
 
             var response = await httpClient.PostAsync(url, content);
             response.EnsureSuccessStatusCode();

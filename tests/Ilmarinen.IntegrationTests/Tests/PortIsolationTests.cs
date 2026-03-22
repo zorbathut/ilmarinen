@@ -59,6 +59,38 @@ public class PortIsolationTests
     }
 
     [Test]
+    public async Task ArtifactUpload_OnPublicPort_ReturnsNotFound()
+    {
+        // Arrange - Create client pointing to public port
+        using var client = new HttpClient
+        {
+            BaseAddress = new Uri(_fixture.ServerUrl)
+        };
+
+        // Act - POST to worker artifact upload endpoint
+        var response = await client.PostAsync("/hub/workers/jobs/00000000000000000000000000/artifacts?name=test", new StringContent(""));
+
+        // Assert - Worker endpoint blocked on public port
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task ArtifactUpload_OnWorkerPort_IsAllowed()
+    {
+        // Arrange - Create client pointing to worker port
+        using var client = new HttpClient
+        {
+            BaseAddress = new Uri(_fixture.WorkerUrl)
+        };
+
+        // Act - POST to worker artifact upload endpoint (will fail with 400 due to invalid job ID, but not 404)
+        var response = await client.PostAsync("/hub/workers/jobs/00000000000000000000000000/artifacts?name=test", new StringContent(""));
+
+        // Assert - Not blocked by port filtering (400 = reached the endpoint, not 404)
+        Assert.That(response.StatusCode, Is.Not.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
     public async Task WorkerHub_OnWorkerPort_Succeeds()
     {
         // Arrange - Connect to /hub/workers on the correct worker port

@@ -58,7 +58,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         var registrationService = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
         var result = await registrationService.RegisterWorkerAsync($"test-worker-{_workerCount}");
 
-        _workerBuilder = new TestWorkerBuilder(WorkerUrl, ServerUrl, result.WorkerKey);
+        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey);
         _workerHost = _workerBuilder.Build();
         _workerCts = new CancellationTokenSource();
 

@@ -11,12 +11,6 @@ public class WorkerConfig
     public required string ServerUrl { get; init; }
 
     /// <summary>
-    /// REST API URL (public port, typically 8080) for artifact uploads.
-    /// Defaults to deriving from ServerUrl by replacing port 8081 with 8080.
-    /// </summary>
-    public string? PublicApiUrl { get; init; }
-
-    /// <summary>
     /// Combined worker key: {name}:{ulidBase64}:{workerPrivBase64}:{serverPubBase64}
     /// Set via ILMARINEN_WORKER_KEY environment variable.
     /// The name is for human readability; the ULID is the actual identity.
@@ -40,15 +34,6 @@ public class WorkerConfig
 
     public string GetHostWorkspacePath() =>
         string.IsNullOrEmpty(HostWorkspacePath) ? WorkspacePath : HostWorkspacePath;
-
-    public string GetPublicApiUrl()
-    {
-        if (!string.IsNullOrEmpty(PublicApiUrl))
-            return PublicApiUrl;
-
-        // Default: replace port 8081 with 8080
-        return ServerUrl.Replace(":8081", ":8080");
-    }
 
     public Ulid GetWorkerId()
     {

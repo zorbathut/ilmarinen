@@ -10,15 +10,13 @@ namespace Ilmarinen.IntegrationTests.Fixtures;
 public class TestWorkerBuilder
 {
     private readonly string _serverUrl;
-    private readonly string? _publicApiUrl;
     private readonly string _workerKey;
     private readonly Ulid _workerId;
     private readonly string _workspacePath;
 
-    public TestWorkerBuilder(string serverUrl, string? publicApiUrl, string workerKey)
+    public TestWorkerBuilder(string serverUrl, string workerKey)
     {
         _serverUrl = serverUrl;
-        _publicApiUrl = publicApiUrl;
         _workerKey = workerKey;
         // Parse the worker ID from the key (format: {name}:{ulid}:{priv}:{pub})
         _workerId = Ulid.Parse(workerKey.Split(':')[1]);
@@ -33,7 +31,6 @@ public class TestWorkerBuilder
         var config = new WorkerConfig
         {
             ServerUrl = _serverUrl,
-            PublicApiUrl = _publicApiUrl,
             WorkspacePath = _workspacePath,
             WorkerKey = _workerKey
         };
