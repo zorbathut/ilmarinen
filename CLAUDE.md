@@ -191,7 +191,7 @@ Key test utilities:
 
 ## Dependencies
 
-- .NET 10.0
+- .NET 9.0
 - Docker.DotNet - Docker API client
 - Roslyn (Microsoft.CodeAnalysis.CSharp.Scripting) - C# script compilation
 - ASP.NET Core / SignalR - Web server and real-time communication

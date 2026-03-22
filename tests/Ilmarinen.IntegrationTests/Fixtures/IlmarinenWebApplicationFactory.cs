@@ -83,7 +83,9 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         var dataSource = dataSourceBuilder.Build();
 
         builder.Services.AddDbContext<IlmarinenDbContext>(options =>
-            options.UseNpgsql(dataSource));
+            options.UseNpgsql(dataSource)
+                .ConfigureWarnings(w =>
+                    w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning)));
 
         builder.Services.AddIlmarinenServer();
         builder.Services.AddHealthChecks();
