@@ -65,7 +65,7 @@ public class WorkerAuthenticationTests
             await connection.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
             {
                 WorkerId = Ulid.NewUlid(),
-                BuildId = BuildInfo.GitCommit,
+                ProtocolHash = ProtocolVersion.Hash,
                 Nonce = RandomNumberGenerator.GetBytes(32)
             }));
 
@@ -73,7 +73,7 @@ public class WorkerAuthenticationTests
     }
 
     [Test]
-    public async Task Connect_BuildMismatch_Throws()
+    public async Task Connect_ProtocolMismatch_Throws()
     {
         var result = await RegisterWorkerAsync("build-mismatch-worker");
 
@@ -84,11 +84,11 @@ public class WorkerAuthenticationTests
             await connection.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
             {
                 WorkerId = result.WorkerId,
-                BuildId = "wrong-build-id",
+                ProtocolHash = "wrong-hash",
                 Nonce = RandomNumberGenerator.GetBytes(32)
             }));
 
-        Assert.That(ex!.Message, Does.Contain("Build mismatch"));
+        Assert.That(ex!.Message, Does.Contain("Protocol mismatch"));
     }
 
     [Test]
@@ -118,7 +118,7 @@ public class WorkerAuthenticationTests
         var challenge = await connection.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
         {
             WorkerId = result.WorkerId,
-            BuildId = BuildInfo.GitCommit,
+            ProtocolHash = ProtocolVersion.Hash,
             Nonce = workerNonce
         });
 
@@ -156,7 +156,7 @@ public class WorkerAuthenticationTests
             await connection.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
             {
                 WorkerId = result.WorkerId,
-                BuildId = BuildInfo.GitCommit,
+                ProtocolHash = ProtocolVersion.Hash,
                 Nonce = RandomNumberGenerator.GetBytes(32)
             }));
 

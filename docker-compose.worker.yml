@@ -3,8 +3,6 @@ services:
     build:
       context: .
       dockerfile: src/Ilmarinen.Worker/Dockerfile
-      args:
-        GIT_COMMIT: ${GIT_COMMIT:-dev}
     environment:
       ILMARINEN_SERVER_URL: http://server:8081
       # Set after registering a worker via the server UI or POST /api/workers

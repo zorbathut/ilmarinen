@@ -136,7 +136,7 @@ SignalR hub methods:
 ### Security
 
 - **Port Isolation**: Server exposes PublicPort (8080) externally, WorkerPort (8081) internally only
-- **Build Validation**: Server rejects workers with mismatched `BuildInfo.GitCommit`
+- **Protocol Validation**: Server rejects workers with mismatched `ProtocolVersion.Hash`
 - **Bearer Token Auth**: AgentApiServer uses random UUID tokens per pipeline run
 - **Network Isolation**: Each pipeline run gets unique Docker network
 

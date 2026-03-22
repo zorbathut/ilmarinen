@@ -26,16 +26,16 @@ public class WorkerHub : Hub<IWorkerClient>
 
     public async Task<AuthChallenge> Connect(WorkerConnect request)
     {
-        // Validate build compatibility early
-        if (request.BuildId != BuildInfo.GitCommit)
+        // Validate protocol compatibility early
+        if (request.ProtocolHash != ProtocolVersion.Hash)
         {
             _logger.LogError(
-                "Worker {WorkerId} rejected: build mismatch (worker: {WorkerBuild}, server: {ServerBuild})",
-                request.WorkerId, request.BuildId, BuildInfo.GitCommit);
+                "Worker {WorkerId} rejected: protocol mismatch (worker: {WorkerHash}, server: {ServerHash})",
+                request.WorkerId, request.ProtocolHash, ProtocolVersion.Hash);
 
             throw new HubException(
-                $"Build mismatch. Worker is '{request.BuildId}', server is '{BuildInfo.GitCommit}'. " +
-                "Rebuild both from the same commit.");
+                $"Protocol mismatch. Worker is '{request.ProtocolHash}', server is '{ProtocolVersion.Hash}'. " +
+                "Rebuild both with the same protocol definitions.");
         }
 
         using var scope = _scopeFactory.CreateScope();

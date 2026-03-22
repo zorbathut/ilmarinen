@@ -5,5 +5,5 @@ namespace Ilmarinen.Protocol.Responses;
 /// </summary>
 public record VersionInfo
 {
-    public required string BuildId { get; init; }
+    public required string ProtocolHash { get; init; }
 }

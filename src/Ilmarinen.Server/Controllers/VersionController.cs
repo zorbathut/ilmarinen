@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,6 +11,6 @@ public class VersionController : ControllerBase
     [HttpGet]
     public ActionResult<VersionInfo> Get()
     {
-        return Ok(new VersionInfo { BuildId = BuildInfo.GitCommit });
+        return Ok(new VersionInfo { ProtocolHash = ProtocolVersion.Hash });
     }
 }

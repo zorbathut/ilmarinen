@@ -6,14 +6,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 INSTALL_DIR="/opt/ilmarinen-worker"
 
 echo "Building Ilmarinen Worker from source..."
-GIT_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
 
 dotnet publish "$REPO_ROOT/src/Ilmarinen.Worker/Ilmarinen.Worker.csproj" \
   -c Release \
   --self-contained \
   -r linux-x64 \
-  -o /tmp/ilmarinen-worker-publish \
-  -p:GitCommit="$GIT_COMMIT"
+  -o /tmp/ilmarinen-worker-publish
 
 echo "Installing to $INSTALL_DIR..."
 sudo mkdir -p "$INSTALL_DIR"
@@ -23,7 +21,7 @@ sudo chown -R ilmarinen:ilmarinen "$INSTALL_DIR"
 rm -rf /tmp/ilmarinen-worker-publish
 
 echo ""
-echo "Deployed commit $GIT_COMMIT to $INSTALL_DIR"
+echo "Deployed to $INSTALL_DIR"
 echo ""
 echo "Next steps:"
 echo "  sudo nixos-rebuild switch -I nixos-config=./configuration.nix"

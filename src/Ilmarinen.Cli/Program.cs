@@ -1,7 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Cocona;
-using Ilmarinen;
 using Ilmarinen.Docker;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
@@ -75,12 +74,12 @@ public class Commands
         try
         {
             var versionResponse = await http.GetFromJsonAsync<VersionInfo>($"{server}/api/version", jsonOptions);
-            if (versionResponse?.BuildId != BuildInfo.GitCommit)
+            if (versionResponse?.ProtocolHash != ProtocolVersion.Hash)
             {
-                Console.Error.WriteLine($"Warning: Build mismatch with server.");
-                Console.Error.WriteLine($"  CLI:    {BuildInfo.GitCommit}");
-                Console.Error.WriteLine($"  Server: {versionResponse?.BuildId ?? "unknown"}");
-                Console.Error.WriteLine("Rebuild CLI from the same commit as server.");
+                Console.Error.WriteLine($"Warning: Protocol mismatch with server.");
+                Console.Error.WriteLine($"  CLI:    {ProtocolVersion.Hash}");
+                Console.Error.WriteLine($"  Server: {versionResponse?.ProtocolHash ?? "unknown"}");
+                Console.Error.WriteLine("Rebuild CLI and server with the same protocol definitions.");
             }
         }
         catch (HttpRequestException)

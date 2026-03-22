@@ -115,7 +115,7 @@ public class WorkerService : BackgroundService
         var challenge = await _connection!.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
         {
             WorkerId = _workerId,
-            BuildId = BuildInfo.GitCommit,
+            ProtocolHash = ProtocolVersion.Hash,
             Nonce = workerNonce
         });
 

@@ -1,9 +1,6 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-# Copy build configuration for version embedding
-COPY Directory.Build.targets ./
-
 # Copy csproj files and restore
 COPY src/Ilmarinen.Core/Ilmarinen.Core.csproj src/Ilmarinen.Core/
 COPY src/Ilmarinen.Protocol/Ilmarinen.Protocol.csproj src/Ilmarinen.Protocol/
@@ -13,8 +10,7 @@ RUN dotnet restore src/Ilmarinen.Server/Ilmarinen.Server.csproj
 
 # Copy source and build
 COPY src/ src/
-ARG GIT_COMMIT
-RUN dotnet publish src/Ilmarinen.Server/Ilmarinen.Server.csproj -c Release -o /app -p:GitCommit=${GIT_COMMIT}
+RUN dotnet publish src/Ilmarinen.Server/Ilmarinen.Server.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
