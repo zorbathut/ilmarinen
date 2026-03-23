@@ -1,9 +1,11 @@
 @page "/jobs"
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
 @using System.Threading
 @implements IDisposable
-@inject JobRepository JobRepo
+@inject IServiceScopeFactory ScopeFactory
+@inject UIEventService UIEvents
 
 <h1 class="page-title">Jobs</h1>
 
@@ -46,10 +48,32 @@
 
     protected override async Task OnInitializedAsync()
     {
-        jobs = await JobRepo.GetAllAsync();
+        jobs = await FetchJobsAsync();
+
+        UIEvents.OnJobsChanged += OnJobsChanged;
 
         // Tick every second to update running job durations
         _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    private async void OnJobsChanged()
+    {
+        try
+        {
+            jobs = await FetchJobsAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            // Page may have been disposed
+        }
+    }
+
+    private async Task<IReadOnlyList<JobInfo>> FetchJobsAsync()
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        return await repo.GetAllAsync();
     }
 
     private static string FormatDuration(JobInfo job)
@@ -78,6 +102,7 @@
 
     public void Dispose()
     {
+        UIEvents.OnJobsChanged -= OnJobsChanged;
         _timer?.Dispose();
     }
 }

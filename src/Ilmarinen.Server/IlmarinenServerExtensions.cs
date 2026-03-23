@@ -42,6 +42,7 @@ public static class IlmarinenServerExtensions
         services.AddScoped<SubscriberRepository>();
         services.AddScoped<NotificationRepository>();
         services.AddSingleton<JobScheduler>();
+        services.AddSingleton<UIEventService>();
         services.AddSingleton<LogSubscriptionService>();
         services.AddSingleton<LogStreamService>();
         services.AddSingleton<WorkspaceDeletionService>();

@@ -16,6 +16,7 @@ public class JobScheduler
     private readonly ConcurrentQueue<Ulid> _pendingJobs = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
+    private readonly UIEventService _uiEvents;
     private readonly ILogger<JobScheduler> _logger;
     private bool _initialized;
     private readonly object _initLock = new();
@@ -23,10 +24,12 @@ public class JobScheduler
     public JobScheduler(
         IServiceScopeFactory scopeFactory,
         IHubContext<WorkerHub, IWorkerClient> hubContext,
+        UIEventService uiEvents,
         ILogger<JobScheduler> logger)
     {
         _scopeFactory = scopeFactory;
         _hubContext = hubContext;
+        _uiEvents = uiEvents;
         _logger = logger;
     }
 
@@ -64,6 +67,7 @@ public class JobScheduler
         var info = await jobs.CreateAsync(submission, pipelineId);
         await jobs.UpdateStatusAsync(info.Id, JobStatus.Queued);
         _pendingJobs.Enqueue(info.Id);
+        _uiEvents.NotifyJobsChanged();
 
         // Try to dispatch immediately if there's an idle worker
         var readyConnectionId = await workers.FindReadyWorkerConnectionIdAsync();
@@ -105,6 +109,7 @@ public class JobScheduler
 
         await jobs.UpdateStatusAsync(jobId, JobStatus.Running, worker.Id);
         await workers.SetCurrentJobAsync(connectionId, jobId);
+        _uiEvents.NotifyJobsChanged();
 
         await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
         return true;
@@ -115,6 +120,7 @@ public class JobScheduler
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
         await jobs.UpdateStatusAsync(jobId, result.Status);
+        _uiEvents.NotifyJobsChanged();
 
         var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
         await notifications.CreateForActiveSubscribersAsync(jobId, "JobCompleted");
@@ -132,6 +138,8 @@ public class JobScheduler
         var cancelled = await jobs.TryCancelAsync(jobId);
         if (!cancelled)
             return false;
+
+        _uiEvents.NotifyJobsChanged();
 
         // If a worker is actively running this job, tell it to stop
         if (connectionId != null)
