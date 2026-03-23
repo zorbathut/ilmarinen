@@ -40,10 +40,14 @@ public static class CronTimezoneHelper
         if (!CronValidator.TryParse(localCron, out var expr) || expr == null)
             return null;
 
-        // Get next occurrence treating the cron as local time, then find the UTC offset
+        // Get next occurrence treating the cron as local time, then find the UTC offset.
+        // Cronos requires DateTimeKind.Utc, so we use a local-time value but tag it as Utc
+        // to satisfy the API — we're only using it to figure out when the cron would fire
+        // in the user's local clock, not as a real UTC instant.
         var baseUtc = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var baseLocal = TimeZoneInfo.ConvertTimeFromUtc(baseUtc, tz);
-        var nextLocal = expr.GetNextOccurrence(baseLocal, inclusive: true);
+        var baseLocalAsUtc = DateTime.SpecifyKind(baseLocal, DateTimeKind.Utc);
+        var nextLocal = expr.GetNextOccurrence(baseLocalAsUtc, inclusive: true);
         if (nextLocal == null)
             return null;
 
