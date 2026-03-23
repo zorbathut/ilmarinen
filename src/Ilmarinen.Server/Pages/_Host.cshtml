@@ -14,15 +14,42 @@
     <base href="~/" />
     <style>
         :root {
-            --bg-primary: #1a1a2e;
-            --bg-secondary: #16213e;
-            --bg-tertiary: #0f3460;
-            --text-primary: #e6e6e6;
-            --text-secondary: #a0a0a0;
-            --accent: #e94560;
-            --success: #4ade80;
-            --warning: #fbbf24;
-            --error: #ef4444;
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #e0e0e0;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666666;
+            --accent: #c9304a;
+            --success: #16a34a;
+            --warning: #ca8a04;
+            --error: #dc2626;
+            --log-bg: #f0f0f0;
+            --badge-pending-bg: #e5e7eb; --badge-pending-fg: #6b7280;
+            --badge-queued-bg: #dbeafe; --badge-queued-fg: #2563eb;
+            --badge-running-bg: #cffafe; --badge-running-fg: #0891b2;
+            --badge-success-bg: #dcfce7; --badge-success-fg: #16a34a;
+            --badge-failed-bg: #fee2e2; --badge-failed-fg: #dc2626;
+            --badge-cancelled-bg: #fef3c7; --badge-cancelled-fg: #ca8a04;
+        }
+        @@media (prefers-color-scheme: dark) {
+            :root {
+                --bg-primary: #1a1a2e;
+                --bg-secondary: #16213e;
+                --bg-tertiary: #0f3460;
+                --text-primary: #e6e6e6;
+                --text-secondary: #a0a0a0;
+                --accent: #e94560;
+                --success: #4ade80;
+                --warning: #fbbf24;
+                --error: #ef4444;
+                --log-bg: #0d0d0d;
+                --badge-pending-bg: #374151; --badge-pending-fg: #9ca3af;
+                --badge-queued-bg: #1e3a5f; --badge-queued-fg: #60a5fa;
+                --badge-running-bg: #164e63; --badge-running-fg: #22d3ee;
+                --badge-success-bg: #14532d; --badge-success-fg: #4ade80;
+                --badge-failed-bg: #450a0a; --badge-failed-fg: #f87171;
+                --badge-cancelled-bg: #422006; --badge-cancelled-fg: #fbbf24;
+            }
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -111,12 +138,12 @@
             font-size: 0.75rem;
             font-weight: 500;
         }
-        .status-pending { background-color: #374151; color: #9ca3af; }
-        .status-queued { background-color: #1e3a5f; color: #60a5fa; }
-        .status-running { background-color: #164e63; color: #22d3ee; }
-        .status-success { background-color: #14532d; color: #4ade80; }
-        .status-failed { background-color: #450a0a; color: #f87171; }
-        .status-cancelled { background-color: #422006; color: #fbbf24; }
+        .status-pending { background-color: var(--badge-pending-bg); color: var(--badge-pending-fg); }
+        .status-queued { background-color: var(--badge-queued-bg); color: var(--badge-queued-fg); }
+        .status-running { background-color: var(--badge-running-bg); color: var(--badge-running-fg); }
+        .status-success { background-color: var(--badge-success-bg); color: var(--badge-success-fg); }
+        .status-failed { background-color: var(--badge-failed-bg); color: var(--badge-failed-fg); }
+        .status-cancelled { background-color: var(--badge-cancelled-bg); color: var(--badge-cancelled-fg); }
         .connection-badge {
             display: inline-block;
             width: 0.5rem;
@@ -129,7 +156,7 @@
         a { color: var(--accent); text-decoration: none; }
         a:hover { text-decoration: underline; }
         .log-container {
-            background-color: #0d0d0d;
+            background-color: var(--log-bg);
             border-radius: 0.5rem;
             padding: 1rem;
             font-family: monospace;
@@ -141,8 +168,8 @@
             white-space: pre-wrap;
             word-break: break-all;
         }
-        .log-stdout { color: #e6e6e6; }
-        .log-stderr { color: #f87171; }
+        .log-stdout { color: var(--text-primary); }
+        .log-stderr { color: var(--error); }
         .detail-grid {
             display: grid;
             grid-template-columns: 150px 1fr;
