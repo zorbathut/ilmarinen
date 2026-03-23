@@ -50,19 +50,41 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         var serverKeyBase64 = Convert.ToBase64String(testKey.ExportParameters(true).D!);
         Environment.SetEnvironmentVariable("ILMARINEN_SERVER_KEY", serverKeyBase64);
 
+        _artifactPath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-artifacts-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_artifactPath);
+
+        // Retry with fresh ports on bind failures (parallel tests can race on port allocation)
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await StartServerAsync();
+                break;
+            }
+            catch (IOException) when (attempt < 5)
+            {
+                // Port conflict — pick new ports and retry
+                if (_app != null)
+                {
+                    await _app.DisposeAsync();
+                    _app = null;
+                }
+            }
+        }
+    }
+
+    private async Task StartServerAsync()
+    {
         var publicPort = GetAvailablePort();
         var workerPort = GetAvailablePort();
         ServerUrl = $"http://localhost:{publicPort}";
         WorkerUrl = $"http://localhost:{workerPort}";
 
-        _artifactPath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-artifacts-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_artifactPath);
-
         var serverConfig = new ServerConfig
         {
             PublicPort = publicPort,
             WorkerPort = workerPort,
-            ArtifactStoragePath = _artifactPath
+            ArtifactStoragePath = _artifactPath!
         };
 
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions

@@ -1,5 +1,6 @@
 using Ilmarinen.Database;
 using Ilmarinen.IntegrationTests.Fixtures;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -29,6 +30,7 @@ public class DatabaseSchemaTests
 
         var options = new DbContextOptionsBuilder<IlmarinenDbContext>()
             .UseNpgsql(dataSource)
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;
 
         _dbContext = new IlmarinenDbContext(options);
