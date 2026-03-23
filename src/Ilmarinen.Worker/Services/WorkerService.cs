@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NUlid;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -24,6 +25,7 @@ public class WorkerService : BackgroundService
     private readonly WorkspaceManager _workspaceManager;
     private readonly ILogger<WorkerService> _logger;
     private HubConnection? _connection;
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
 
     public WorkerService(WorkerConfig config, WorkspaceManager workspaceManager, ILogger<WorkerService> logger)
     {
@@ -53,6 +55,7 @@ public class WorkerService : BackgroundService
             .Build();
 
         _connection.On<JobAssignment>("AssignJob", OnJobAssigned);
+        _connection.On<string>("CancelJob", OnCancelJob);
         _connection.On<string>("DeleteWorkspace", OnDeleteWorkspace);
 
         _connection.Reconnecting += _ =>
@@ -151,28 +154,57 @@ public class WorkerService : BackgroundService
         await _connection!.SendAsync("Ready");
     }
 
-    private async Task OnJobAssigned(JobAssignment job)
+    private Task OnJobAssigned(JobAssignment job)
+    {
+        // Return immediately so the SignalR dispatch loop stays unblocked
+        // (otherwise CancelJob messages can't be delivered while a job is running)
+        _ = ExecuteJobAsync(job);
+        return Task.CompletedTask;
+    }
+
+    private async Task ExecuteJobAsync(JobAssignment job)
     {
         _logger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
 
         var startTime = DateTime.UtcNow;
         var logCollector = new LogCollector(job.Id, _connection!);
+        var jobKey = job.Id.ToString();
+        using var cts = new CancellationTokenSource();
+        _runningJobs[jobKey] = cts;
 
         try
         {
             await _connection!.SendAsync("JobStarted", job.Id);
 
             var runner = new JobRunner(_config, _workspaceManager, job, _connection!, _logger, logCollector);
-            var result = await runner.ExecuteAsync();
+            var result = await runner.ExecuteAsync(cts.Token);
+
+            var status = cts.IsCancellationRequested ? JobStatus.Cancelled : result.Status;
 
             result = result with
             {
+                Status = status,
                 Duration = DateTime.UtcNow - startTime,
                 Workspaces = _workspaceManager.DiscoverWorkspaces()
             };
 
             await _connection!.SendAsync("JobCompleted", job.Id, result);
             _logger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            _logger.LogInformation("Job {JobId} was cancelled", job.Id);
+
+            logCollector.WriteStderr("Job cancelled.");
+            await logCollector.FlushAsync();
+
+            await _connection!.SendAsync("JobCompleted", job.Id, new JobResult
+            {
+                Id = job.Id,
+                Status = JobStatus.Cancelled,
+                Duration = DateTime.UtcNow - startTime,
+                Workspaces = _workspaceManager.DiscoverWorkspaces()
+            });
         }
         catch (Exception ex)
         {
@@ -190,9 +222,26 @@ public class WorkerService : BackgroundService
                 Workspaces = _workspaceManager.DiscoverWorkspaces()
             });
         }
+        finally
+        {
+            _runningJobs.TryRemove(jobKey, out _);
+        }
 
         // Signal ready for next job
         await _connection!.SendAsync("Ready");
+    }
+
+    private void OnCancelJob(string jobId)
+    {
+        _logger.LogInformation("Received cancel request for job {JobId}", jobId);
+        if (_runningJobs.TryGetValue(jobId, out var cts))
+        {
+            cts.Cancel();
+        }
+        else
+        {
+            _logger.LogWarning("Cancel requested for job {JobId} but it is not running on this worker", jobId);
+        }
     }
 
     private async Task OnDeleteWorkspace(string name)

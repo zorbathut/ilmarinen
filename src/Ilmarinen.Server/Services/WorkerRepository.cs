@@ -150,6 +150,17 @@ public class WorkerRepository
             (_, list) => list.Remove(name));
     }
 
+    public string? FindConnectionIdByJobId(Ulid jobId)
+    {
+        foreach (var (connectionId, workerId) in _connectionToWorker)
+        {
+            var worker = _db.Workers.FirstOrDefault(w => w.Id == workerId);
+            if (worker?.CurrentJobId == jobId)
+                return connectionId;
+        }
+        return null;
+    }
+
     public string? FindConnectionIdByWorkerId(Ulid workerId)
     {
         foreach (var (connectionId, id) in _connectionToWorker)

@@ -12,6 +12,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System;
 
@@ -42,7 +43,7 @@ public class JobRunner
         _logCollector = logCollector;
     }
 
-    public async Task<JobResult> ExecuteAsync()
+    public async Task<JobResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         // Start with a temporary directory to clone and read the script
         var tempDir = Path.Combine(_config.WorkspacePath, _job.Id.ToString());
@@ -141,7 +142,7 @@ public class JobRunner
                 _config.WorkerContainerId,
                 artifactSaver: artifactSaver,
                 onOutput: _logCollector.AsCallback());
-            var success = await runner.RunAsync(scriptResult.Steps);
+            var success = await runner.RunAsync(scriptResult.Steps, cancellationToken);
 
             return new JobResult
             {

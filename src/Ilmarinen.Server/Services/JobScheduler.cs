@@ -124,6 +124,22 @@ public class JobScheduler
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        return await jobs.TryCancelAsync(jobId);
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        // Find the worker running this job before cancelling (status change clears the assignment)
+        var connectionId = workers.FindConnectionIdByJobId(jobId);
+
+        var cancelled = await jobs.TryCancelAsync(jobId);
+        if (!cancelled)
+            return false;
+
+        // If a worker is actively running this job, tell it to stop
+        if (connectionId != null)
+        {
+            _logger.LogInformation("Sending CancelJob to worker for job {JobId}", jobId);
+            await _hubContext.Clients.Client(connectionId).CancelJob(jobId.ToString());
+        }
+
+        return true;
     }
 }

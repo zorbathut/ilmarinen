@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using System;
 
@@ -82,7 +83,7 @@ public class PipelineRunner
         _onOutput?.Invoke("m", message + "\n");
     }
 
-    public async Task<bool> RunAsync(IReadOnlyList<Step<object?>> steps)
+    public async Task<bool> RunAsync(IReadOnlyList<Step<object?>> steps, CancellationToken cancellationToken = default)
     {
         var branch = await GetGitBranch();
         var commit = await GetGitCommit();
@@ -108,6 +109,8 @@ public class PipelineRunner
         {
             foreach (var step in steps)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 // Resolve image lazily (may depend on previous step outputs)
                 var image = step.ImageResolver();
 
@@ -116,9 +119,14 @@ public class PipelineRunner
 
                 try
                 {
-                    await RunStepAsync(step, image, branch, commit, networkName, apiServer, artifactSaver);
+                    await RunStepAsync(step, image, branch, commit, networkName, apiServer, artifactSaver, cancellationToken);
                     WriteInfo($"=== {step.Name}: SUCCESS ===");
                     WriteInfo("");
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    WriteInfo($"=== {step.Name}: CANCELLED ===");
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -543,7 +551,8 @@ public class PipelineRunner
     }
 
     private async Task RunStepAsync(Step<object?> step, ImageRef image, string branch, string commit,
-        string networkName, AgentApiServer apiServer, Func<string, string?, Task<ArtifactRef>> artifactSaver)
+        string networkName, AgentApiServer apiServer, Func<string, string?, Task<ArtifactRef>> artifactSaver,
+        CancellationToken cancellationToken = default)
     {
         // Pull the image if needed
         await PullImageIfNeeded(image.Reference);
@@ -585,7 +594,17 @@ public class PipelineRunner
 
             try
             {
-                // Execute the action and capture output
+                // Execute the action and capture output.
+                // When cancelled, we stop the container which kills all processes inside it.
+                using var reg = cancellationToken.Register(() =>
+                {
+                    // Fire-and-forget: stopping the container kills the entire process tree
+                    _ = _client.Containers.StopContainerAsync(containerId, new ContainerStopParameters
+                    {
+                        WaitBeforeKillSeconds = 5
+                    });
+                });
+
                 step.Output = await step.Action(context);
                 step.HasRun = true;
             }
