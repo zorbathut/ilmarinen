@@ -2,10 +2,12 @@
 @using Ilmarinen.Protocol.Requests
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
 @using NUlid
-@inject PipelineRepository Pipelines
-@inject JobRepository Jobs
+@implements IDisposable
+@inject IServiceScopeFactory ScopeFactory
 @inject JobScheduler Scheduler
+@inject UIEventService UIEvents
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
@@ -209,15 +211,35 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        await RefreshAsync();
+        loading = false;
+        UIEvents.OnJobsChanged += OnJobsChanged;
+    }
+
+    private async void OnJobsChanged()
+    {
+        try
+        {
+            await RefreshAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { }
+    }
+
+    private async Task RefreshAsync()
+    {
         if (Ulid.TryParse(Id, out var ulid))
         {
-            pipeline = await Pipelines.GetAsync(ulid);
+            using var scope = ScopeFactory.CreateScope();
+            var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();
+            var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+            pipeline = await pipelineRepo.GetAsync(ulid);
             if (pipeline != null)
             {
-                jobs = await Jobs.GetByPipelineAsync(ulid);
+                jobs = await jobRepo.GetByPipelineAsync(ulid);
             }
         }
-        loading = false;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -244,7 +266,9 @@ else
         triggering = true;
         try
         {
-            var submission = await Pipelines.BuildSubmissionAsync(ulid, string.IsNullOrWhiteSpace(refOverride) ? null : refOverride.Trim());
+            using var scope = ScopeFactory.CreateScope();
+            var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();
+            var submission = await pipelineRepo.BuildSubmissionAsync(ulid, string.IsNullOrWhiteSpace(refOverride) ? null : refOverride.Trim());
             if (submission != null)
             {
                 var jobId = await Scheduler.EnqueueJobAsync(submission, ulid);
@@ -297,7 +321,9 @@ else
                 Schedule = clearingSchedule ? null : ConvertScheduleToUtc(editSchedule)
             };
 
-            var updated = await Pipelines.UpdateAsync(ulid, update);
+            using var scope = ScopeFactory.CreateScope();
+            var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();
+            var updated = await pipelineRepo.UpdateAsync(ulid, update);
             if (updated != null)
             {
                 pipeline = updated;
@@ -322,7 +348,9 @@ else
     {
         if (Ulid.TryParse(Id, out var ulid))
         {
-            await Pipelines.DeleteAsync(ulid);
+            using var scope = ScopeFactory.CreateScope();
+            var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();
+            await pipelineRepo.DeleteAsync(ulid);
             Navigation.NavigateTo("/pipelines");
         }
     }
@@ -361,5 +389,10 @@ else
             return trimmed;
 
         return CronTimezoneHelper.LocalToUtc(trimmed, _browserTz) ?? trimmed;
+    }
+
+    public void Dispose()
+    {
+        UIEvents.OnJobsChanged -= OnJobsChanged;
     }
 }

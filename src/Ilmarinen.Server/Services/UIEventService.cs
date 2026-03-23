@@ -9,9 +9,15 @@ namespace Ilmarinen.Server.Services;
 public class UIEventService
 {
     public event Action? OnJobsChanged;
+    public event Action? OnWorkersChanged;
 
     public void NotifyJobsChanged()
     {
         OnJobsChanged?.Invoke();
+    }
+
+    public void NotifyWorkersChanged()
+    {
+        OnWorkersChanged?.Invoke();
     }
 }

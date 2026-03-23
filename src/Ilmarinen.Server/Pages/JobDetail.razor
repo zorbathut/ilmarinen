@@ -1,9 +1,12 @@
 @page "/jobs/{Id}"
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
 @using NUlid
-@inject JobRepository Jobs
+@implements IDisposable
+@inject IServiceScopeFactory ScopeFactory
 @inject JobScheduler Scheduler
+@inject UIEventService UIEvents
 @inject NavigationManager Navigation
 
 <h1 class="page-title">Job @Id</h1>
@@ -106,9 +109,30 @@ else
     {
         if (Ulid.TryParse(Id, out jobUlid))
         {
-            job = await Jobs.GetAsync(jobUlid);
+            job = await FetchJobAsync(jobUlid);
         }
         loading = false;
+        UIEvents.OnJobsChanged += OnJobsChanged;
+    }
+
+    private async void OnJobsChanged()
+    {
+        try
+        {
+            if (jobUlid != default)
+            {
+                job = await FetchJobAsync(jobUlid);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { }
+    }
+
+    private async Task<JobInfo?> FetchJobAsync(Ulid id)
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        return await repo.GetAsync(id);
     }
 
     private async Task CancelJob()
@@ -116,9 +140,12 @@ else
         if (Ulid.TryParse(Id, out var ulid))
         {
             await Scheduler.CancelJobAsync(ulid);
-            job = await Jobs.GetAsync(ulid);
-            StateHasChanged();
         }
+    }
+
+    public void Dispose()
+    {
+        UIEvents.OnJobsChanged -= OnJobsChanged;
     }
 
     private static string FormatSize(long bytes)

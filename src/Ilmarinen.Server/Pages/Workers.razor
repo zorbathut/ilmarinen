@@ -3,10 +3,13 @@
 @using Ilmarinen.Server.Services
 @using Ilmarinen.Models
 @using Microsoft.AspNetCore.SignalR
-@inject WorkerRepository WorkerRepo
+@using Microsoft.Extensions.DependencyInjection
+@implements IDisposable
+@inject IServiceScopeFactory ScopeFactory
 @inject WorkerRegistrationService RegistrationService
 @inject WorkspaceDeletionService DeletionService
 @inject IHubContext<WorkerHub, IWorkerClient> HubContext
+@inject UIEventService UIEvents
 
 <h1 class="page-title">Workers</h1>
 
@@ -128,7 +131,32 @@
 
     protected override async Task OnInitializedAsync()
     {
-        workers = await WorkerRepo.GetAllAsync();
+        workers = await FetchWorkersAsync();
+        UIEvents.OnWorkersChanged += OnChanged;
+        UIEvents.OnJobsChanged += OnChanged;
+    }
+
+    private async void OnChanged()
+    {
+        try
+        {
+            workers = await FetchWorkersAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { }
+    }
+
+    private async Task<IReadOnlyList<WorkerView>> FetchWorkersAsync()
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        return await repo.GetAllAsync();
+    }
+
+    public void Dispose()
+    {
+        UIEvents.OnWorkersChanged -= OnChanged;
+        UIEvents.OnJobsChanged -= OnChanged;
     }
 
     private bool IsDeleting(NUlid.Ulid workerId, string workspace) =>
@@ -148,7 +176,7 @@
         {
             registrationResult = await RegistrationService.RegisterWorkerAsync(newWorkerName.Trim());
             newWorkerName = "";
-            workers = await WorkerRepo.GetAllAsync();
+            workers = await FetchWorkersAsync();
         }
         catch (ArgumentException ex)
         {
@@ -179,14 +207,17 @@
 
         try
         {
-            var connectionId = WorkerRepo.FindConnectionIdByWorkerId(workerId);
+            using var scope = ScopeFactory.CreateScope();
+            var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+            var connectionId = workerRepo.FindConnectionIdByWorkerId(workerId);
             if (connectionId != null)
             {
-                await WorkerRepo.SetDisconnectedAsync(connectionId);
+                await workerRepo.SetDisconnectedAsync(connectionId);
             }
 
             await RegistrationService.RevokeWorkerAsync(workerId);
-            workers = await WorkerRepo.GetAllAsync();
+            workers = await FetchWorkersAsync();
         }
         catch (Exception ex)
         {
@@ -214,7 +245,10 @@
                 return;
             }
 
-            var connectionId = WorkerRepo.FindConnectionIdByWorkerId(workerId);
+            using var scope = ScopeFactory.CreateScope();
+            var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+            var connectionId = workerRepo.FindConnectionIdByWorkerId(workerId);
             if (connectionId == null)
             {
                 deleteError = "Worker not found or not connected.";
@@ -227,14 +261,14 @@
 
             if (result.Success)
             {
-                WorkerRepo.RemoveWorkspace(connectionId, workspace);
+                workerRepo.RemoveWorkspace(connectionId, workspace);
             }
             else
             {
                 deleteError = result.Error ?? "Workspace deletion failed.";
             }
 
-            workers = await WorkerRepo.GetAllAsync();
+            workers = await FetchWorkersAsync();
         }
         finally
         {

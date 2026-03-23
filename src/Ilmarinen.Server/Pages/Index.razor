@@ -1,6 +1,9 @@
 @page "/"
 @using Ilmarinen.Server.Services
-@inject DashboardService Dashboard
+@using Microsoft.Extensions.DependencyInjection
+@implements IDisposable
+@inject IServiceScopeFactory ScopeFactory
+@inject UIEventService UIEvents
 
 <h1 class="page-title">Dashboard</h1>
 
@@ -78,8 +81,33 @@
 
     protected override async Task OnInitializedAsync()
     {
-        stats = await Dashboard.GetStatsAsync();
-        recentJobs = await Dashboard.GetRecentJobsAsync();
+        await RefreshAsync();
+        UIEvents.OnJobsChanged += OnChanged;
+        UIEvents.OnWorkersChanged += OnChanged;
+    }
+
+    private async void OnChanged()
+    {
+        try
+        {
+            await RefreshAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { }
+    }
+
+    private async Task RefreshAsync()
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var dashboard = scope.ServiceProvider.GetRequiredService<DashboardService>();
+        stats = await dashboard.GetStatsAsync();
+        recentJobs = await dashboard.GetRecentJobsAsync();
+    }
+
+    public void Dispose()
+    {
+        UIEvents.OnJobsChanged -= OnChanged;
+        UIEvents.OnWorkersChanged -= OnChanged;
     }
 
     private string GetShortRepoUrl(string url)

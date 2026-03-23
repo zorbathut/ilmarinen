@@ -17,14 +17,16 @@ public class WorkerHub : Hub<IWorkerClient>
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ServerKeyService _serverKey;
+    private readonly UIEventService _uiEvents;
     private readonly ILogger<WorkerHub> _logger;
 
     private static readonly ConcurrentDictionary<string, PendingAuth> _pendingAuths = new();
 
-    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, ILogger<WorkerHub> logger)
+    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, UIEventService uiEvents, ILogger<WorkerHub> logger)
     {
         _scopeFactory = scopeFactory;
         _serverKey = serverKey;
+        _uiEvents = uiEvents;
         _logger = logger;
     }
 
@@ -109,6 +111,7 @@ public class WorkerHub : Hub<IWorkerClient>
 
         await workers.ConnectAsync(Context.ConnectionId, pending.WorkerId);
         workers.SetWorkspaces(Context.ConnectionId, info.Workspaces);
+        _uiEvents.NotifyWorkersChanged();
         _logger.LogInformation("Worker authenticated: {WorkerId}", pending.WorkerId);
     }
 
@@ -119,6 +122,7 @@ public class WorkerHub : Hub<IWorkerClient>
         var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
 
         await workers.SetReadyAsync(Context.ConnectionId, true);
+        _uiEvents.NotifyWorkersChanged();
         _logger.LogInformation("Worker ready: {ConnectionId}", Context.ConnectionId);
 
         await scheduler.TryAssignJobAsync(Context.ConnectionId);
@@ -206,6 +210,7 @@ public class WorkerHub : Hub<IWorkerClient>
         }
 
         await workers.SetDisconnectedAsync(Context.ConnectionId);
+        _uiEvents.NotifyWorkersChanged();
         await base.OnDisconnectedAsync(exception);
     }
 }
