@@ -185,7 +185,7 @@ public class WorkerService : BackgroundService
 
         try
         {
-            await _connection!.SendAsync("JobStarted", job.Id);
+            await TrySendAsync("JobStarted", job.Id);
 
             var runner = new JobRunner(_config, _workspaceManager, job, _connection!, _logger, logCollector);
             var result = await runner.ExecuteAsync(cts.Token);
@@ -199,7 +199,7 @@ public class WorkerService : BackgroundService
                 Workspaces = _workspaceManager.DiscoverWorkspaces()
             };
 
-            await _connection!.SendAsync("JobCompleted", job.Id, result);
+            await TrySendAsync("JobCompleted", job.Id, result);
             _logger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -207,9 +207,9 @@ public class WorkerService : BackgroundService
             _logger.LogInformation("Job {JobId} was cancelled", job.Id);
 
             logCollector.WriteStderr("Job cancelled.");
-            await logCollector.FlushAsync();
+            await TryFlushLogsAsync(logCollector);
 
-            await _connection!.SendAsync("JobCompleted", job.Id, new JobResult
+            await TrySendAsync("JobCompleted", job.Id, new JobResult
             {
                 Id = job.Id,
                 Status = JobStatus.Cancelled,
@@ -221,11 +221,10 @@ public class WorkerService : BackgroundService
         {
             _logger.LogError(ex, "Job {JobId} failed with exception", job.Id);
 
-            // Stream exception to server logs
             logCollector.WriteStderr($"Job failed with exception: {ex}");
-            await logCollector.FlushAsync();
+            await TryFlushLogsAsync(logCollector);
 
-            await _connection!.SendAsync("JobCompleted", job.Id, new JobResult
+            await TrySendAsync("JobCompleted", job.Id, new JobResult
             {
                 Id = job.Id,
                 Status = JobStatus.Failed,
@@ -239,7 +238,36 @@ public class WorkerService : BackgroundService
         }
 
         // Signal ready for next job
-        await _connection!.SendAsync("Ready");
+        await TrySendAsync("Ready");
+    }
+
+    /// <summary>
+    /// Sends a message to the server, swallowing connection errors.
+    /// If the server is unreachable, the heartbeat loop will reconnect
+    /// and the server will handle the orphaned job on its side.
+    /// </summary>
+    private async Task TrySendAsync(string method, params object[] args)
+    {
+        try
+        {
+            await _connection!.SendCoreAsync(method, args);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send {Method} to server (connection may be down)", method);
+        }
+    }
+
+    private static async Task TryFlushLogsAsync(LogCollector logCollector)
+    {
+        try
+        {
+            await logCollector.FlushAsync();
+        }
+        catch
+        {
+            // Connection may be down
+        }
     }
 
     private void OnCancelJob(string jobId)
