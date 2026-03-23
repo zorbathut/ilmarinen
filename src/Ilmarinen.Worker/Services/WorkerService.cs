@@ -54,6 +54,9 @@ public class WorkerService : BackgroundService
             })
             .Build();
 
+        _connection.KeepAliveInterval = TimeSpan.FromSeconds(15);
+        _connection.ServerTimeout = TimeSpan.FromSeconds(60);
+
         _connection.On<JobAssignment>("AssignJob", OnJobAssigned);
         _connection.On<string>("CancelJob", OnCancelJob);
         _connection.On<string>("DeleteWorkspace", OnDeleteWorkspace);
@@ -75,13 +78,21 @@ public class WorkerService : BackgroundService
 
         _logger.LogInformation("Worker {WorkerId} connected and ready", _workerId);
 
-        // Heartbeat loop
+        // Heartbeat loop — also handles manual reconnection when auto-reconnect gives up
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
-                if (_connection.State == HubConnectionState.Connected)
+
+                if (_connection.State == HubConnectionState.Disconnected)
+                {
+                    _logger.LogWarning("Connection lost, reconnecting...");
+                    await ConnectWithRetryAsync(stoppingToken);
+                    await ConnectAndReady();
+                    _logger.LogInformation("Worker {WorkerId} reconnected and ready", _workerId);
+                }
+                else if (_connection.State == HubConnectionState.Connected)
                 {
                     await _connection.SendAsync("Heartbeat", new WorkerHeartbeat
                     {
