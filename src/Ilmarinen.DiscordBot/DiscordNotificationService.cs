@@ -271,16 +271,26 @@ public class DiscordNotificationService : BackgroundService
         var color = isSuccess ? Color.Green : Color.Red;
         var title = isSuccess ? "Build Succeeded" : "Build Failed";
         var baseUrl = _config!.PublicUrl ?? _config.ServerUrl;
-        var jobUrl = $"{baseUrl.TrimEnd('/')}/jobs/{notification.JobId}";
+        string? jobUrl = null;
+        if (!string.IsNullOrWhiteSpace(baseUrl) && Uri.IsWellFormedUriString(baseUrl.TrimEnd('/'), UriKind.Absolute))
+        {
+            jobUrl = $"{baseUrl.TrimEnd('/')}/jobs/{notification.JobId}";
+        }
+        else
+        {
+            _logger.LogWarning("Cannot generate job URL: base URL '{BaseUrl}' is not a valid absolute URI. Set PublicUrl in config to a valid URL", baseUrl);
+        }
 
         var embed = new EmbedBuilder()
             .WithTitle(title)
-            .WithUrl(jobUrl)
             .WithColor(color)
             .WithCurrentTimestamp()
             .AddField("Repository", notification.RepoUrl, inline: true)
             .AddField("Branch", notification.Ref, inline: true)
             .AddField("Script", notification.ScriptPath, inline: true);
+
+        if (jobUrl != null)
+            embed.WithUrl(jobUrl);
 
         if (notification.StartedAt != null && notification.CompletedAt != null)
         {
