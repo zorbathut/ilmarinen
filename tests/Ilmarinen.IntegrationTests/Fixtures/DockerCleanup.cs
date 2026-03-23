@@ -6,11 +6,10 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System;
 
-namespace Ilmarinen.IntegrationTests.Fixtures;
-
 /// <summary>
 /// Runs once before all integration tests to clean up stale Docker networks
 /// left behind by previous test runs whose processes no longer exist.
+/// Must be in the global namespace so NUnit treats it as an assembly-level SetUpFixture.
 /// </summary>
 [SetUpFixture]
 public class DockerCleanup
@@ -45,12 +44,18 @@ public class DockerCleanup
                 // Process is gone — network is stale
             }
 
-            // Only delete if no containers are still attached
+            // Owning process is dead — stop orphaned containers and remove the network
             try
             {
                 var inspected = await client.Networks.InspectNetworkAsync(network.ID);
-                if (inspected.Containers.Count > 0)
-                    continue;
+
+                foreach (var container in inspected.Containers)
+                {
+                    await client.Containers.StopContainerAsync(container.Key,
+                        new ContainerStopParameters { WaitBeforeKillSeconds = 1 });
+                    await client.Networks.DisconnectNetworkAsync(network.ID,
+                        new NetworkDisconnectParameters { Container = container.Key, Force = true });
+                }
 
                 await client.Networks.DeleteNetworkAsync(network.ID);
             }
