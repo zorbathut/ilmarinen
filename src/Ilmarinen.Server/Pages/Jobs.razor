@@ -1,6 +1,8 @@
 @page "/jobs"
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
+@using System.Threading
+@implements IDisposable
 @inject JobRepository JobRepo
 
 <h1 class="page-title">Jobs</h1>
@@ -13,10 +15,9 @@
                 <th>Status</th>
                 <th>Repository</th>
                 <th>Ref</th>
+                <th>Script</th>
                 <th>Worker</th>
-                <th>Created</th>
-                <th>Started</th>
-                <th>Completed</th>
+                <th>Duration</th>
             </tr>
         </thead>
         <tbody>
@@ -29,10 +30,9 @@
                         <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
                         <td>@GetShortRepoUrl(job.RepoUrl)</td>
                         <td>@job.Ref</td>
+                        <td>@job.ScriptPath</td>
                         <td>@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</td>
-                        <td>@job.CreatedAt.ToString("HH:mm:ss")</td>
-                        <td>@(job.StartedAt?.ToString("HH:mm:ss") ?? "-")</td>
-                        <td>@(job.CompletedAt?.ToString("HH:mm:ss") ?? "-")</td>
+                        <td>@FormatDuration(job)</td>
                     </tr>
                 }
             }
@@ -42,10 +42,29 @@
 
 @code {
     private IReadOnlyList<JobInfo>? jobs;
+    private Timer? _timer;
 
     protected override async Task OnInitializedAsync()
     {
         jobs = await JobRepo.GetAllAsync();
+
+        // Tick every second to update running job durations
+        _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    private static string FormatDuration(JobInfo job)
+    {
+        if (job.StartedAt == null)
+            return "---";
+
+        var end = job.CompletedAt ?? DateTime.UtcNow;
+        var duration = end - job.StartedAt.Value;
+
+        if (duration.TotalMinutes < 1)
+            return $"{duration.Seconds}s";
+        if (duration.TotalHours < 1)
+            return $"{duration.Minutes}m {duration.Seconds}s";
+        return $"{(int)duration.TotalHours}h {duration.Minutes}m";
     }
 
     private string GetShortRepoUrl(string url)
@@ -55,5 +74,10 @@
         if (url.StartsWith("git@github.com:"))
             return url.Replace("git@github.com:", "").Replace(".git", "");
         return url;
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
     }
 }

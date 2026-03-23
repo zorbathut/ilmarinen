@@ -47,6 +47,7 @@
                 <th>Status</th>
                 <th>Repository</th>
                 <th>Ref</th>
+                <th>Script</th>
                 <th>Created</th>
                 <th>Worker</th>
             </tr>
@@ -61,6 +62,7 @@
                         <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
                         <td>@GetShortRepoUrl(job.RepoUrl)</td>
                         <td>@job.Ref</td>
+                        <td>@job.ScriptPath</td>
                         <td>@job.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
                         <td>@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</td>
                     </tr>
