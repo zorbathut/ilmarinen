@@ -74,8 +74,8 @@ public class PipelineSchedulerService : BackgroundService
                 var submission = await pipelines.BuildSubmissionAsync(pipeline.Id, refOverride: null);
                 if (submission != null)
                 {
-                    await _scheduler.EnqueueJobAsync(submission, pipeline.Id);
                     await pipelines.UpdateLastTriggeredAtAsync(pipeline.Id, now);
+                    await _scheduler.EnqueueJobAsync(submission, pipeline.Id);
                 }
             }
             catch (Exception ex)
