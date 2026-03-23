@@ -7,6 +7,7 @@
 @inject JobRepository Jobs
 @inject JobScheduler Scheduler
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <h1 class="page-title">Pipeline</h1>
 
@@ -54,7 +55,7 @@
                     }
                     else
                     {
-                        <input type="text" @bind="editSchedule" placeholder="@(pipeline.Schedule != null ? "Leave blank to keep current" : "0 2 * * * (optional)")" />
+                        <input type="text" @bind="editSchedule" placeholder="@(pipeline.Schedule != null ? $"Current: {FormatLocalCron(pipeline.Schedule)}" : "0 2 * * * in your local time (optional)")" />
                         @if (pipeline.Schedule != null)
                         {
                             <button class="btn btn-danger" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => clearingSchedule = true">Remove</button>
@@ -94,12 +95,26 @@
                     <span class="detail-value">@(pipeline.HasGitToken ? "Configured" : "Not set")</span>
 
                     <span class="detail-label">Schedule</span>
-                    <span class="detail-value">@(pipeline.Schedule ?? "Not set")</span>
+                    <span class="detail-value">
+                        @if (pipeline.Schedule != null)
+                        {
+                            @FormatLocalCron(pipeline.Schedule)
+                            var nextRun = GetNextRunLocal(pipeline.Schedule);
+                            if (nextRun != null)
+                            {
+                                <span style="color: var(--text-secondary); font-size: 0.8rem; margin-left: 0.5rem;">next: @nextRun</span>
+                            }
+                        }
+                        else
+                        {
+                            <span>Not set</span>
+                        }
+                    </span>
 
                     @if (pipeline.LastTriggeredAt != null)
                     {
                         <span class="detail-label">Last Triggered</span>
-                        <span class="detail-value">@pipeline.LastTriggeredAt.Value.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                        <span class="detail-value">@FormatLocalTime(pipeline.LastTriggeredAt.Value)</span>
                     }
 
                     <span class="detail-label">Created</span>
@@ -178,6 +193,8 @@ else
     private bool loading = true;
     private bool triggering;
 
+    private TimeZoneInfo? _browserTz;
+
     private bool editing;
     private bool saving;
     private string? editError;
@@ -201,6 +218,23 @@ else
             }
         }
         loading = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                var tzId = await JS.InvokeAsync<string>("getBrowserTimeZone");
+                _browserTz = TimeZoneInfo.FindSystemTimeZoneById(tzId);
+                StateHasChanged();
+            }
+            catch
+            {
+                // Fall back to UTC if browser timezone is unavailable
+            }
+        }
     }
 
     private async Task TriggerRun()
@@ -260,7 +294,7 @@ else
                 UpdateGitToken = removingToken || !string.IsNullOrEmpty(editGitToken),
                 GitToken = removingToken ? null : (string.IsNullOrEmpty(editGitToken) ? null : editGitToken),
                 ClearSchedule = clearingSchedule,
-                Schedule = clearingSchedule ? null : (string.IsNullOrWhiteSpace(editSchedule) ? null : editSchedule.Trim())
+                Schedule = clearingSchedule ? null : ConvertScheduleToUtc(editSchedule)
             };
 
             var updated = await Pipelines.UpdateAsync(ulid, update);
@@ -291,5 +325,41 @@ else
             await Pipelines.DeleteAsync(ulid);
             Navigation.NavigateTo("/pipelines");
         }
+    }
+
+    private string FormatLocalCron(string utcCron)
+    {
+        if (_browserTz == null)
+            return $"{utcCron} (UTC)";
+
+        var local = CronTimezoneHelper.UtcToLocal(utcCron, _browserTz);
+        return local ?? utcCron;
+    }
+
+    private string? GetNextRunLocal(string utcCron)
+    {
+        var tz = _browserTz ?? TimeZoneInfo.Utc;
+        return CronTimezoneHelper.NextOccurrenceLocal(utcCron, tz);
+    }
+
+    private string FormatLocalTime(DateTime utcTime)
+    {
+        if (_browserTz == null)
+            return utcTime.ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
+
+        var local = TimeZoneInfo.ConvertTimeFromUtc(utcTime, _browserTz);
+        return local.ToString("yyyy-MM-dd HH:mm:ss");
+    }
+
+    private string? ConvertScheduleToUtc(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        var trimmed = input.Trim();
+        if (_browserTz == null)
+            return trimmed;
+
+        return CronTimezoneHelper.LocalToUtc(trimmed, _browserTz) ?? trimmed;
     }
 }

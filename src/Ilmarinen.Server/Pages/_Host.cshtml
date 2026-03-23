@@ -235,5 +235,8 @@
     <component type="typeof(App)" render-mode="ServerPrerendered" />
 
     <script src="_framework/blazor.server.js"></script>
+    <script>
+        window.getBrowserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+    </script>
 </body>
 </html>

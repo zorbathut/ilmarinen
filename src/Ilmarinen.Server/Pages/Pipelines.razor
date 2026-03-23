@@ -3,6 +3,7 @@
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @inject PipelineRepository PipelineRepo
+@inject IJSRuntime JS
 
 <h1 class="page-title">Pipelines</h1>
 
@@ -34,7 +35,7 @@
             <input type="password" @bind="newGitToken" placeholder="Token for private repos" />
         </div>
         <div>
-            <label>Schedule (optional, cron)</label>
+            <label>Schedule (optional, cron in your local time)</label>
             <input type="text" @bind="newSchedule" placeholder="0 2 * * *" />
         </div>
     </div>
@@ -65,7 +66,7 @@
                         <td>@GetShortRepoUrl(pipeline.RepoUrl)</td>
                         <td>@pipeline.DefaultRef</td>
                         <td>@pipeline.ScriptPath</td>
-                        <td>@(pipeline.Schedule ?? "-")</td>
+                        <td>@FormatLocalCron(pipeline.Schedule)</td>
                         <td>@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
                     </tr>
                 }
@@ -75,6 +76,7 @@
 </div>
 
 @code {
+    private TimeZoneInfo? _browserTz;
     private IReadOnlyList<PipelineInfo>? pipelines;
     private string newName = "";
     private string newRepoUrl = "";
@@ -88,6 +90,20 @@
     protected override async Task OnInitializedAsync()
     {
         pipelines = await PipelineRepo.GetAllAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                var tzId = await JS.InvokeAsync<string>("getBrowserTimeZone");
+                _browserTz = TimeZoneInfo.FindSystemTimeZoneById(tzId);
+                StateHasChanged();
+            }
+            catch { }
+        }
     }
 
     private async Task CreatePipeline()
@@ -110,7 +126,7 @@
                 Ref = newDefaultRef.Trim(),
                 ScriptPath = newScriptPath.Trim(),
                 GitToken = string.IsNullOrWhiteSpace(newGitToken) ? null : newGitToken.Trim(),
-                Schedule = string.IsNullOrWhiteSpace(newSchedule) ? null : newSchedule.Trim()
+                Schedule = ConvertScheduleToUtc(newSchedule)
             };
 
             await PipelineRepo.CreateAsync(submission);
@@ -132,6 +148,21 @@
         {
             creating = false;
         }
+    }
+
+    private string FormatLocalCron(string? utcCron)
+    {
+        if (utcCron == null) return "-";
+        if (_browserTz == null) return $"{utcCron} (UTC)";
+        return CronTimezoneHelper.UtcToLocal(utcCron, _browserTz) ?? utcCron;
+    }
+
+    private string? ConvertScheduleToUtc(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return null;
+        var trimmed = input.Trim();
+        if (_browserTz == null) return trimmed;
+        return CronTimezoneHelper.LocalToUtc(trimmed, _browserTz) ?? trimmed;
     }
 
     private string GetShortRepoUrl(string url)
