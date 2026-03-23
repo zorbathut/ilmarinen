@@ -70,7 +70,7 @@ public class JobScheduler
         _uiEvents.NotifyJobsChanged();
 
         // Try to dispatch immediately if there's an idle worker
-        var readyConnectionId = await workers.FindReadyWorkerConnectionIdAsync();
+        var readyConnectionId = workers.FindReadyWorkerConnectionId();
         if (readyConnectionId != null)
         {
             await TryAssignJobAsync(readyConnectionId);
@@ -87,7 +87,7 @@ public class JobScheduler
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-        var worker = await workers.GetByConnectionIdAsync(connectionId);
+        var worker = workers.GetByConnectionId(connectionId);
         if (worker == null || !worker.IsReady)
             return false;
 

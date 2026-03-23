@@ -12,17 +12,23 @@ namespace Ilmarinen.Server.Services;
 public class DashboardService
 {
     private readonly IlmarinenDbContext _db;
+    private readonly WorkerRepository _workers;
 
-    public DashboardService(IlmarinenDbContext db)
+    public DashboardService(IlmarinenDbContext db, WorkerRepository workers)
     {
         _db = db;
+        _workers = workers;
     }
 
     public async Task<DashboardStats> GetStatsAsync()
     {
         var jobs = await _db.Jobs.ToListAsync();
-        var workers = await _db.Workers.ToListAsync();
+        var totalWorkers = await _db.Workers.CountAsync();
         var pipelineCount = await _db.Pipelines.CountAsync();
+
+        // Derive connected count from in-memory state
+        var allWorkers = await _workers.GetAllAsync();
+        var connectedWorkers = allWorkers.Count(w => w.IsConnected);
 
         return new DashboardStats
         {
@@ -31,8 +37,8 @@ public class DashboardService
             QueuedJobs = jobs.Count(j => j.Status == JobStatus.Queued),
             SuccessfulJobs = jobs.Count(j => j.Status == JobStatus.Success),
             FailedJobs = jobs.Count(j => j.Status == JobStatus.Failed),
-            TotalWorkers = workers.Count,
-            ConnectedWorkers = workers.Count(w => w.IsConnected),
+            TotalWorkers = totalWorkers,
+            ConnectedWorkers = connectedWorkers,
             TotalPipelines = pipelineCount
         };
     }

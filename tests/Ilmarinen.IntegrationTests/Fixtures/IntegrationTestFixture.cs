@@ -83,10 +83,10 @@ public class IntegrationTestFixture : IAsyncDisposable
         while (DateTime.UtcNow < deadline)
         {
             using var scope = _factory.Services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+            var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
-            if (worker is { IsConnected: true })
+            var connectionId = workers.FindConnectionIdByWorkerId(workerId);
+            if (connectionId != null)
             {
                 return;
             }

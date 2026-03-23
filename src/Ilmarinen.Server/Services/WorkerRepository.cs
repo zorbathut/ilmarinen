@@ -1,5 +1,6 @@
 using Ilmarinen.Database;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using NUlid;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -12,126 +13,128 @@ namespace Ilmarinen.Server.Services;
 
 public class WorkerRepository
 {
-    private readonly IlmarinenDbContext _db;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     // In-memory mapping of SignalR connection ID to worker ID
-    private static readonly ConcurrentDictionary<string, Ulid> _connectionToWorker = new();
+    private readonly ConcurrentDictionary<string, Ulid> _connectionToWorker = new();
+
+    // In-memory set of connection IDs that are ready for work
+    private readonly ConcurrentDictionary<string, bool> _readyWorkers = new();
 
     // In-memory mapping of connection ID to workspace names
-    private static readonly ConcurrentDictionary<string, ImmutableList<string>> _workerWorkspaces = new();
+    private readonly ConcurrentDictionary<string, ImmutableList<string>> _workerWorkspaces = new();
 
-    public WorkerRepository(IlmarinenDbContext db)
+    public WorkerRepository(IServiceScopeFactory scopeFactory)
     {
-        _db = db;
+        _scopeFactory = scopeFactory;
     }
 
     public async Task ConnectAsync(string connectionId, Ulid workerId)
     {
-        var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId)
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId)
             ?? throw new InvalidOperationException($"Worker {workerId} not found in database.");
 
-        worker.IsConnected = true;
-        worker.IsReady = false;
         worker.LastSeen = DateTime.UtcNow;
-
-        await _db.SaveChangesAsync();
+        await db.SaveChangesAsync();
 
         _connectionToWorker[connectionId] = workerId;
     }
 
     public async Task<byte[]?> GetWorkerPublicKeyAsync(Ulid workerId)
     {
-        var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
         return worker?.PublicKey;
     }
 
     public async Task SetDisconnectedAsync(string connectionId)
     {
         _workerWorkspaces.TryRemove(connectionId, out _);
+        _readyWorkers.TryRemove(connectionId, out _);
 
         if (_connectionToWorker.TryRemove(connectionId, out var workerId))
         {
-            var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
             if (worker != null)
             {
-                worker.IsConnected = false;
-                worker.IsReady = false;
                 worker.CurrentJobId = null;
                 worker.LastSeen = DateTime.UtcNow;
-                await _db.SaveChangesAsync();
+                await db.SaveChangesAsync();
             }
         }
     }
 
-    public async Task SetReadyAsync(string connectionId, bool isReady)
+    public void SetReady(string connectionId, bool isReady)
     {
-        if (_connectionToWorker.TryGetValue(connectionId, out var workerId))
-        {
-            var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
-            if (worker != null)
-            {
-                worker.IsReady = isReady;
-                worker.LastSeen = DateTime.UtcNow;
-                await _db.SaveChangesAsync();
-            }
-        }
+        if (isReady)
+            _readyWorkers[connectionId] = true;
+        else
+            _readyWorkers.TryRemove(connectionId, out _);
     }
 
     public async Task SetCurrentJobAsync(string connectionId, Ulid? jobId)
     {
         if (_connectionToWorker.TryGetValue(connectionId, out var workerId))
         {
-            var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
             if (worker != null)
             {
                 worker.CurrentJobId = jobId;
-                worker.IsReady = jobId == null;
                 worker.LastSeen = DateTime.UtcNow;
-                await _db.SaveChangesAsync();
+                await db.SaveChangesAsync();
             }
         }
+
+        // Worker is ready when it has no job
+        SetReady(connectionId, jobId == null);
     }
 
     public async Task UpdateHeartbeatAsync(string connectionId)
     {
         if (_connectionToWorker.TryGetValue(connectionId, out var workerId))
         {
-            var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
             if (worker != null)
             {
                 worker.LastSeen = DateTime.UtcNow;
-                await _db.SaveChangesAsync();
+                await db.SaveChangesAsync();
             }
         }
     }
 
-    public async Task<ConnectedWorker?> GetByConnectionIdAsync(string connectionId)
+    public ConnectedWorker? GetByConnectionId(string connectionId)
     {
         if (!_connectionToWorker.TryGetValue(connectionId, out var workerId))
             return null;
 
-        var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
-        if (worker == null)
-            return null;
-
         return new ConnectedWorker
         {
-            Id = worker.Id,
+            Id = workerId,
             ConnectionId = connectionId,
-            IsReady = worker.IsReady,
-            CurrentJobId = worker.CurrentJobId
+            IsReady = _readyWorkers.ContainsKey(connectionId),
         };
     }
 
-    public async Task<string?> FindReadyWorkerConnectionIdAsync()
+    public string? FindReadyWorkerConnectionId()
     {
-        foreach (var (connectionId, workerId) in _connectionToWorker)
+        foreach (var (connectionId, _) in _readyWorkers)
         {
-            var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
-            if (worker is { IsConnected: true, IsReady: true, CurrentJobId: null })
-            {
+            if (_connectionToWorker.ContainsKey(connectionId))
                 return connectionId;
-            }
         }
         return null;
     }
@@ -152,9 +155,12 @@ public class WorkerRepository
 
     public string? FindConnectionIdByJobId(Ulid jobId)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
         foreach (var (connectionId, workerId) in _connectionToWorker)
         {
-            var worker = _db.Workers.FirstOrDefault(w => w.Id == workerId);
+            var worker = db.Workers.FirstOrDefault(w => w.Id == workerId);
             if (worker?.CurrentJobId == jobId)
                 return connectionId;
         }
@@ -173,13 +179,19 @@ public class WorkerRepository
 
     public async Task<IReadOnlyList<WorkerView>> GetAllAsync()
     {
-        var workers = await _db.Workers
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var workers = await db.Workers
             .OrderByDescending(w => w.LastSeen)
             .ToListAsync();
 
         return workers.Select(w =>
         {
             var connectionId = FindConnectionIdByWorkerId(w.Id);
+            var isConnected = connectionId != null;
+            var isReady = connectionId != null && _readyWorkers.ContainsKey(connectionId);
+
             ImmutableList<string>? workspaces = null;
             if (connectionId != null)
                 _workerWorkspaces.TryGetValue(connectionId, out workspaces);
@@ -188,8 +200,8 @@ public class WorkerRepository
             {
                 Id = w.Id,
                 Name = w.Name,
-                IsConnected = w.IsConnected,
-                IsReady = w.IsReady,
+                IsConnected = isConnected,
+                IsReady = isReady,
                 CurrentJobId = w.CurrentJobId,
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
@@ -204,7 +216,6 @@ public class ConnectedWorker
     public required Ulid Id { get; init; }
     public required string ConnectionId { get; init; }
     public bool IsReady { get; init; }
-    public Ulid? CurrentJobId { get; init; }
 }
 
 public class WorkerView

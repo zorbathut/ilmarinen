@@ -294,8 +294,17 @@ public class WorkerService : BackgroundService
     {
         if (_connection != null)
         {
-            await _connection.StopAsync(cancellationToken);
-            await _connection.DisposeAsync();
+            try
+            {
+                await _connection.StopAsync(cancellationToken);
+            }
+            catch (ObjectDisposedException) { }
+
+            try
+            {
+                await _connection.DisposeAsync();
+            }
+            catch (ObjectDisposedException) { }
         }
 
         await base.StopAsync(cancellationToken);
