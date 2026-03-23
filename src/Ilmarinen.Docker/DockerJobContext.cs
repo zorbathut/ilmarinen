@@ -313,14 +313,16 @@ public class DockerJobContext : IJobContext
 
     public async Task<ServiceHandle> StartService(ImageRef image, string name, int[]? ports = null)
     {
+        // Prefix container name with network name to avoid collisions between concurrent/stale runs
+        var containerName = $"{_networkName}-{name}";
         var portsArg = ports != null ? string.Join(" ", ports.Select(p => $"-p {p}")) : "";
         // Connect to network so services can communicate
-        var result = await TryShell($"docker run -d --name {name} --network {_networkName} {portsArg} {image.Reference}");
+        var result = await TryShell($"docker run -d --name {containerName} --network {_networkName} {portsArg} {image.Reference}");
 
         if (!result.Success)
         {
             throw new ShellException(
-                $"docker run -d --name {name} --network {_networkName} {portsArg} {image.Reference}",
+                $"docker run -d --name {containerName} --network {_networkName} {portsArg} {image.Reference}",
                 result.ExitCode,
                 result.Stdout,
                 result.Stderr,
@@ -330,7 +332,7 @@ public class DockerJobContext : IJobContext
         var containerId = result.Stdout.Trim();
         _serviceContainerIds.Add(containerId);
 
-        return new DockerServiceHandle(_client, containerId, name, this);
+        return new DockerServiceHandle(_client, containerId, containerName, this);
     }
 
     public async Task WaitForHealthy(string url, TimeSpan? timeout = null)

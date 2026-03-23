@@ -12,16 +12,16 @@ Step("service-test")
 
         try
         {
-            // Wait for Redis to be ready
+            // Wait for Redis to be ready (use redis.Name for the network hostname)
             Console.WriteLine("Waiting for Redis to be healthy...");
-            await ctx.WaitForHealthy("tcp://redis:6379", TimeSpan.FromSeconds(30));
+            await ctx.WaitForHealthy($"tcp://{redis.Name}:6379", TimeSpan.FromSeconds(30));
             Console.WriteLine("Redis is ready!");
 
             // Run a container that talks to Redis
             Console.WriteLine("\n=== Testing Redis connection ===");
-            await ctx.Run("redis:alpine", "redis-cli", "-h", "redis", "PING");
-            await ctx.Run("redis:alpine", "redis-cli", "-h", "redis", "SET", "test-key", "hello-ilmarinen");
-            await ctx.Run("redis:alpine", "redis-cli", "-h", "redis", "GET", "test-key");
+            await ctx.Run("redis:alpine", "redis-cli", "-h", redis.Name, "PING");
+            await ctx.Run("redis:alpine", "redis-cli", "-h", redis.Name, "SET", "test-key", "hello-ilmarinen");
+            await ctx.Run("redis:alpine", "redis-cli", "-h", redis.Name, "GET", "test-key");
 
             Console.WriteLine("\n=== Service test passed! ===");
         }
