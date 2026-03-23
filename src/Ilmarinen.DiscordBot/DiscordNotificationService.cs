@@ -270,9 +270,12 @@ public class DiscordNotificationService : BackgroundService
         var isSuccess = notification.Status == JobStatus.Success;
         var color = isSuccess ? Color.Green : Color.Red;
         var title = isSuccess ? "Build Succeeded" : "Build Failed";
+        var baseUrl = _config!.PublicUrl ?? _config.ServerUrl;
+        var jobUrl = $"{baseUrl.TrimEnd('/')}/jobs/{notification.JobId}";
 
         var embed = new EmbedBuilder()
             .WithTitle(title)
+            .WithUrl(jobUrl)
             .WithColor(color)
             .WithCurrentTimestamp()
             .AddField("Repository", notification.RepoUrl, inline: true)

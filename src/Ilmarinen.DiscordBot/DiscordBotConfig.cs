@@ -6,5 +6,6 @@ public class DiscordBotConfig
     public string ChannelId { get; set; } = "";
     public string? MentionRoleId { get; set; }
     public string ServerUrl { get; set; } = "";
+    public string? PublicUrl { get; set; }
     public string SubscriberName { get; set; } = "discord-bot";
 }
