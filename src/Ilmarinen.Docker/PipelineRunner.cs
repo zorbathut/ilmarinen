@@ -155,15 +155,23 @@ public class PipelineRunner
         # Detect HTTP client
         if command -v curl >/dev/null 2>&1; then
             # Prefer curl for streaming (-N disables buffering)
-            http_get() { curl -sf -H "Authorization: Bearer $TOKEN" "$1"; }
-            http_post() { curl -sf -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1"; }
+            http_get() { curl -s -H "Authorization: Bearer $TOKEN" "$1"; }
+            http_post() { curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1"; }
             http_stream() {
-                curl -sfN -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1" | stream_output
+                curl -sN -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1" | stream_output
                 return $?
             }
         elif command -v wget >/dev/null 2>&1; then
-            http_get() { wget -qO- --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null; }
-            http_post() { wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null; }
+            http_get() {
+                _rc=0; _body=$(wget -qO- --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null) || _rc=$?
+                if [ -z "$_body" ] && [ "$_rc" -ne 0 ]; then return "$_rc"; fi
+                printf '%s' "$_body"
+            }
+            http_post() {
+                _rc=0; _body=$(wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null) || _rc=$?
+                if [ -z "$_body" ] && [ "$_rc" -ne 0 ]; then return "$_rc"; fi
+                printf '%s' "$_body"
+            }
             http_stream() {
                 wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null | stream_output
                 return $?
@@ -190,6 +198,7 @@ public class PipelineRunner
         # Returns exit code from the "x" message
         stream_output() {
             _stream_exit=0
+            _got_exit=false
             while IFS= read -r line || [ -n "$line" ]; do
                 [ -z "$line" ] && continue
                 # Extract type field
@@ -207,6 +216,7 @@ public class PipelineRunner
                         ;;
                     x)
                         # exit message
+                        _got_exit=true
                         _stream_exit=$(echo "$line" | sed -n 's/.*"c":\([0-9-]*\).*/\1/p')
                         _stream_exit=${_stream_exit:-0}
                         # Check for error
@@ -223,6 +233,10 @@ public class PipelineRunner
                         ;;
                 esac
             done
+            if [ "$_got_exit" = false ]; then
+                echo "Error: Lost connection to API server" >&2
+                return 1
+            fi
             return $_stream_exit
         }
 
@@ -277,14 +291,14 @@ public class PipelineRunner
             info)
                 shift
                 [ -z "$1" ] && { echo "Usage: ilmarinen-agent info <branch|commit>" >&2; exit 1; }
-                result=$(http_get "${API}/api/info/$1")
+                result=$(http_get "${API}/api/info/$1") || { echo "Error: Cannot reach API server" >&2; exit 1; }
                 handle_error "$result" || exit $?
                 json_str "$result" "value"
                 ;;
             secret)
                 shift
                 [ "$1" != "get" ] || [ -z "$2" ] && { echo "Usage: ilmarinen-agent secret get <name>" >&2; exit 1; }
-                result=$(http_get "${API}/api/secret/$2")
+                result=$(http_get "${API}/api/secret/$2") || { echo "Error: Cannot reach API server" >&2; exit 1; }
                 handle_error "$result" || exit $?
                 printf '%s' "$(json_str "$result" "value")"
                 ;;
@@ -359,7 +373,7 @@ public class PipelineRunner
                 [ -n "$build_args" ] && payload="$payload,\"buildArgs\":{$build_args}"
                 payload="$payload}"
 
-                result=$(http_post "${API}/api/build" "$payload")
+                result=$(http_post "${API}/api/build" "$payload") || { echo "Error: Cannot reach API server" >&2; exit 1; }
 
                 if json_has "$result" "error"; then
                     handle_error "$result"
