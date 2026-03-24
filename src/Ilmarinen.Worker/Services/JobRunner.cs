@@ -245,36 +245,46 @@ public class JobRunner
         return async (hostPath, name) =>
         {
             var artifactName = name ?? Path.GetFileName(hostPath);
-
-            await using var fileStream = File.OpenRead(hostPath);
             var fileInfo = new FileInfo(hostPath);
-
-            _logger.LogInformation("Uploading artifact {Name} ({Size} bytes)...", artifactName, fileInfo.Length);
-
-            var content = new StreamContent(fileStream);
-            content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-            content.Headers.ContentLength = fileInfo.Length;
-
             var url = $"{baseUrl}/hub/workers/jobs/{_job.Id}/artifacts?name={Uri.EscapeDataString(artifactName)}";
-
-            var response = await httpClient.PostAsync(url, content);
-            response.EnsureSuccessStatusCode();
 
             var jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
                 Converters = { new UlidJsonConverter() }
             };
-            var result = await response.Content.ReadFromJsonAsync<ArtifactUploadResponse>(jsonOptions);
 
-            _logger.LogInformation("Artifact uploaded: {Id} ({Name})", result!.Id, result.Name);
+            _logger.LogInformation("Uploading artifact {Name} ({Size} bytes)...", artifactName, fileInfo.Length);
 
-            return new ArtifactRef
+            while (true)
             {
-                Id = result.Id.ToString(),
-                Name = result.Name,
-                Size = result.Size
-            };
+                try
+                {
+                    await using var fileStream = File.OpenRead(hostPath);
+                    var content = new StreamContent(fileStream);
+                    content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                    content.Headers.ContentLength = fileInfo.Length;
+
+                    var response = await httpClient.PostAsync(url, content);
+                    response.EnsureSuccessStatusCode();
+
+                    var result = await response.Content.ReadFromJsonAsync<ArtifactUploadResponse>(jsonOptions);
+
+                    _logger.LogInformation("Artifact uploaded: {Id} ({Name})", result!.Id, result.Name);
+
+                    return new ArtifactRef
+                    {
+                        Id = result.Id.ToString(),
+                        Name = result.Name,
+                        Size = result.Size
+                    };
+                }
+                catch (HttpRequestException ex)
+                {
+                    _logger.LogWarning(ex, "Artifact upload failed, retrying in 5 seconds...");
+                    await Task.Delay(5000);
+                }
+            }
         };
     }
 

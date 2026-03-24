@@ -70,10 +70,23 @@ public class LogStreamService
 
     /// <summary>
     /// Flush all pending logs for a job (called when job completes).
+    /// Removes the buffer since no more chunks are expected.
     /// </summary>
     public async Task FlushAsync(Ulid jobId)
     {
         if (_buffers.TryRemove(jobId, out var buffer))
+        {
+            await FlushBufferAsync(jobId, buffer);
+        }
+    }
+
+    /// <summary>
+    /// Flush pending logs for a job without removing the buffer.
+    /// Used when a worker disconnects (job still running, worker may reconnect).
+    /// </summary>
+    public async Task FlushJobAsync(Ulid jobId)
+    {
+        if (_buffers.TryGetValue(jobId, out var buffer))
         {
             await FlushBufferAsync(jobId, buffer);
         }

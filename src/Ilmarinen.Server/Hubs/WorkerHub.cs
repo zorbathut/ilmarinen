@@ -128,6 +128,63 @@ public class WorkerHub : Hub<IWorkerClient>
         await scheduler.TryAssignJobAsync(Context.ConnectionId);
     }
 
+    /// <summary>
+    /// Called by workers after re-authentication to report their current job state.
+    /// Returns the server's understanding of what the worker should be running
+    /// and the last log sequence persisted so the worker can replay from there.
+    /// </summary>
+    public async Task<ReconnectResponse> Reconnect(WorkerReconnect request)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
+
+        var worker = workers.GetByConnectionId(Context.ConnectionId);
+        if (worker == null)
+        {
+            throw new HubException("Worker not authenticated. Call Connect and Authenticate first.");
+        }
+
+        var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
+
+        if (runningJob != null)
+        {
+            if (request.RunningJobId == runningJob)
+            {
+                // Worker still has the job — all good, it will continue
+                _logger.LogInformation("Worker {WorkerId} reattached with running job {JobId}",
+                    worker.Id, runningJob);
+            }
+            else
+            {
+                // Worker lost the job — fail it
+                _logger.LogWarning(
+                    "Worker {WorkerId} reconnected without job {JobId}, marking failed",
+                    worker.Id, runningJob);
+                await jobs.UpdateStatusAsync(runningJob.Value, JobStatus.Failed);
+                await logService.NotifyJobCompletedAsync(runningJob.Value, JobStatus.Failed);
+
+                var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
+                await notifications.CreateForActiveSubscribersAsync(runningJob.Value, "JobCompleted");
+            }
+        }
+        else if (request.RunningJobId != null)
+        {
+            // Worker thinks it's running a job, but the server has no Running record.
+            // It was cancelled/failed while disconnected, or is unknown. ExpectedJobId = null
+            // tells the worker to abort — log it for visibility.
+            _logger.LogInformation(
+                "Worker {WorkerId} reports running job {JobId} which server does not consider active",
+                worker.Id, request.RunningJobId.Value);
+        }
+
+        return new ReconnectResponse
+        {
+            ExpectedJobId = runningJob
+        };
+    }
+
     public async Task JobStarted(Ulid jobId)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -199,15 +256,16 @@ public class WorkerHub : Hub<IWorkerClient>
         {
             _logger.LogInformation("Worker disconnected: {WorkerId}", worker.Id);
 
-            // Fail any job this worker was still running
+            // Check if the worker had a running job — it stays Running,
+            // awaiting the worker to reconnect and resume or report completion.
             var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
             if (runningJob != null)
             {
-                await logService.NotifyJobCompletedAsync(runningJob.Value, JobStatus.Failed);
-                await jobs.UpdateStatusAsync(runningJob.Value, JobStatus.Failed);
-
-                var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
-                await notifications.CreateForActiveSubscribersAsync(runningJob.Value, "JobCompleted");
+                // Flush any buffered logs to DB so they're persisted
+                await logService.FlushJobAsync(runningJob.Value);
+                _logger.LogWarning(
+                    "Worker {WorkerId} disconnected with running job {JobId}, awaiting reconnection",
+                    worker.Id, runningJob.Value);
             }
         }
 

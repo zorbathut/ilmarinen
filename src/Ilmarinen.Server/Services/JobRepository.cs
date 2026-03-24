@@ -75,22 +75,30 @@ public class JobRepository
     public async Task UpdateStatusAsync(Ulid id, JobStatus status, Ulid? workerId = null)
     {
         var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
-        if (job != null)
+        if (job == null) return;
+
+        // Success and Failed are truly final — nothing overrides them.
+        if (job.Status is JobStatus.Success or JobStatus.Failed)
+            return;
+
+        // Cancelled can be overridden by Success or Failed: if the worker actually
+        // completed the job before the cancel reached it, the real outcome wins.
+        if (job.Status == JobStatus.Cancelled && status is not (JobStatus.Success or JobStatus.Failed))
+            return;
+
+        job.Status = status;
+        if (workerId != null) job.WorkerId = workerId;
+
+        if (status == JobStatus.Running)
+            job.StartedAt = DateTime.UtcNow;
+
+        if (status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled)
         {
-            job.Status = status;
-            if (workerId != null) job.WorkerId = workerId;
-
-            if (status == JobStatus.Running)
-                job.StartedAt = DateTime.UtcNow;
-
-            if (status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled)
-            {
-                job.CompletedAt = DateTime.UtcNow;
-                job.EncryptedGitToken = null; // Clear token after job completion
-            }
-
-            await _db.SaveChangesAsync();
+            job.CompletedAt = DateTime.UtcNow;
+            job.EncryptedGitToken = null; // Clear token after job completion
         }
+
+        await _db.SaveChangesAsync();
     }
 
     public async Task<Ulid?> GetRunningJobForWorkerAsync(Ulid workerId)

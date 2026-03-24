@@ -12,12 +12,14 @@ namespace Ilmarinen.Worker.Services;
 
 /// <summary>
 /// Collects log output from pipeline execution and streams to server via SignalR.
-/// Buffers small chunks to reduce network overhead.
+/// Buffers small chunks to reduce network overhead. Failed sends are stored in a
+/// MessageBuffer for replay on reconnection.
 /// </summary>
 public class LogCollector
 {
     private readonly Ulid _jobId;
     private readonly HubConnection _connection;
+    private readonly MessageBuffer _messageBuffer;
     private readonly StringBuilder _buffer = new();
     private readonly object _lock = new();
     private readonly ConcurrentQueue<Task> _pendingFlushes = new();
@@ -29,10 +31,11 @@ public class LogCollector
     private const int FlushBytes = 4096;
     private const int FlushMs = 100;
 
-    public LogCollector(Ulid jobId, HubConnection connection)
+    public LogCollector(Ulid jobId, HubConnection connection, MessageBuffer messageBuffer)
     {
         _jobId = jobId;
         _connection = connection;
+        _messageBuffer = messageBuffer;
     }
 
     public long TotalBytes => _totalBytes;
@@ -160,19 +163,36 @@ public class LogCollector
 
     private async Task SendChunkAsync(int sequence, string content)
     {
+        var chunk = new LogChunk
+        {
+            JobId = _jobId,
+            SequenceNumber = sequence,
+            Content = content,
+            Timestamp = DateTime.UtcNow
+        };
+
+        if (_connection.State != HubConnectionState.Connected)
+        {
+            _messageBuffer.Enqueue(new BufferedMessage
+            {
+                Method = "StreamLogs",
+                Args = new object[] { chunk }
+            });
+            return;
+        }
+
         try
         {
-            await _connection.SendAsync("StreamLogs", new LogChunk
-            {
-                JobId = _jobId,
-                SequenceNumber = sequence,
-                Content = content,
-                Timestamp = DateTime.UtcNow
-            });
+            await _connection.InvokeAsync("StreamLogs", chunk);
         }
         catch
         {
-            // Best effort - don't fail the job if log streaming fails
+            // Connection lost — buffer for replay
+            _messageBuffer.Enqueue(new BufferedMessage
+            {
+                Method = "StreamLogs",
+                Args = new object[] { chunk }
+            });
         }
     }
 }

@@ -24,8 +24,17 @@ public class WorkerService : BackgroundService
     private readonly Ulid _workerId;
     private readonly WorkspaceManager _workspaceManager;
     private readonly ILogger<WorkerService> _logger;
+    private readonly MessageBuffer _messageBuffer = new();
     private HubConnection? _connection;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
+    private readonly object _jobLock = new();
+    private Ulid? _currentJobId;
+
+    private Ulid? CurrentJobId
+    {
+        get { lock (_jobLock) return _currentJobId; }
+        set { lock (_jobLock) _currentJobId = value; }
+    }
 
     public WorkerService(WorkerConfig config, WorkspaceManager workspaceManager, ILogger<WorkerService> logger)
     {
@@ -70,11 +79,11 @@ public class WorkerService : BackgroundService
         _connection.Reconnected += async _ =>
         {
             _logger.LogInformation("Reconnected to server, re-authenticating...");
-            await ConnectAndReady();
+            await ConnectAndSync();
         };
 
         await ConnectWithRetryAsync(stoppingToken);
-        await ConnectAndReady();
+        await ConnectAndSync();
 
         _logger.LogInformation("Worker {WorkerId} connected and ready", _workerId);
 
@@ -89,15 +98,14 @@ public class WorkerService : BackgroundService
                 {
                     _logger.LogWarning("Connection lost, reconnecting...");
                     await ConnectWithRetryAsync(stoppingToken);
-                    await ConnectAndReady();
+                    await ConnectAndSync();
                     _logger.LogInformation("Worker {WorkerId} reconnected and ready", _workerId);
                 }
                 else if (_connection.State == HubConnectionState.Connected)
                 {
                     await _connection.SendAsync("Heartbeat", new WorkerHeartbeat
                     {
-                        WorkerId = _workerId,
-                        IsReady = true
+                        WorkerId = _workerId
                     }, stoppingToken);
                 }
             }
@@ -130,7 +138,10 @@ public class WorkerService : BackgroundService
         }
     }
 
-    private async Task ConnectAndReady()
+    /// <summary>
+    /// Authenticate with the server (mutual ECDSA challenge-response).
+    /// </summary>
+    private async Task Authenticate()
     {
         // Step 1: Initiate connection with our nonce, get challenge
         var workerNonce = RandomNumberGenerator.GetBytes(32);
@@ -161,8 +172,56 @@ public class WorkerService : BackgroundService
             Signature = signature,
             Workspaces = _workspaceManager.DiscoverWorkspaces()
         });
+    }
 
-        await _connection!.SendAsync("Ready");
+    /// <summary>
+    /// Re-authenticate with the server, replay buffered messages, reconcile state,
+    /// and signal ready only if no job is running.
+    /// </summary>
+    private async Task ConnectAndSync()
+    {
+        await Authenticate();
+
+        // Replay buffered messages first so the server has accurate state
+        // before we call Reconnect (e.g., a buffered JobCompleted).
+        while (_messageBuffer.TryPeek(out var msg))
+        {
+            try
+            {
+                await _connection!.InvokeCoreAsync(msg!.Method, msg.Args);
+                _messageBuffer.TryDequeue(out _);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to replay {Method}, will retry on next reconnect", msg!.Method);
+                return;
+            }
+        }
+
+        // Reconcile state with server
+        var currentJob = CurrentJobId;
+        var response = await _connection!.InvokeAsync<ReconnectResponse>("Reconnect", new WorkerReconnect
+        {
+            RunningJobId = currentJob
+        });
+
+        // If we're running a job the server doesn't expect, abort it.
+        // This happens when the job was cancelled or failed while we were disconnected.
+        if (currentJob != null && response.ExpectedJobId != currentJob)
+        {
+            _logger.LogInformation(
+                "Server does not expect job {JobId} (expected {ExpectedJobId}), aborting",
+                currentJob, response.ExpectedJobId);
+            OnCancelJob(currentJob.Value.ToString());
+            _messageBuffer.Clear();
+            return;
+        }
+
+        // Only signal ready if no job is running
+        if (currentJob == null)
+        {
+            await _connection!.SendAsync("Ready");
+        }
     }
 
     private Task OnJobAssigned(JobAssignment job)
@@ -178,14 +237,15 @@ public class WorkerService : BackgroundService
         _logger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
 
         var startTime = DateTime.UtcNow;
-        var logCollector = new LogCollector(job.Id, _connection!);
+        var logCollector = new LogCollector(job.Id, _connection!, _messageBuffer);
         var jobKey = job.Id.ToString();
         using var cts = new CancellationTokenSource();
         _runningJobs[jobKey] = cts;
+        CurrentJobId = job.Id;
 
         try
         {
-            await TrySendAsync("JobStarted", job.Id);
+            await SendReliableAsync("JobStarted", job.Id);
 
             var runner = new JobRunner(_config, _workspaceManager, job, _connection!, _logger, logCollector);
             var result = await runner.ExecuteAsync(cts.Token);
@@ -199,7 +259,8 @@ public class WorkerService : BackgroundService
                 Workspaces = _workspaceManager.DiscoverWorkspaces()
             };
 
-            await TrySendAsync("JobCompleted", job.Id, result);
+            await logCollector.FlushAsync();
+            await SendReliableAsync("JobCompleted", job.Id, result);
             _logger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -209,7 +270,7 @@ public class WorkerService : BackgroundService
             logCollector.WriteStderr("Job cancelled.");
             await TryFlushLogsAsync(logCollector);
 
-            await TrySendAsync("JobCompleted", job.Id, new JobResult
+            await SendReliableAsync("JobCompleted", job.Id, new JobResult
             {
                 Id = job.Id,
                 Status = JobStatus.Cancelled,
@@ -224,7 +285,7 @@ public class WorkerService : BackgroundService
             logCollector.WriteStderr($"Job failed with exception: {ex}");
             await TryFlushLogsAsync(logCollector);
 
-            await TrySendAsync("JobCompleted", job.Id, new JobResult
+            await SendReliableAsync("JobCompleted", job.Id, new JobResult
             {
                 Id = job.Id,
                 Status = JobStatus.Failed,
@@ -235,26 +296,33 @@ public class WorkerService : BackgroundService
         finally
         {
             _runningJobs.TryRemove(jobKey, out _);
+            CurrentJobId = null;
         }
 
         // Signal ready for next job
-        await TrySendAsync("Ready");
+        await SendReliableAsync("Ready");
     }
 
     /// <summary>
-    /// Sends a message to the server, swallowing connection errors.
-    /// If the server is unreachable, the heartbeat loop will reconnect
-    /// and the server will handle the orphaned job on its side.
+    /// Sends a message to the server with implicit acknowledgment via InvokeAsync.
+    /// If the server is unreachable, the message is buffered for replay on reconnection.
     /// </summary>
-    private async Task TrySendAsync(string method, params object[] args)
+    private async Task SendReliableAsync(string method, params object[] args)
     {
+        if (_connection?.State != HubConnectionState.Connected)
+        {
+            _messageBuffer.Enqueue(new BufferedMessage { Method = method, Args = args });
+            return;
+        }
+
         try
         {
-            await _connection!.SendCoreAsync(method, args);
+            await _connection.InvokeCoreAsync(method, args);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to send {Method} to server (connection may be down)", method);
+            _logger.LogWarning(ex, "Failed to send {Method}, buffering for replay", method);
+            _messageBuffer.Enqueue(new BufferedMessage { Method = method, Args = args });
         }
     }
 
@@ -266,7 +334,7 @@ public class WorkerService : BackgroundService
         }
         catch
         {
-            // Connection may be down
+            // Connection may be down — chunks are in the message buffer
         }
     }
 

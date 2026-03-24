@@ -270,7 +270,7 @@ public class IntegrationTestFixture : IAsyncDisposable
             $"Expected {expectedCount} notification(s) for subscriber {subscriberId} within {timeoutMs}ms");
     }
 
-    public async Task StopWorkerAsync()
+    public async Task StopWorkerAsync(bool preserveIdentity = false)
     {
         if (_workerCts != null)
         {
@@ -286,8 +286,48 @@ public class IntegrationTestFixture : IAsyncDisposable
             _workerHost = null;
         }
 
-        _workerBuilder?.Cleanup();
-        _workerBuilder = null;
+        if (!preserveIdentity)
+        {
+            _workerBuilder?.Cleanup();
+            _workerBuilder = null;
+        }
+    }
+
+    /// <summary>
+    /// Restart a worker with the same identity after StopWorkerAsync(preserveIdentity: true).
+    /// </summary>
+    public async Task<Ulid> RestartWorkerAsync()
+    {
+        if (_workerBuilder == null)
+            throw new InvalidOperationException(
+                "No preserved worker identity. Call StopWorkerAsync(preserveIdentity: true) first.");
+
+        _workerHost = _workerBuilder.Build();
+        _workerCts = new CancellationTokenSource();
+        _ = _workerHost.RunAsync(_workerCts.Token);
+        await WaitForWorkerRegistrationAsync(_workerBuilder.WorkerId);
+        return _workerBuilder.WorkerId;
+    }
+
+    /// <summary>
+    /// Poll until the job reaches the expected status.
+    /// </summary>
+    public async Task<JobInfo> WaitForJobStatusAsync(Ulid jobId, JobStatus expected, int timeoutMs = 30000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var job = await GetJobAsync(jobId);
+            if (job.Status == expected)
+                return job;
+
+            await Task.Delay(500);
+        }
+
+        var finalJob = await GetJobAsync(jobId);
+        throw new TimeoutException(
+            $"Job {jobId} did not reach status {expected} within {timeoutMs}ms (current: {finalJob.Status})");
     }
 
     public async ValueTask DisposeAsync()

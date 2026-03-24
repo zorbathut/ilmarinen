@@ -8,5 +8,4 @@ namespace Ilmarinen.Protocol.Requests;
 public record WorkerHeartbeat
 {
     public required Ulid WorkerId { get; init; }
-    public bool IsReady { get; init; }
 }
