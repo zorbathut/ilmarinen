@@ -1,12 +1,13 @@
 using Docker.DotNet.Models;
 using Docker.DotNet;
+using NUnit.Framework;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using System;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
 
@@ -58,7 +59,9 @@ public class TestPostgresContainer : IAsyncDisposable
             [
                 $"POSTGRES_DB={Database}",
                 $"POSTGRES_USER={Username}",
-                $"POSTGRES_PASSWORD={Password}"
+                $"POSTGRES_PASSWORD={Password}",
+                "POSTGRES_INITDB_ARGS=--nosync",
+                "PGDATA=/dev/shm/pgdata"
             ],
             HostConfig = new HostConfig
             {
@@ -66,7 +69,11 @@ public class TestPostgresContainer : IAsyncDisposable
                 {
                     ["5432/tcp"] = [new() { HostPort = "" }]
                 },
-                AutoRemove = true
+                AutoRemove = true,
+                Tmpfs = new Dictionary<string, string>
+                {
+                    ["/dev/shm"] = "rw,nosuid,nodev,size=256m"
+                }
             }
         });
 
@@ -97,7 +104,9 @@ public class TestPostgresContainer : IAsyncDisposable
 
     private async Task WaitForReadyAsync()
     {
-        var timeout = TimeSpan.FromSeconds(30);
+        var warnAfter = TimeSpan.FromSeconds(30);
+        var timeout = TimeSpan.FromMinutes(10);
+        var warned = false;
         var start = DateTime.UtcNow;
 
         while (DateTime.UtcNow - start < timeout)
@@ -115,6 +124,12 @@ public class TestPostgresContainer : IAsyncDisposable
             }
             catch
             {
+                if (!warned && DateTime.UtcNow - start > warnAfter)
+                {
+                    warned = true;
+                    TestContext.Progress.WriteLine(
+                        $"WARNING: PostgreSQL container on port {Port} not ready after {warnAfter.TotalSeconds}s, still waiting...");
+                }
                 await Task.Delay(100);
             }
         }
