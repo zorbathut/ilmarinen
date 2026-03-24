@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NUlid;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http.Json;
 using System.Net.Http;
 using System.Text.Json;
@@ -124,6 +125,13 @@ public class IntegrationTestFixture : IAsyncDisposable
 
             if (job.Status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled)
             {
+                if (job.Status == JobStatus.Failed)
+                {
+                    var logs = await GetJobLogsAsync(jobId);
+                    Console.WriteLine($"=== JOB LOGS FOR FAILED JOB {jobId} ===");
+                    Console.WriteLine(string.IsNullOrEmpty(logs) ? "(no logs)" : logs);
+                    Console.WriteLine("=== END JOB LOGS ===");
+                }
                 return job;
             }
 
@@ -283,6 +291,18 @@ public class IntegrationTestFixture : IAsyncDisposable
         await StopWorkerAsync();
         _httpClient?.Dispose();
         await _factory.DisposeAsync();
+    }
+
+    public async Task<string> GetJobLogsAsync(Ulid jobId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        var chunks = await db.JobLogChunks
+            .Where(c => c.JobId == jobId)
+            .OrderBy(c => c.SequenceNumber)
+            .Select(c => c.Content)
+            .ToListAsync();
+        return string.Join("", chunks);
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response)

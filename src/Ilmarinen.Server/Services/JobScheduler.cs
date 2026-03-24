@@ -108,7 +108,7 @@ public class JobScheduler
         };
 
         await jobs.UpdateStatusAsync(jobId, JobStatus.Running, worker.Id);
-        await workers.SetCurrentJobAsync(connectionId, jobId);
+        workers.SetReady(connectionId, false);
         _uiEvents.NotifyJobsChanged();
 
         await _hubContext.Clients.Client(connectionId).AssignJob(assignment);

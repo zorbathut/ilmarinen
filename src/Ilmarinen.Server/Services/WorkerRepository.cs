@@ -1,4 +1,5 @@
 using Ilmarinen.Database;
+using Ilmarinen.Protocol;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NUlid;
@@ -65,7 +66,6 @@ public class WorkerRepository
             var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
             if (worker != null)
             {
-                worker.CurrentJobId = null;
                 worker.LastSeen = DateTime.UtcNow;
                 await db.SaveChangesAsync();
             }
@@ -78,26 +78,6 @@ public class WorkerRepository
             _readyWorkers[connectionId] = true;
         else
             _readyWorkers.TryRemove(connectionId, out _);
-    }
-
-    public async Task SetCurrentJobAsync(string connectionId, Ulid? jobId)
-    {
-        if (_connectionToWorker.TryGetValue(connectionId, out var workerId))
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-
-            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
-            if (worker != null)
-            {
-                worker.CurrentJobId = jobId;
-                worker.LastSeen = DateTime.UtcNow;
-                await db.SaveChangesAsync();
-            }
-        }
-
-        // Worker is ready when it has no job
-        SetReady(connectionId, jobId == null);
     }
 
     public async Task UpdateHeartbeatAsync(string connectionId)
@@ -158,13 +138,15 @@ public class WorkerRepository
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
-        foreach (var (connectionId, workerId) in _connectionToWorker)
-        {
-            var worker = db.Workers.FirstOrDefault(w => w.Id == workerId);
-            if (worker?.CurrentJobId == jobId)
-                return connectionId;
-        }
-        return null;
+        var workerId = db.Jobs
+            .Where(j => j.Id == jobId && j.Status == JobStatus.Running)
+            .Select(j => j.WorkerId)
+            .FirstOrDefault();
+
+        if (workerId == null)
+            return null;
+
+        return FindConnectionIdByWorkerId(workerId.Value);
     }
 
     public string? FindConnectionIdByWorkerId(Ulid workerId)
@@ -186,6 +168,14 @@ public class WorkerRepository
             .OrderByDescending(w => w.LastSeen)
             .ToListAsync();
 
+        // Get all currently running jobs to derive CurrentJobId
+        var runningJobs = await db.Jobs
+            .Where(j => j.Status == JobStatus.Running && j.WorkerId != null)
+            .Select(j => new { j.WorkerId, JobId = j.Id })
+            .ToListAsync();
+
+        var workerToJob = runningJobs.ToDictionary(j => j.WorkerId!.Value, j => j.JobId);
+
         return workers.Select(w =>
         {
             var connectionId = FindConnectionIdByWorkerId(w.Id);
@@ -202,7 +192,7 @@ public class WorkerRepository
                 Name = w.Name,
                 IsConnected = isConnected,
                 IsReady = isReady,
-                CurrentJobId = w.CurrentJobId,
+                CurrentJobId = workerToJob.GetValueOrDefault(w.Id),
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 Workspaces = workspaces ?? []

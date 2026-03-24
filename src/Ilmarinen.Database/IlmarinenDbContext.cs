@@ -35,6 +35,7 @@ public class IlmarinenDbContext : DbContext
             e.HasIndex(j => j.Status);
             e.HasIndex(j => j.CreatedAt);
             e.HasIndex(j => j.PipelineId);
+            e.HasIndex(j => new { j.WorkerId, j.Status });
         });
 
         modelBuilder.Entity<Pipeline>(e =>

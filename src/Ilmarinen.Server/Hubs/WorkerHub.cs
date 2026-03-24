@@ -1,10 +1,8 @@
-using Ilmarinen.Database;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NUlid;
@@ -157,7 +155,7 @@ public class WorkerHub : Hub<IWorkerClient>
         _logger.LogInformation("Job completed: {JobId} - {Status}", jobId, result.Status);
         await scheduler.CompleteJobAsync(jobId, result);
         await logService.NotifyJobCompletedAsync(jobId, result.Status);
-        await workers.SetCurrentJobAsync(Context.ConnectionId, null);
+        workers.SetReady(Context.ConnectionId, true);
 
         if (result.Workspaces != null)
             workers.SetWorkspaces(Context.ConnectionId, result.Workspaces);
@@ -201,19 +199,15 @@ public class WorkerHub : Hub<IWorkerClient>
         {
             _logger.LogInformation("Worker disconnected: {WorkerId}", worker.Id);
 
-            // Check DB for any job this worker was running
-            var dbWorker = await _scopeFactory.CreateScope().ServiceProvider
-                .GetRequiredService<IlmarinenDbContext>()
-                .Workers.FirstOrDefaultAsync(w => w.Id == worker.Id);
-
-            if (dbWorker?.CurrentJobId != null)
+            // Fail any job this worker was still running
+            var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
+            if (runningJob != null)
             {
-                var currentJobId = dbWorker.CurrentJobId.Value;
-                await logService.NotifyJobCompletedAsync(currentJobId, JobStatus.Failed);
-                await jobs.UpdateStatusAsync(currentJobId, JobStatus.Failed);
+                await logService.NotifyJobCompletedAsync(runningJob.Value, JobStatus.Failed);
+                await jobs.UpdateStatusAsync(runningJob.Value, JobStatus.Failed);
 
                 var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
-                await notifications.CreateForActiveSubscribersAsync(currentJobId, "JobCompleted");
+                await notifications.CreateForActiveSubscribersAsync(runningJob.Value, "JobCompleted");
             }
         }
 

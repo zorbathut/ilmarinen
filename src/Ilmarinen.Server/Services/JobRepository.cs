@@ -93,6 +93,14 @@ public class JobRepository
         }
     }
 
+    public async Task<Ulid?> GetRunningJobForWorkerAsync(Ulid workerId)
+    {
+        return await _db.Jobs
+            .Where(j => j.WorkerId == workerId && j.Status == JobStatus.Running)
+            .Select(j => (Ulid?)j.Id)
+            .FirstOrDefaultAsync();
+    }
+
     public async Task<IReadOnlyList<JobInfo>> GetAllAsync()
     {
         var workerNames = await _db.Workers.ToDictionaryAsync(w => w.Id, w => w.Name);
