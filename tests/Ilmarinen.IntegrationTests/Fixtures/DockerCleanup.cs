@@ -1,10 +1,12 @@
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using NUnit.Framework;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 /// <summary>
 /// Runs once before all integration tests to clean up stale Docker networks
@@ -14,11 +16,29 @@ using System;
 [SetUpFixture]
 public class DockerCleanup
 {
+    /// <summary>
+    /// Limits concurrent Docker network creation to avoid exhausting Docker's address pool.
+    /// Capacity is computed from Docker's configured address pools minus existing networks.
+    /// Acquire before creating a pipeline network; release after the network is removed.
+    /// </summary>
+    public static SemaphoreSlim NetworkSemaphore { get; private set; } = null!;
+
     [OneTimeSetUp]
-    public async Task PruneStaleNetworks()
+    public async Task PruneStaleNetworksAndComputeCapacity()
     {
         using var client = CreateDockerClient();
 
+        await PruneStaleNetworksAsync(client);
+
+        var capacity = await ComputeAvailableNetworkCapacityAsync(client);
+        NetworkSemaphore = new SemaphoreSlim(capacity, capacity);
+
+        TestContext.Progress.WriteLine(
+            $"Docker network semaphore initialized with capacity {capacity}");
+    }
+
+    private static async Task PruneStaleNetworksAsync(DockerClient client)
+    {
         var networks = await client.Networks.ListNetworksAsync(new NetworksListParameters
         {
             Filters = new Dictionary<string, IDictionary<string, bool>>
@@ -64,6 +84,53 @@ public class DockerCleanup
                 // Best effort — don't let cleanup failures block the test suite
             }
         }
+    }
+
+    /// <summary>
+    /// Computes how many Docker bridge networks we can safely create concurrently.
+    /// Reads Docker's default address pools and subtracts existing networks.
+    /// </summary>
+    private static async Task<int> ComputeAvailableNetworkCapacityAsync(DockerClient client)
+    {
+        // Docker's built-in default is ~31 bridge networks (172.17.0.0/12 with /16 subnets).
+        const int fallbackPoolSize = 31;
+
+        int totalSubnets = fallbackPoolSize;
+
+        var info = await client.System.GetSystemInfoAsync();
+        var pools = info.DefaultAddressPools;
+
+        if (pools != null && pools.Count > 0)
+        {
+            // Each pool has a Base (e.g. "10.42.0.0/16") and Size (e.g. 26).
+            // Total subnets per pool = 2^(Size - BasePrefix).
+            totalSubnets = 0;
+            foreach (var pool in pools)
+            {
+                var slashIndex = pool.Base.IndexOf('/');
+                if (slashIndex < 0 || !int.TryParse(pool.Base[(slashIndex + 1)..], out var basePrefix))
+                    continue;
+
+                if (pool.Size <= basePrefix)
+                    continue;
+
+                totalSubnets += 1 << (int)(pool.Size - basePrefix);
+            }
+
+            if (totalSubnets == 0)
+                totalSubnets = fallbackPoolSize;
+        }
+
+        // Subtract networks that already exist (non-test system networks we can't touch)
+        var existingNetworks = await client.Networks.ListNetworksAsync();
+        var nonTestNetworks = existingNetworks.Count(n =>
+            !n.Labels.ContainsKey("ilmarinen.test.pid"));
+
+        // Reserve headroom: leave 25% of capacity or at least 4 networks for other Docker usage
+        var reserved = Math.Max(4, totalSubnets / 4);
+        var available = totalSubnets - nonTestNetworks - reserved;
+
+        return Math.Max(1, Math.Min(available, Environment.ProcessorCount));
     }
 
     private static DockerClient CreateDockerClient()

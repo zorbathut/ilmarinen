@@ -41,6 +41,10 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     public async Task SetupAsync()
     {
+        // Limit concurrent fixtures to avoid exhausting Docker's network address pool.
+        // Each fixture may run a job that creates a Docker network.
+        await DockerCleanup.NetworkSemaphore.WaitAsync();
+
         _factory = new IlmarinenWebApplicationFactory();
         await _factory.InitializeAsync();
 
@@ -288,9 +292,16 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await StopWorkerAsync();
-        _httpClient?.Dispose();
-        await _factory.DisposeAsync();
+        try
+        {
+            await StopWorkerAsync();
+            _httpClient?.Dispose();
+            await _factory.DisposeAsync();
+        }
+        finally
+        {
+            DockerCleanup.NetworkSemaphore.Release();
+        }
     }
 
     public async Task<string> GetJobLogsAsync(Ulid jobId)
