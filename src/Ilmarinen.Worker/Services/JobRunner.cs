@@ -239,7 +239,7 @@ public class JobRunner
 
     private Func<string, string?, Task<ArtifactRef>> CreateArtifactSaver()
     {
-        var httpClient = new HttpClient();
+        var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         var baseUrl = _config.ServerUrl;
 
         return async (hostPath, name) =>

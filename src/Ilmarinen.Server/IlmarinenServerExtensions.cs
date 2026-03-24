@@ -3,6 +3,7 @@ using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -100,7 +101,8 @@ public static class IlmarinenServerExtensions
             logger.LogInformation("Artifact saved: {Id} ({Name})", artifact.Id, artifact.Name);
 
             return Results.Ok(artifact);
-        }).DisableAntiforgery();
+        }).DisableAntiforgery()
+         .WithMetadata(new DisableRequestSizeLimitAttribute());
 
         return endpoints;
     }
