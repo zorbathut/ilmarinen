@@ -211,21 +211,7 @@ public class JobRunner
 
     private void CheckoutRef(string workDir)
     {
-        using var repo = new Repository(workDir);
-
-        var target = repo.Lookup(_job.Ref);
-        if (target != null)
-        {
-            Commands.Checkout(repo, target as Commit ?? ((GitObject)target).Peel<Commit>());
-        }
-        else
-        {
-            var remoteBranch = repo.Branches[$"origin/{_job.Ref}"];
-            if (remoteBranch != null)
-            {
-                Commands.Checkout(repo, remoteBranch.Tip);
-            }
-        }
+        WorkspaceGitHelper.CheckoutRef(workDir, _job.Ref);
     }
 
     private void DeleteDirectory(string path)

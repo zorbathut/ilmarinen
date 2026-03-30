@@ -89,7 +89,7 @@ public static class WorkspaceGitHelper
         CheckoutRef(path, gitRef);
     }
 
-    private static void CheckoutRef(string path, string gitRef)
+    internal static void CheckoutRef(string path, string gitRef)
     {
         using var repo = new Repository(path);
 
