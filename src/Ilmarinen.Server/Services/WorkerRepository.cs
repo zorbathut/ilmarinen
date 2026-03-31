@@ -192,7 +192,7 @@ public class WorkerRepository
                 Name = w.Name,
                 IsConnected = isConnected,
                 IsReady = isReady,
-                CurrentJobId = workerToJob.GetValueOrDefault(w.Id),
+                CurrentJobId = workerToJob.TryGetValue(w.Id, out var jobId) ? jobId : null,
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 Workspaces = workspaces ?? []
