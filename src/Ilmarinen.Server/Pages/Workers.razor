@@ -65,18 +65,9 @@
                             <span class="connection-badge @(worker.IsConnected ? "connected" : "disconnected")"></span>
                             @(worker.IsConnected ? (worker.IsReady ? "Ready" : "Busy") : "Offline")
                         </td>
-                        <td><a href="/workers/@worker.Id">@worker.Name</a></td>
+                        <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
                         <td>@worker.Id.ToString()[..8]</td>
-                        <td>
-                            @if (worker.CurrentJobId.HasValue)
-                            {
-                                <a href="/jobs/@worker.CurrentJobId">@worker.CurrentJobId.Value.ToString()[..8]</a>
-                            }
-                            else
-                            {
-                                <span>-</span>
-                            }
-                        </td>
+                        <td><JobLink JobId="worker.CurrentJobId" /></td>
                         <td>
                             @if (worker.Workspaces.Count > 0)
                             {

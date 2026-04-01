@@ -1,0 +1,15 @@
+@using NUlid
+
+@if (JobId != null)
+{
+    <a href="/jobs/@JobId">@JobId.Value.ToString()[..8]</a>
+}
+else
+{
+    <span>-</span>
+}
+
+@code {
+    [Parameter]
+    public Ulid? JobId { get; set; }
+}

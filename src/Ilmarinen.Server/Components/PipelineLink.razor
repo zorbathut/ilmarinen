@@ -1,0 +1,21 @@
+@using NUlid
+
+@if (PipelineId != null)
+{
+    <a href="/pipelines/@PipelineId">@DisplayName</a>
+}
+else
+{
+    <span>-</span>
+}
+
+@code {
+    [Parameter]
+    public Ulid? PipelineId { get; set; }
+
+    [Parameter]
+    public string? PipelineName { get; set; }
+
+    private string DisplayName =>
+        !string.IsNullOrEmpty(PipelineName) ? PipelineName : PipelineId?.ToString()[..8] ?? "-";
+}

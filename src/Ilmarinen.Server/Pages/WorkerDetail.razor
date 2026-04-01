@@ -33,16 +33,7 @@
             </span>
 
             <span class="detail-label">Current Job</span>
-            <span class="detail-value">
-                @if (worker.CurrentJobId.HasValue)
-                {
-                    <a href="/jobs/@worker.CurrentJobId">@worker.CurrentJobId.Value.ToString()[..8]</a>
-                }
-                else
-                {
-                    <span>-</span>
-                }
-            </span>
+            <span class="detail-value"><JobLink JobId="worker.CurrentJobId" /></span>
 
             <span class="detail-label">Registered</span>
             <span class="detail-value">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
@@ -115,7 +106,7 @@
                     @foreach (var job in jobs)
                     {
                         <tr>
-                            <td><a href="/jobs/@job.Id">@job.Id.ToString()[..8]</a></td>
+                            <td><JobLink JobId="job.Id" /></td>
                             <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
                             <td>@GetShortRepoUrl(job.RepoUrl)</td>
                             <td>@job.Ref</td>

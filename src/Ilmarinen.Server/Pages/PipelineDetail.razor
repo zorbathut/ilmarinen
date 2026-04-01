@@ -163,7 +163,7 @@
                     @foreach (var job in jobs)
                     {
                         <tr>
-                            <td><a href="/jobs/@job.Id">@job.Id.ToString()[..8]</a></td>
+                            <td><JobLink JobId="job.Id" /></td>
                             <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
                             <td>@job.Ref</td>
                             <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>

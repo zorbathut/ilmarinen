@@ -31,6 +31,9 @@
                 <span class="detail-label">Script</span>
                 <span class="detail-value">@job.ScriptPath</span>
 
+                <span class="detail-label">Pipeline</span>
+                <span class="detail-value"><PipelineLink PipelineId="job.PipelineId" PipelineName="@job.PipelineName" /></span>
+
                 <span class="detail-label">Worker</span>
                 <span class="detail-value"><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></span>
 

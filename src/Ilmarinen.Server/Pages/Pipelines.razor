@@ -62,7 +62,7 @@
                 @foreach (var pipeline in pipelines)
                 {
                     <tr>
-                        <td><a href="/pipelines/@pipeline.Id">@pipeline.Name</a></td>
+                        <td><PipelineLink PipelineId="pipeline.Id" PipelineName="@pipeline.Name" /></td>
                         <td>@GetShortRepoUrl(pipeline.RepoUrl)</td>
                         <td>@pipeline.DefaultRef</td>
                         <td>@pipeline.ScriptPath</td>
