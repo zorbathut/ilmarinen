@@ -10,6 +10,7 @@ public class Job
     public required JobStatus Status { get; set; }
     public required string RepoUrl { get; set; }
     public required string Ref { get; set; }
+    public string? Commit { get; set; }
     public required string ScriptPath { get; set; }
     public Ulid? WorkerId { get; set; }
     public DateTime CreatedAt { get; set; }

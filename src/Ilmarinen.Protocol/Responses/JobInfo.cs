@@ -13,6 +13,7 @@ public record JobInfo
     public required JobStatus Status { get; init; }
     public required string RepoUrl { get; init; }
     public required string Ref { get; init; }
+    public string? Commit { get; init; }
     public required string ScriptPath { get; init; }
     public Ulid? WorkerId { get; init; }
     public string? WorkerName { get; init; }

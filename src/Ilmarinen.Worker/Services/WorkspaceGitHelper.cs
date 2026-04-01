@@ -83,7 +83,10 @@ public static class WorkspaceGitHelper
         CheckoutRef(path, gitRef);
     }
 
-    internal static void CheckoutRef(string path, string gitRef)
+    /// <summary>
+    /// Checks out the given ref and returns the resolved commit SHA.
+    /// </summary>
+    internal static string CheckoutRef(string path, string gitRef)
     {
         using var repo = new Repository(path);
 
@@ -93,7 +96,7 @@ public static class WorkspaceGitHelper
         {
             var commit = target as Commit ?? target.Peel<Commit>();
             Commands.Checkout(repo, commit);
-            return;
+            return repo.Head.Tip.Sha;
         }
 
         // Try as a remote branch (origin/xxx)
@@ -101,7 +104,7 @@ public static class WorkspaceGitHelper
         if (remoteBranch != null)
         {
             Commands.Checkout(repo, remoteBranch.Tip);
-            return;
+            return repo.Head.Tip.Sha;
         }
 
         // Try as a local branch
@@ -109,7 +112,7 @@ public static class WorkspaceGitHelper
         if (localBranch != null)
         {
             Commands.Checkout(repo, localBranch);
-            return;
+            return repo.Head.Tip.Sha;
         }
 
         // Try looking up as a reference (refs/heads/xxx, refs/remotes/origin/xxx)
@@ -122,7 +125,7 @@ public static class WorkspaceGitHelper
             if (commit != null)
             {
                 Commands.Checkout(repo, commit);
-                return;
+                return repo.Head.Tip.Sha;
             }
         }
 
@@ -134,7 +137,7 @@ public static class WorkspaceGitHelper
                 branch.CanonicalName.EndsWith($"/{gitRef}"))
             {
                 Commands.Checkout(repo, branch.Tip);
-                return;
+                return repo.Head.Tip.Sha;
             }
         }
 

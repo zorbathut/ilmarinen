@@ -195,6 +195,16 @@ public class WorkerHub : Hub<IWorkerClient>
         await jobs.UpdateStatusAsync(jobId, JobStatus.Running);
     }
 
+    public async Task ReportCommit(Ulid jobId, string commitSha)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        _logger.LogInformation("Job {JobId} resolved to commit {CommitSha}", jobId, commitSha);
+        await jobs.SetCommitAsync(jobId, commitSha);
+        _uiEvents.NotifyJobsChanged();
+    }
+
     public async Task StreamLogs(LogChunk chunk)
     {
         using var scope = _scopeFactory.CreateScope();

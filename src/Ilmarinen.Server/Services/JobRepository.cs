@@ -101,6 +101,15 @@ public class JobRepository
         await _db.SaveChangesAsync();
     }
 
+    public async Task SetCommitAsync(Ulid id, string commitSha)
+    {
+        var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
+        if (job == null) return;
+
+        job.Commit = commitSha;
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<Ulid?> GetRunningJobForWorkerAsync(Ulid workerId)
     {
         return await _db.Jobs
@@ -183,6 +192,7 @@ public class JobRepository
         Status = job.Status,
         RepoUrl = job.RepoUrl,
         Ref = job.Ref,
+        Commit = job.Commit,
         ScriptPath = job.ScriptPath,
         WorkerId = job.WorkerId,
         WorkerName = workerName,

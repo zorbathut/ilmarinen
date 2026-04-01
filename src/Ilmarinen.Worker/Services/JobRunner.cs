@@ -56,9 +56,13 @@ public class JobRunner
             _logger.LogInformation("Cloning {RepoUrl}...", _job.RepoUrl);
             CloneRepository(tempDir);
 
-            // 2. Checkout ref
+            // 2. Checkout ref and pin the resolved commit SHA
             _logger.LogInformation("Checking out {Ref}...", _job.Ref);
-            CheckoutRef(tempDir);
+            var commitSha = CheckoutRef(tempDir);
+            _logger.LogInformation("Resolved {Ref} to {CommitSha}", _job.Ref, commitSha);
+
+            // Report resolved commit to server
+            await _connection.InvokeCoreAsync("ReportCommit", [_job.Id, commitSha]);
 
             // 3. Load pipeline script to get workspace config
             var scriptPath = Path.Combine(tempDir, _job.ScriptPath);
@@ -113,8 +117,8 @@ public class JobRunner
                     _logger.LogInformation("Reusing existing workspace at {WorkDir}", workDir);
                     DeleteDirectory(tempDir);
 
-                    // Validate and update existing workspace
-                    WorkspaceGitHelper.PrepareWorkspace(workDir, _job.RepoUrl, _job.Ref, _job.GitToken);
+                    // Validate and update existing workspace, using pinned commit SHA
+                    WorkspaceGitHelper.PrepareWorkspace(workDir, _job.RepoUrl, commitSha, _job.GitToken);
                 }
                 else
                 {
@@ -130,7 +134,17 @@ public class JobRunner
                 _logger.LogInformation("Using ephemeral workspace at {WorkDir}", workDir);
             }
 
-            // 5. Run pipeline with log streaming and artifact upload
+            // 5. Verify the working directory is at the pinned commit
+            var actualSha = GetHeadSha(workDir);
+            if (actualSha != commitSha)
+            {
+                _logger.LogError(
+                    "Commit mismatch: expected {Expected} but workspace is at {Actual}",
+                    commitSha, actualSha);
+                return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
+            }
+
+            // 6. Run pipeline with log streaming and artifact upload
             _logger.LogInformation("Running {StepCount} step(s)...", scriptResult.Steps.Count);
 
             // Compute host path for Docker bind mounts (may differ when running in Docker)
@@ -209,9 +223,15 @@ public class JobRunner
         Repository.Clone(_job.RepoUrl, workDir, options);
     }
 
-    private void CheckoutRef(string workDir)
+    private string CheckoutRef(string workDir)
     {
-        WorkspaceGitHelper.CheckoutRef(workDir, _job.Ref);
+        return WorkspaceGitHelper.CheckoutRef(workDir, _job.Ref);
+    }
+
+    private static string GetHeadSha(string workDir)
+    {
+        using var repo = new Repository(workDir);
+        return repo.Head.Tip.Sha;
     }
 
     private void DeleteDirectory(string path)
