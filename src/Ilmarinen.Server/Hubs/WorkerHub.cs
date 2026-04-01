@@ -72,7 +72,8 @@ public class WorkerHub : Hub<IWorkerClient>
         return new AuthChallenge
         {
             Nonce = serverNonce,
-            ServerSignature = serverSignature
+            ServerSignature = serverSignature,
+            ProtocolHash = ProtocolVersion.Hash
         };
     }
 

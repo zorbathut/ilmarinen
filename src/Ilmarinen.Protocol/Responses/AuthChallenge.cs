@@ -7,4 +7,5 @@ public record AuthChallenge
 {
     public required byte[] Nonce { get; init; }
     public required byte[] ServerSignature { get; init; }
+    public required string ProtocolHash { get; init; }
 }

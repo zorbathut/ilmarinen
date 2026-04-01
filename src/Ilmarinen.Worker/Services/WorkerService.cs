@@ -152,7 +152,18 @@ public class WorkerService : BackgroundService
             Nonce = workerNonce
         });
 
-        // Step 2: Verify server identity (server signed both nonces)
+        // Step 2: Verify protocol compatibility
+        if (challenge.ProtocolHash != ProtocolVersion.Hash)
+        {
+            _logger.LogError(
+                "Protocol mismatch: worker is '{WorkerHash}', server is '{ServerHash}'. Rebuild both with the same protocol definitions.",
+                ProtocolVersion.Hash, challenge.ProtocolHash);
+            throw new InvalidOperationException(
+                $"Protocol mismatch. Worker is '{ProtocolVersion.Hash}', server is '{challenge.ProtocolHash}'. " +
+                "Rebuild both with the same protocol definitions.");
+        }
+
+        // Step 3: Verify server identity (server signed both nonces)
         using var serverKey = _config.GetServerPublicKey();
         var challengeData = Encoding.UTF8.GetBytes(
             $"{_workerId}:{Convert.ToBase64String(workerNonce)}:{Convert.ToBase64String(challenge.Nonce)}");
@@ -163,7 +174,7 @@ public class WorkerService : BackgroundService
             throw new InvalidOperationException("Server identity verification failed.");
         }
 
-        // Step 3: Sign the same data and authenticate
+        // Step 4: Sign the same data and authenticate
         using var workerKey = _config.GetWorkerPrivateKey();
         var signature = workerKey.SignData(challengeData, HashAlgorithmName.SHA256);
 
