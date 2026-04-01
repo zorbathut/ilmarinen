@@ -33,7 +33,7 @@
                         <td>@GetShortRepoUrl(job.RepoUrl)</td>
                         <td>@job.Ref</td>
                         <td>@job.ScriptPath</td>
-                        <td>@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</td>
+                        <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
                         <td>@FormatDuration(job)</td>
                     </tr>
                 }

@@ -67,7 +67,7 @@
                         <td>@job.Ref</td>
                         <td>@job.ScriptPath</td>
                         <td>@job.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                        <td>@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</td>
+                        <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
                     </tr>
                 }
             }

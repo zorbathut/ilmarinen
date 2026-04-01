@@ -5,6 +5,7 @@ using NUlid;
 using System.Collections.Generic;
 using System.IO;
 using System;
+using System.Linq;
 
 namespace Ilmarinen.Worker.Services;
 
@@ -22,26 +23,22 @@ public class WorkspaceManager
     }
 
     /// <summary>
-    /// Lists persistent workspace directories (filters out ULID-named ephemeral dirs).
+    /// Lists persistent workspaces with their full local paths (filters out ULID-named ephemeral dirs).
     /// </summary>
-    public List<string> DiscoverWorkspaces()
+    public List<WorkspaceInfo> DiscoverWorkspaces()
     {
         var workspacePath = _config.WorkspacePath;
         if (!Directory.Exists(workspacePath))
             return [];
 
-        var result = new List<string>();
-        foreach (var dir in Directory.GetDirectories(workspacePath))
-        {
-            var name = Path.GetFileName(dir);
-            // Skip ULID-named directories (ephemeral workspaces)
-            if (Ulid.TryParse(name, out _))
-                continue;
-
-            result.Add(name);
-        }
-
-        return result;
+        return Directory.GetDirectories(workspacePath)
+            .Where(dir => !Ulid.TryParse(Path.GetFileName(dir), out _))
+            .Select(dir => new WorkspaceInfo
+            {
+                Name = Path.GetFileName(dir),
+                Path = Path.GetFullPath(dir)
+            })
+            .ToList();
     }
 
     /// <summary>

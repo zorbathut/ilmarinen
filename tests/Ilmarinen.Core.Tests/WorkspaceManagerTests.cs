@@ -3,6 +3,7 @@ using Ilmarinen.Worker;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
 using System.IO;
+using System.Linq;
 using System;
 
 namespace Ilmarinen.Core.Tests;
@@ -43,8 +44,11 @@ public class WorkspaceManagerTests
         Directory.CreateDirectory(Path.Combine(_tempDir, "another-ws"));
 
         var result = _manager.DiscoverWorkspaces();
+        var names = result.Select(w => w.Name).ToList();
 
-        Assert.That(result, Is.EquivalentTo(new[] { "my-project", "another-ws" }));
+        Assert.That(names, Is.EquivalentTo(new[] { "my-project", "another-ws" }));
+        Assert.That(result, Has.All.Matches<Ilmarinen.Protocol.Responses.WorkspaceInfo>(
+            w => w.Path == Path.GetFullPath(Path.Combine(_tempDir, w.Name))));
     }
 
     [Test]
@@ -59,7 +63,7 @@ public class WorkspaceManagerTests
         var result = _manager.DiscoverWorkspaces();
 
         Assert.That(result, Has.Count.EqualTo(1));
-        Assert.That(result, Does.Contain("real-workspace"));
+        Assert.That(result.Select(w => w.Name), Does.Contain("real-workspace"));
     }
 
     [Test]

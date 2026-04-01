@@ -32,7 +32,7 @@
                 <span class="detail-value">@job.ScriptPath</span>
 
                 <span class="detail-label">Worker</span>
-                <span class="detail-value">@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</span>
+                <span class="detail-value"><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></span>
 
                 <span class="detail-label">Created</span>
                 <span class="detail-value">@job.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>

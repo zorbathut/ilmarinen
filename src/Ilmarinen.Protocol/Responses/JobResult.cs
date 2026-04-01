@@ -12,5 +12,5 @@ public record JobResult
     public required Ulid Id { get; init; }
     public required JobStatus Status { get; init; }
     public TimeSpan Duration { get; init; }
-    public IReadOnlyList<string>? Workspaces { get; init; }
+    public IReadOnlyList<WorkspaceInfo>? Workspaces { get; init; }
 }

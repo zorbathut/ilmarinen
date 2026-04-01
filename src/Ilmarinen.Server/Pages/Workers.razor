@@ -65,7 +65,7 @@
                             <span class="connection-badge @(worker.IsConnected ? "connected" : "disconnected")"></span>
                             @(worker.IsConnected ? (worker.IsReady ? "Ready" : "Busy") : "Offline")
                         </td>
-                        <td>@worker.Name</td>
+                        <td><a href="/workers/@worker.Id">@worker.Name</a></td>
                         <td>@worker.Id.ToString()[..8]</td>
                         <td>
                             @if (worker.CurrentJobId.HasValue)
@@ -83,12 +83,12 @@
                                 @foreach (var ws in worker.Workspaces)
                                 {
                                     <span class="workspace-tag">
-                                        @ws
+                                        @ws.Name
                                         @if (worker.IsConnected)
                                         {
                                             <button class="workspace-delete"
-                                                    disabled="@IsDeleting(worker.Id, ws)"
-                                                    @onclick="() => DeleteWorkspace(worker.Id, ws)">x</button>
+                                                    disabled="@IsDeleting(worker.Id, ws.Name)"
+                                                    @onclick="() => DeleteWorkspace(worker.Id, ws.Name)">x</button>
                                         }
                                     </span>
                                 }

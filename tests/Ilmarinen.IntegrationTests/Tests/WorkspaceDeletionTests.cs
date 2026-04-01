@@ -6,6 +6,7 @@ using NUlid;
 using NUnit.Framework;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http.Json;
 using System.Net;
 using System.Text.Json;
@@ -75,7 +76,7 @@ public class WorkspaceDeletionTests
         Assert.That(workers, Is.Not.Empty);
 
         var worker = workers![0];
-        Assert.That(worker.Workspaces, Does.Contain("report-ws"));
+        Assert.That(worker.Workspaces.Select(w => w.Name), Does.Contain("report-ws"));
     }
 
     [Test]

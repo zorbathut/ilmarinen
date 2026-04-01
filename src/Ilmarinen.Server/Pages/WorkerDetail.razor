@@ -1,0 +1,274 @@
+@page "/workers/{Id}"
+@using Ilmarinen.Models
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Hubs
+@using Ilmarinen.Server.Services
+@using Microsoft.AspNetCore.SignalR
+@using Microsoft.Extensions.DependencyInjection
+@using NUlid
+@using System.Threading
+@implements IDisposable
+@inject IServiceScopeFactory ScopeFactory
+@inject WorkspaceDeletionService DeletionService
+@inject IHubContext<WorkerHub, IWorkerClient> HubContext
+@inject UIEventService UIEvents
+@inject NavigationManager Navigation
+
+<h1 class="page-title">Worker @(worker?.Name ?? Id)</h1>
+
+@if (worker != null)
+{
+    <div class="card">
+        <div class="detail-grid">
+            <span class="detail-label">ID</span>
+            <span class="detail-value">@worker.Id</span>
+
+            <span class="detail-label">Name</span>
+            <span class="detail-value">@worker.Name</span>
+
+            <span class="detail-label">Status</span>
+            <span class="detail-value">
+                <span class="connection-badge @(worker.IsConnected ? "connected" : "disconnected")"></span>
+                @(worker.IsConnected ? (worker.IsReady ? "Ready" : "Busy") : "Offline")
+            </span>
+
+            <span class="detail-label">Current Job</span>
+            <span class="detail-value">
+                @if (worker.CurrentJobId.HasValue)
+                {
+                    <a href="/jobs/@worker.CurrentJobId">@worker.CurrentJobId.Value.ToString()[..8]</a>
+                }
+                else
+                {
+                    <span>-</span>
+                }
+            </span>
+
+            <span class="detail-label">Registered</span>
+            <span class="detail-value">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+
+            <span class="detail-label">Last Seen</span>
+            <span class="detail-value">@worker.LastSeen.ToString("yyyy-MM-dd HH:mm:ss")</span>
+        </div>
+    </div>
+
+    <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title">Workspaces</h2>
+        @if (worker.Workspaces.Count > 0)
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Path</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var ws in worker.Workspaces)
+                    {
+                        <tr>
+                            <td>@ws.Name</td>
+                            <td><code>@ws.Path</code></td>
+                            <td>
+                                @if (worker.IsConnected)
+                                {
+                                    <button class="btn-danger"
+                                            disabled="@IsDeleting(ws.Name)"
+                                            @onclick="() => DeleteWorkspace(ws.Name)">Delete</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <p style="color: var(--text-secondary);">No workspaces</p>
+        }
+    </div>
+
+    @if (deleteError != null)
+    {
+        <div class="card" style="margin-top: 1rem; border-left: 3px solid var(--error);">
+            <span style="color: var(--error);">@deleteError</span>
+        </div>
+    }
+
+    <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title">Job History</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Repository</th>
+                    <th>Ref</th>
+                    <th>Script</th>
+                    <th>Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (jobs != null && jobs.Count > 0)
+                {
+                    @foreach (var job in jobs)
+                    {
+                        <tr>
+                            <td><a href="/jobs/@job.Id">@job.Id.ToString()[..8]</a></td>
+                            <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
+                            <td>@GetShortRepoUrl(job.RepoUrl)</td>
+                            <td>@job.Ref</td>
+                            <td>@job.ScriptPath</td>
+                            <td>@FormatDuration(job)</td>
+                        </tr>
+                    }
+                }
+                else
+                {
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: var(--text-secondary);">No jobs</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else if (loading)
+{
+    <div class="card">Loading...</div>
+}
+else
+{
+    <div class="card">Worker not found</div>
+}
+
+@code {
+    [Parameter]
+    public string Id { get; set; } = "";
+
+    private WorkerView? worker;
+    private IReadOnlyList<JobInfo>? jobs;
+    private bool loading = true;
+    private HashSet<string> deletingWorkspaces = new();
+    private string? deleteError;
+    private Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Ulid.TryParse(Id, out var ulid))
+        {
+            await RefreshAsync(ulid);
+        }
+        loading = false;
+
+        UIEvents.OnWorkersChanged += OnChanged;
+        UIEvents.OnJobsChanged += OnChanged;
+        _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    private async void OnChanged()
+    {
+        try
+        {
+            if (Ulid.TryParse(Id, out var ulid))
+            {
+                await RefreshAsync(ulid);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { }
+    }
+
+    private async Task RefreshAsync(Ulid ulid)
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        worker = await workerRepo.GetByIdAsync(ulid);
+        jobs = await jobRepo.GetByWorkerAsync(ulid);
+    }
+
+    private bool IsDeleting(string workspace) =>
+        deletingWorkspaces.Contains(workspace);
+
+    private async Task DeleteWorkspace(string workspace)
+    {
+        deletingWorkspaces.Add(workspace);
+        deleteError = null;
+        StateHasChanged();
+
+        try
+        {
+            if (!WorkspaceConfig.IsValidName(workspace, out var validationError))
+            {
+                deleteError = validationError;
+                return;
+            }
+
+            if (!Ulid.TryParse(Id, out var workerId))
+                return;
+
+            using var scope = ScopeFactory.CreateScope();
+            var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+            var connectionId = workerRepo.FindConnectionIdByWorkerId(workerId);
+            if (connectionId == null)
+            {
+                deleteError = "Worker not connected.";
+                return;
+            }
+
+            var key = DeletionService.CreatePending(connectionId, workspace);
+            await HubContext.Clients.Client(connectionId).DeleteWorkspace(workspace);
+            var result = await DeletionService.WaitForResultAsync(key, TimeSpan.FromSeconds(30));
+
+            if (result.Success)
+            {
+                workerRepo.RemoveWorkspace(connectionId, workspace);
+            }
+            else
+            {
+                deleteError = result.Error ?? "Workspace deletion failed.";
+            }
+
+            await RefreshAsync(workerId);
+        }
+        finally
+        {
+            deletingWorkspaces.Remove(workspace);
+            StateHasChanged();
+        }
+    }
+
+    private static string FormatDuration(JobInfo job)
+    {
+        if (job.StartedAt == null)
+            return "---";
+
+        var end = job.CompletedAt ?? DateTime.UtcNow;
+        var duration = end - job.StartedAt.Value;
+
+        if (duration.TotalMinutes < 1)
+            return $"{duration.Seconds}s";
+        if (duration.TotalHours < 1)
+            return $"{duration.Minutes}m {duration.Seconds}s";
+        return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+    }
+
+    private static string GetShortRepoUrl(string url)
+    {
+        if (url.StartsWith("https://github.com/"))
+            return url.Replace("https://github.com/", "");
+        if (url.StartsWith("git@github.com:"))
+            return url.Replace("git@github.com:", "").Replace(".git", "");
+        return url;
+    }
+
+    public void Dispose()
+    {
+        UIEvents.OnWorkersChanged -= OnChanged;
+        UIEvents.OnJobsChanged -= OnChanged;
+        _timer?.Dispose();
+    }
+}

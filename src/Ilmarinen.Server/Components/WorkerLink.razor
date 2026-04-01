@@ -1,0 +1,21 @@
+@using NUlid
+
+@if (WorkerId != null)
+{
+    <a href="/workers/@WorkerId">@DisplayName</a>
+}
+else
+{
+    <span>-</span>
+}
+
+@code {
+    [Parameter]
+    public Ulid? WorkerId { get; set; }
+
+    [Parameter]
+    public string? WorkerName { get; set; }
+
+    private string DisplayName =>
+        !string.IsNullOrEmpty(WorkerName) ? WorkerName : WorkerId?.ToString()[..8] ?? "-";
+}

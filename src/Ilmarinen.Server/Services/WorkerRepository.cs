@@ -1,5 +1,6 @@
 using Ilmarinen.Database;
 using Ilmarinen.Protocol;
+using Ilmarinen.Protocol.Responses;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NUlid;
@@ -22,8 +23,8 @@ public class WorkerRepository
     // In-memory set of connection IDs that are ready for work
     private readonly ConcurrentDictionary<string, bool> _readyWorkers = new();
 
-    // In-memory mapping of connection ID to workspace names
-    private readonly ConcurrentDictionary<string, ImmutableList<string>> _workerWorkspaces = new();
+    // In-memory mapping of connection ID to workspace details
+    private readonly ConcurrentDictionary<string, ImmutableList<WorkspaceInfo>> _workerWorkspaces = new();
 
     public WorkerRepository(IServiceScopeFactory scopeFactory)
     {
@@ -119,7 +120,7 @@ public class WorkerRepository
         return null;
     }
 
-    public void SetWorkspaces(string connectionId, IReadOnlyList<string>? workspaces)
+    public void SetWorkspaces(string connectionId, IReadOnlyList<WorkspaceInfo>? workspaces)
     {
         if (workspaces != null)
             _workerWorkspaces[connectionId] = workspaces.ToImmutableList();
@@ -129,8 +130,8 @@ public class WorkerRepository
     {
         _workerWorkspaces.AddOrUpdate(
             connectionId,
-            _ => ImmutableList<string>.Empty,
-            (_, list) => list.Remove(name));
+            _ => ImmutableList<WorkspaceInfo>.Empty,
+            (_, list) => list.RemoveAll(ws => ws.Name == name));
     }
 
     public string? FindConnectionIdByJobId(Ulid jobId)
@@ -159,6 +160,40 @@ public class WorkerRepository
         return null;
     }
 
+    public async Task<WorkerView?> GetByIdAsync(Ulid id)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var w = await db.Workers.FirstOrDefaultAsync(x => x.Id == id);
+        if (w == null) return null;
+
+        var connectionId = FindConnectionIdByWorkerId(w.Id);
+        var isConnected = connectionId != null;
+        var isReady = connectionId != null && _readyWorkers.ContainsKey(connectionId);
+
+        ImmutableList<WorkspaceInfo>? workspaces = null;
+        if (connectionId != null)
+            _workerWorkspaces.TryGetValue(connectionId, out workspaces);
+
+        var currentJobId = await db.Jobs
+            .Where(j => j.WorkerId == id && j.Status == JobStatus.Running)
+            .Select(j => (Ulid?)j.Id)
+            .FirstOrDefaultAsync();
+
+        return new WorkerView
+        {
+            Id = w.Id,
+            Name = w.Name,
+            IsConnected = isConnected,
+            IsReady = isReady,
+            CurrentJobId = currentJobId,
+            RegisteredAt = w.RegisteredAt,
+            LastSeen = w.LastSeen,
+            Workspaces = workspaces ?? []
+        };
+    }
+
     public async Task<IReadOnlyList<WorkerView>> GetAllAsync()
     {
         using var scope = _scopeFactory.CreateScope();
@@ -182,7 +217,7 @@ public class WorkerRepository
             var isConnected = connectionId != null;
             var isReady = connectionId != null && _readyWorkers.ContainsKey(connectionId);
 
-            ImmutableList<string>? workspaces = null;
+            ImmutableList<WorkspaceInfo>? workspaces = null;
             if (connectionId != null)
                 _workerWorkspaces.TryGetValue(connectionId, out workspaces);
 
@@ -217,5 +252,5 @@ public class WorkerView
     public Ulid? CurrentJobId { get; init; }
     public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
-    public IReadOnlyList<string> Workspaces { get; init; } = [];
+    public IReadOnlyList<WorkspaceInfo> Workspaces { get; init; } = [];
 }

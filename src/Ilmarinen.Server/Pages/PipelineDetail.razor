@@ -166,7 +166,7 @@
                             <td><a href="/jobs/@job.Id">@job.Id.ToString()[..8]</a></td>
                             <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
                             <td>@job.Ref</td>
-                            <td>@WorkerDisplay.FormatWorker(job.WorkerId, job.WorkerName)</td>
+                            <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
                             <td>@job.CreatedAt.ToString("HH:mm:ss")</td>
                             <td>@(job.CompletedAt?.ToString("HH:mm:ss") ?? "-")</td>
                         </tr>

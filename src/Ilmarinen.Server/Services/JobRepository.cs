@@ -138,6 +138,21 @@ public class JobRepository
             pipelineName: pipelineName)).ToList();
     }
 
+    public async Task<IReadOnlyList<JobInfo>> GetByWorkerAsync(Ulid workerId)
+    {
+        var workerName = await _db.Workers.Where(w => w.Id == workerId).Select(w => w.Name).FirstOrDefaultAsync();
+        var pipelineNames = await _db.Pipelines.ToDictionaryAsync(p => p.Id, p => p.Name);
+
+        var jobs = await _db.Jobs
+            .Where(j => j.WorkerId == workerId)
+            .OrderByDescending(j => j.CreatedAt)
+            .ToListAsync();
+
+        return jobs.Select(j => ToJobInfo(j,
+            workerName: workerName,
+            pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null)).ToList();
+    }
+
     public async Task<IReadOnlyList<Ulid>> GetQueuedJobIdsAsync()
     {
         return await _db.Jobs
