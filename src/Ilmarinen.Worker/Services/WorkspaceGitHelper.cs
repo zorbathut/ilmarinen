@@ -60,14 +60,8 @@ public static class WorkspaceGitHelper
                     $"Delete the workspace directory to resolve.");
             }
 
-            // Check for dirty state
-            var status = repo.RetrieveStatus();
-            if (status.IsDirty)
-            {
-                throw new InvalidOperationException(
-                    $"Workspace at '{path}' has uncommitted changes. " +
-                    $"Clean it manually or delete the workspace directory.");
-            }
+            // Reset any modified/staged files from previous runs
+            repo.Reset(ResetMode.Hard);
 
             // Fetch latest
             var remote = repo.Network.Remotes["origin"];
