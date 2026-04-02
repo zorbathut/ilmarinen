@@ -261,14 +261,15 @@ else
         triggering = true;
         try
         {
-            using var scope = ScopeFactory.CreateScope();
-            var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();
-            var submission = await pipelineRepo.BuildSubmissionAsync(ulid, string.IsNullOrWhiteSpace(refOverride) ? null : refOverride.Trim());
-            if (submission != null)
+            var submission = new JobSubmission
             {
-                var jobId = await Scheduler.EnqueueJobAsync(submission, ulid);
-                Navigation.NavigateTo($"/jobs/{jobId}");
-            }
+                PipelineId = ulid,
+                Ref = string.IsNullOrWhiteSpace(refOverride) ? null : refOverride.Trim(),
+                GitTokenMode = Ilmarinen.Protocol.GitTokenMode.Inherit
+            };
+
+            var jobId = await Scheduler.EnqueueJobAsync(submission);
+            Navigation.NavigateTo($"/jobs/{jobId}");
         }
         finally
         {

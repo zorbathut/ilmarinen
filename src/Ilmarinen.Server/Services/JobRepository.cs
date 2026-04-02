@@ -25,18 +25,52 @@ public class JobRepository
         _encryption = encryption;
     }
 
-    public async Task<JobInfo> CreateAsync(JobSubmission submission, Ulid? pipelineId = null)
+    public async Task<JobInfo> CreateAsync(JobSubmission submission)
     {
+        // Resolve fields from pipeline if PipelineId is set
+        string? resolvedRepoUrl = submission.RepoUrl;
+        string? resolvedRef = submission.Ref;
+        string? resolvedScriptPath = submission.ScriptPath;
+        string? resolvedGitToken = null;
+
+        if (submission.PipelineId != null)
+        {
+            var pipeline = await _db.Pipelines
+                .Include(p => p.Repository)
+                .FirstOrDefaultAsync(p => p.Id == submission.PipelineId.Value);
+
+            if (pipeline == null)
+                throw new ArgumentException($"Pipeline {submission.PipelineId} not found");
+
+            resolvedRepoUrl ??= pipeline.Repository?.RepoUrl;
+            resolvedRef ??= pipeline.DefaultRef;
+            resolvedScriptPath ??= pipeline.ScriptPath;
+
+            if (submission.GitTokenMode == GitTokenMode.Inherit)
+                resolvedGitToken = _encryption.Decrypt(pipeline.Repository?.EncryptedGitToken);
+        }
+
+        if (submission.GitTokenMode == GitTokenMode.Explicit)
+            resolvedGitToken = submission.GitToken;
+
+        if (string.IsNullOrEmpty(resolvedRepoUrl))
+            throw new ArgumentException("RepoUrl is required (either directly or via PipelineId)");
+        if (string.IsNullOrEmpty(resolvedRef))
+            throw new ArgumentException("Ref is required (either directly or via PipelineId)");
+        if (string.IsNullOrEmpty(resolvedScriptPath))
+            throw new ArgumentException("ScriptPath is required (either directly or via PipelineId)");
+
         var job = new Job
         {
             Id = Ulid.NewUlid(),
             Status = JobStatus.Pending,
-            RepoUrl = submission.RepoUrl,
-            Ref = submission.Ref,
-            ScriptPath = submission.ScriptPath,
+            RepoUrl = resolvedRepoUrl,
+            Ref = resolvedRef,
+            ScriptPath = resolvedScriptPath,
             CreatedAt = DateTime.UtcNow,
-            EncryptedGitToken = _encryption.Encrypt(submission.GitToken),
-            PipelineId = pipelineId
+            EncryptedGitToken = _encryption.Encrypt(resolvedGitToken),
+            GitTokenMode = submission.GitTokenMode,
+            PipelineId = submission.PipelineId
         };
 
         _db.Jobs.Add(job);
@@ -65,9 +99,11 @@ public class JobRepository
         var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
         return job != null ? new JobSubmission
         {
+            PipelineId = job.PipelineId,
             RepoUrl = job.RepoUrl,
             Ref = job.Ref,
             ScriptPath = job.ScriptPath,
+            GitTokenMode = job.GitTokenMode,
             GitToken = _encryption.Decrypt(job.EncryptedGitToken)
         } : null;
     }
@@ -200,6 +236,7 @@ public class JobRepository
         StartedAt = job.StartedAt,
         CompletedAt = job.CompletedAt,
         Artifacts = artifacts,
+        GitTokenMode = job.GitTokenMode,
         PipelineId = job.PipelineId,
         PipelineName = pipelineName
     };

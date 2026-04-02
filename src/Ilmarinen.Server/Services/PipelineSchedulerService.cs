@@ -1,8 +1,10 @@
+using Ilmarinen.Protocol;
+using Ilmarinen.Protocol.Requests;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System.Threading.Tasks;
 using System.Threading;
+using System.Threading.Tasks;
 using System;
 
 namespace Ilmarinen.Server.Services;
@@ -71,12 +73,12 @@ public class PipelineSchedulerService : BackgroundService
                 _logger.LogInformation("Triggering scheduled pipeline {PipelineId} ({Name}), schedule: {Schedule}",
                     pipeline.Id, pipeline.Name, pipeline.Schedule);
 
-                var submission = await pipelines.BuildSubmissionAsync(pipeline.Id, refOverride: null);
-                if (submission != null)
+                await pipelines.UpdateLastTriggeredAtAsync(pipeline.Id, now);
+                await _scheduler.EnqueueJobAsync(new JobSubmission
                 {
-                    await pipelines.UpdateLastTriggeredAtAsync(pipeline.Id, now);
-                    await _scheduler.EnqueueJobAsync(submission, pipeline.Id);
-                }
+                    PipelineId = pipeline.Id,
+                    GitTokenMode = GitTokenMode.Inherit
+                });
             }
             catch (Exception ex)
             {

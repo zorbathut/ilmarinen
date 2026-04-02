@@ -98,20 +98,9 @@ public class PipelineRepository
         return await GetAsync(id);
     }
 
-    public async Task<JobSubmission?> BuildSubmissionAsync(Ulid id, string? refOverride)
+    public async Task<bool> ExistsAsync(Ulid id)
     {
-        var pipeline = await _db.Pipelines
-            .Include(p => p.Repository)
-            .FirstOrDefaultAsync(p => p.Id == id);
-        if (pipeline?.Repository == null) return null;
-
-        return new JobSubmission
-        {
-            RepoUrl = pipeline.Repository.RepoUrl,
-            Ref = refOverride ?? pipeline.DefaultRef,
-            ScriptPath = pipeline.ScriptPath,
-            GitToken = _encryption.Decrypt(pipeline.Repository.EncryptedGitToken)
-        };
+        return await _db.Pipelines.AnyAsync(p => p.Id == id);
     }
 
     public async Task<IReadOnlyList<Pipeline>> GetScheduledPipelinesAsync()

@@ -96,6 +96,7 @@ public class Commands
             RepoUrl = repo,
             Ref = gitRef,
             ScriptPath = script,
+            GitTokenMode = gitToken != null ? GitTokenMode.Explicit : GitTokenMode.None,
             GitToken = gitToken
         };
 

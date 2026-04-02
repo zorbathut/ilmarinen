@@ -404,6 +404,98 @@ public class PipelineTests
     }
 
     [Test]
+    public async Task SubmitJob_WithPipelineId_InheritsRepoData()
+    {
+        await _fixture.StartWorkerAsync();
+
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "inherit-test",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        // Submit a job referencing the pipeline — no RepoUrl/Ref/ScriptPath
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            PipelineId = pipeline.Id,
+            GitTokenMode = GitTokenMode.Inherit
+        });
+
+        var job = await _fixture.GetJobAsync(jobId);
+
+        Assert.That(job.RepoUrl, Is.EqualTo(_repo.Url));
+        Assert.That(job.Ref, Is.EqualTo("master"));
+        Assert.That(job.ScriptPath, Is.EqualTo("pipeline.csx"));
+        Assert.That(job.PipelineId, Is.EqualTo(pipeline.Id));
+        Assert.That(job.GitTokenMode, Is.EqualTo(GitTokenMode.Inherit));
+    }
+
+    [Test]
+    public async Task SubmitJob_WithPipelineId_CanOverrideRef()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "override-ref-test",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            PipelineId = pipeline.Id,
+            Ref = "master",
+            GitTokenMode = GitTokenMode.None
+        });
+
+        var job = await _fixture.GetJobAsync(jobId);
+        Assert.That(job.Ref, Is.EqualTo("master"));
+        Assert.That(job.GitTokenMode, Is.EqualTo(GitTokenMode.None));
+    }
+
+    [Test]
+    public async Task SubmitJob_InheritWithoutPipeline_Returns400()
+    {
+        var response = await _fixture.HttpClient.PostAsJsonAsync(
+            "/api/jobs",
+            new JobSubmission
+            {
+                RepoUrl = _repo.Url,
+                Ref = "master",
+                ScriptPath = "pipeline.csx",
+                GitTokenMode = GitTokenMode.Inherit
+            },
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new UlidJsonConverter() }
+            });
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(400));
+    }
+
+    [Test]
+    public async Task SubmitJob_NoPipelineNoRepoUrl_Returns400()
+    {
+        var response = await _fixture.HttpClient.PostAsJsonAsync(
+            "/api/jobs",
+            new JobSubmission
+            {
+                Ref = "master",
+                ScriptPath = "pipeline.csx"
+            },
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new UlidJsonConverter() }
+            });
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(400));
+    }
+
+    [Test]
     public async Task MultiplePipelines_SameRepository()
     {
         var pipeline1 = await _fixture.CreatePipelineAsync(new PipelineSubmission

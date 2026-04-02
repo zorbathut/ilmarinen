@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
@@ -76,11 +77,17 @@ public class PipelinesController : ControllerBase
         if (!Ulid.TryParse(id, out var ulid))
             return BadRequest("Invalid pipeline ID");
 
-        var submission = await _pipelines.BuildSubmissionAsync(ulid, trigger?.Ref);
-        if (submission == null)
+        if (!await _pipelines.ExistsAsync(ulid))
             return NotFound();
 
-        var jobId = await _scheduler.EnqueueJobAsync(submission, ulid);
+        var submission = new JobSubmission
+        {
+            PipelineId = ulid,
+            Ref = trigger?.Ref,
+            GitTokenMode = GitTokenMode.Inherit
+        };
+
+        var jobId = await _scheduler.EnqueueJobAsync(submission);
         return Ok(new JobSubmissionResult { Id = jobId });
     }
 }

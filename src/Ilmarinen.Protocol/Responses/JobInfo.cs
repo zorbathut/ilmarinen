@@ -21,6 +21,7 @@ public record JobInfo
     public DateTime? StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
     public IReadOnlyList<ArtifactInfo>? Artifacts { get; init; }
+    public GitTokenMode GitTokenMode { get; init; }
     public Ulid? PipelineId { get; init; }
     public string? PipelineName { get; init; }
 }

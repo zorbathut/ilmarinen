@@ -24,6 +24,18 @@ public class JobsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<JobSubmissionResult>> SubmitJob([FromBody] JobSubmission submission)
     {
+        if (submission.PipelineId == null && string.IsNullOrWhiteSpace(submission.RepoUrl))
+            return BadRequest("RepoUrl is required when PipelineId is not set");
+
+        if (submission.PipelineId == null && string.IsNullOrWhiteSpace(submission.Ref))
+            return BadRequest("Ref is required when PipelineId is not set");
+
+        if (submission.PipelineId == null && string.IsNullOrWhiteSpace(submission.ScriptPath))
+            return BadRequest("ScriptPath is required when PipelineId is not set");
+
+        if (submission.GitTokenMode == Protocol.GitTokenMode.Inherit && submission.PipelineId == null)
+            return BadRequest("GitTokenMode.Inherit requires a PipelineId");
+
         var jobId = await _scheduler.EnqueueJobAsync(submission);
         return Ok(new JobSubmissionResult { Id = jobId });
     }
