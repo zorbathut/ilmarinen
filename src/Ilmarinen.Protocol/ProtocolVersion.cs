@@ -37,7 +37,7 @@ public static class ProtocolVersion
             .Where(t => SeedNamespaces.Any(ns => t.Namespace == ns));
 
         // Recursively collect all referenced Ilmarinen types
-        var allTypes = new SortedDictionary<string, Type>();
+        var allTypes = new SortedDictionary<string, Type>(StringComparer.Ordinal);
         foreach (var type in seedTypes)
             CollectTypes(type, allTypes);
 
@@ -49,7 +49,7 @@ public static class ProtocolVersion
             if (type.IsEnum)
             {
                 foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Static)
-                             .OrderBy(f => f.Name))
+                             .OrderBy(f => f.Name, StringComparer.Ordinal))
                 {
                     sb.Append($" {field.Name}={field.GetRawConstantValue()}");
                 }
@@ -57,7 +57,7 @@ public static class ProtocolVersion
             else
             {
                 foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                             .OrderBy(p => p.Name))
+                             .OrderBy(p => p.Name, StringComparer.Ordinal))
                 {
                     sb.Append($" {prop.Name}:{FormatType(prop.PropertyType)}");
                 }

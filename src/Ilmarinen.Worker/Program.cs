@@ -40,7 +40,7 @@ builder.Services.AddSingleton<WorkspaceManager>();
 builder.Services.AddHostedService<WorkerService>();
 
 Log.Information("Starting worker {WorkerId}, Protocol: {ProtocolHash}", config.GetWorkerId(), ProtocolVersion.Hash);
-Log.Information("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
+Log.Debug("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
 Log.Information("Connecting to server: {ServerUrl}", config.ServerUrl);
 
 var host = builder.Build();

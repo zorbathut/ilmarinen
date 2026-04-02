@@ -67,7 +67,7 @@ Log.Information(
     serverConfig.PublicPort,
     serverConfig.WorkerPort,
     ProtocolVersion.Hash);
-Log.Information("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
+Log.Debug("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
 
 app.Run();
 
