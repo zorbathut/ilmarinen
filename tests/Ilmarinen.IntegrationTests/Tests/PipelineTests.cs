@@ -1,5 +1,6 @@
 using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using NUlid;
 using NUnit.Framework;
@@ -18,6 +19,7 @@ public class PipelineTests
 {
     private IntegrationTestFixture _fixture = null!;
     private TestGitRepository _repo = null!;
+    private RepositoryInfo _repository = null!;
 
     [SetUp]
     public async Task SetUp()
@@ -34,6 +36,12 @@ public class PipelineTests
                 });
             """);
         _repo.Commit("Add pipeline");
+
+        _repository = await _fixture.CreateRepositoryAsync(new RepositorySubmission
+        {
+            Name = "test-repo-" + Ulid.NewUlid().ToString()[..8],
+            RepoUrl = _repo.Url
+        });
     }
 
     [TearDown]
@@ -49,7 +57,7 @@ public class PipelineTests
         var submission = new PipelineSubmission
         {
             Name = "test-pipeline",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         };
@@ -57,6 +65,7 @@ public class PipelineTests
         var pipeline = await _fixture.CreatePipelineAsync(submission);
 
         Assert.That(pipeline.Name, Is.EqualTo("test-pipeline"));
+        Assert.That(pipeline.RepositoryId, Is.EqualTo(_repository.Id));
         Assert.That(pipeline.RepoUrl, Is.EqualTo(_repo.Url));
         Assert.That(pipeline.DefaultRef, Is.EqualTo("master"));
         Assert.That(pipeline.ScriptPath, Is.EqualTo("pipeline.csx"));
@@ -69,7 +78,7 @@ public class PipelineTests
         var submission = new PipelineSubmission
         {
             Name = "get-test",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         };
@@ -87,7 +96,7 @@ public class PipelineTests
         await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "pipeline-a",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
@@ -95,7 +104,7 @@ public class PipelineTests
         await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "pipeline-b",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
@@ -111,7 +120,7 @@ public class PipelineTests
         var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "to-delete",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
@@ -131,7 +140,7 @@ public class PipelineTests
         var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "trigger-test",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
@@ -150,7 +159,7 @@ public class PipelineTests
         var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "ref-override-test",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
@@ -180,7 +189,7 @@ public class PipelineTests
         var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "update-test",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
@@ -198,19 +207,37 @@ public class PipelineTests
     }
 
     [Test]
-    public async Task UpdatePipeline_SetAndRemoveGitToken()
+    public async Task UpdatePipeline_ChangeRepository()
     {
         var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
-            Name = "token-test",
-            RepoUrl = _repo.Url,
+            Name = "repo-change-test",
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
 
-        Assert.That(pipeline.HasGitToken, Is.False);
+        var newRepo = await _fixture.CreateRepositoryAsync(new RepositorySubmission
+        {
+            Name = "other-repo",
+            RepoUrl = _repo.Url
+        });
 
-        var withToken = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate
+        var updated = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate
+        {
+            RepositoryId = newRepo.Id
+        });
+
+        Assert.That(updated.RepositoryId, Is.EqualTo(newRepo.Id));
+        Assert.That(updated.RepositoryName, Is.EqualTo("other-repo"));
+    }
+
+    [Test]
+    public async Task Repository_SetAndRemoveGitToken()
+    {
+        Assert.That(_repository.HasGitToken, Is.False);
+
+        var withToken = await _fixture.UpdateRepositoryAsync(_repository.Id, new RepositoryUpdate
         {
             UpdateGitToken = true,
             GitToken = "ghp_test123"
@@ -218,7 +245,7 @@ public class PipelineTests
 
         Assert.That(withToken.HasGitToken, Is.True);
 
-        var withoutToken = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate
+        var withoutToken = await _fixture.UpdateRepositoryAsync(_repository.Id, new RepositoryUpdate
         {
             UpdateGitToken = true,
             GitToken = null
@@ -249,7 +276,7 @@ public class PipelineTests
         var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "scheduled-pipeline",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx",
             Schedule = "0 2 * * *"
@@ -269,7 +296,7 @@ public class PipelineTests
             new PipelineSubmission
             {
                 Name = "bad-schedule",
-                RepoUrl = _repo.Url,
+                RepositoryId = _repository.Id,
                 Ref = "master",
                 ScriptPath = "pipeline.csx",
                 Schedule = "not a cron expression"
@@ -289,7 +316,7 @@ public class PipelineTests
         var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "schedule-update-test",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
@@ -317,7 +344,7 @@ public class PipelineTests
         var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
         {
             Name = "auto-trigger-test",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx",
             Schedule = "* * * * *"
@@ -357,7 +384,7 @@ public class PipelineTests
         var submission = new PipelineSubmission
         {
             Name = "duplicate-name",
-            RepoUrl = _repo.Url,
+            RepositoryId = _repository.Id,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         };
@@ -374,5 +401,29 @@ public class PipelineTests
             });
 
         Assert.That(response.IsSuccessStatusCode, Is.False);
+    }
+
+    [Test]
+    public async Task MultiplePipelines_SameRepository()
+    {
+        var pipeline1 = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "pipeline-shared-1",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        var pipeline2 = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "pipeline-shared-2",
+            RepositoryId = _repository.Id,
+            Ref = "main",
+            ScriptPath = "other.csx"
+        });
+
+        Assert.That(pipeline1.RepositoryId, Is.EqualTo(pipeline2.RepositoryId));
+        Assert.That(pipeline1.RepoUrl, Is.EqualTo(pipeline2.RepoUrl));
+        Assert.That(pipeline1.RepositoryName, Is.EqualTo(pipeline2.RepositoryName));
     }
 }

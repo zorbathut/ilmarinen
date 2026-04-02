@@ -1,0 +1,219 @@
+@page "/repositories/{Id}"
+@using Ilmarinen.Protocol.Requests
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
+@using NUlid
+@inject IServiceScopeFactory ScopeFactory
+@inject NavigationManager Navigation
+
+<h1 class="page-title">Repository</h1>
+
+@if (repository != null)
+{
+    <div class="card">
+        @if (editing)
+        {
+            <div class="detail-grid">
+                <span class="detail-label">Name</span>
+                <span class="detail-value"><input type="text" @bind="editName" /></span>
+
+                <span class="detail-label">URL</span>
+                <span class="detail-value"><input type="text" @bind="editRepoUrl" /></span>
+
+                <span class="detail-label">Git Token</span>
+                <span class="detail-value">
+                    @if (removingToken)
+                    {
+                        <span style="opacity: 0.5;">Will be removed</span>
+                        <button class="btn" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = false">Undo</button>
+                    }
+                    else
+                    {
+                        <input type="password" @bind="editGitToken" placeholder="@(repository.HasGitToken ? "Leave blank to keep current" : "Optional")" />
+                        @if (repository.HasGitToken)
+                        {
+                            <button class="btn btn-danger" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = true">Remove</button>
+                        }
+                    }
+                </span>
+
+                <span class="detail-label">Created</span>
+                <span class="detail-value">@repository.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+            </div>
+            <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                <button class="btn" @onclick="SaveEdit" disabled="@saving">@(saving ? "Saving..." : "Save")</button>
+                <button class="btn" @onclick="CancelEdit">Cancel</button>
+            </div>
+            @if (editError != null)
+            {
+                <div style="color: var(--danger); margin-top: 0.5rem;">@editError</div>
+            }
+        }
+        else
+        {
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div class="detail-grid">
+                    <span class="detail-label">Name</span>
+                    <span class="detail-value">@repository.Name</span>
+
+                    <span class="detail-label">URL</span>
+                    <span class="detail-value">@repository.RepoUrl</span>
+
+                    <span class="detail-label">Git Token</span>
+                    <span class="detail-value">@(repository.HasGitToken ? "Configured" : "Not set")</span>
+
+                    <span class="detail-label">Created</span>
+                    <span class="detail-value">@repository.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <button class="btn" @onclick="StartEdit">Edit</button>
+                    <button class="btn btn-danger" @onclick="DeleteRepository">Delete</button>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Pipelines</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Default Ref</th>
+                    <th>Script</th>
+                    <th>Schedule</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (pipelines != null)
+                {
+                    @foreach (var p in pipelines)
+                    {
+                        <tr>
+                            <td><PipelineLink PipelineId="p.Id" PipelineName="@p.Name" /></td>
+                            <td>@p.DefaultRef</td>
+                            <td>@p.ScriptPath</td>
+                            <td>@(p.Schedule ?? "-")</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else if (loading)
+{
+    <div class="card">Loading...</div>
+}
+else
+{
+    <div class="card">Repository not found</div>
+}
+
+@code {
+    [Parameter]
+    public string Id { get; set; } = "";
+
+    private RepositoryInfo? repository;
+    private IReadOnlyList<PipelineInfo>? pipelines;
+    private bool loading = true;
+
+    private bool editing;
+    private bool saving;
+    private string? editError;
+    private string editName = "";
+    private string editRepoUrl = "";
+    private string editGitToken = "";
+    private bool removingToken;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        loading = false;
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (Ulid.TryParse(Id, out var ulid))
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var repoRepo = scope.ServiceProvider.GetRequiredService<RepositoryRepository>();
+            var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();
+
+            repository = await repoRepo.GetAsync(ulid);
+            if (repository != null)
+            {
+                var all = await pipelineRepo.GetAllAsync();
+                pipelines = all.Where(p => p.RepositoryId == ulid).ToList();
+            }
+        }
+    }
+
+    private void StartEdit()
+    {
+        editName = repository!.Name;
+        editRepoUrl = repository.RepoUrl;
+        editGitToken = "";
+        removingToken = false;
+        editError = null;
+        editing = true;
+    }
+
+    private void CancelEdit()
+    {
+        editing = false;
+        editError = null;
+    }
+
+    private async Task SaveEdit()
+    {
+        if (!Ulid.TryParse(Id, out var ulid)) return;
+
+        saving = true;
+        editError = null;
+        try
+        {
+            var update = new RepositoryUpdate
+            {
+                Name = editName != repository!.Name ? editName : null,
+                RepoUrl = editRepoUrl != repository.RepoUrl ? editRepoUrl : null,
+                UpdateGitToken = removingToken || !string.IsNullOrEmpty(editGitToken),
+                GitToken = removingToken ? null : (string.IsNullOrEmpty(editGitToken) ? null : editGitToken)
+            };
+
+            using var scope = ScopeFactory.CreateScope();
+            var repoRepo = scope.ServiceProvider.GetRequiredService<RepositoryRepository>();
+            var updated = await repoRepo.UpdateAsync(ulid, update);
+            if (updated != null)
+            {
+                repository = updated;
+                editing = false;
+            }
+            else
+            {
+                editError = "Repository not found.";
+            }
+        }
+        catch (Exception ex)
+        {
+            editError = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task DeleteRepository()
+    {
+        if (Ulid.TryParse(Id, out var ulid))
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var repoRepo = scope.ServiceProvider.GetRequiredService<RepositoryRepository>();
+            await repoRepo.DeleteAsync(ulid);
+            Navigation.NavigateTo("/repositories");
+        }
+    }
+}

@@ -1,0 +1,120 @@
+@page "/repositories"
+@using Ilmarinen.Protocol.Requests
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@inject RepositoryRepository RepositoryRepo
+
+<h1 class="page-title">Repositories</h1>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Create Repository</h2>
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <div class="error-message">@error</div>
+    }
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+        <div>
+            <label>Name</label>
+            <input type="text" @bind="newName" placeholder="my-repo" />
+        </div>
+        <div>
+            <label>Repository URL</label>
+            <input type="text" @bind="newRepoUrl" placeholder="https://github.com/org/repo" />
+        </div>
+        <div>
+            <label>Git Token (optional)</label>
+            <input type="password" @bind="newGitToken" placeholder="Token for private repos" />
+        </div>
+    </div>
+    <button class="btn" @onclick="CreateRepository" disabled="@creating">
+        @(creating ? "Creating..." : "Create Repository")
+    </button>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>URL</th>
+                <th>Token</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (repositories != null)
+            {
+                @foreach (var repo in repositories)
+                {
+                    <tr>
+                        <td><a href="/repositories/@repo.Id">@repo.Name</a></td>
+                        <td>@GetShortRepoUrl(repo.RepoUrl)</td>
+                        <td>@(repo.HasGitToken ? "Configured" : "-")</td>
+                        <td>@repo.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private IReadOnlyList<RepositoryInfo>? repositories;
+    private string newName = "";
+    private string newRepoUrl = "";
+    private string newGitToken = "";
+    private string? error;
+    private bool creating;
+
+    protected override async Task OnInitializedAsync()
+    {
+        repositories = await RepositoryRepo.GetAllAsync();
+    }
+
+    private async Task CreateRepository()
+    {
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(newName) || string.IsNullOrWhiteSpace(newRepoUrl))
+        {
+            error = "Name and Repository URL are required.";
+            return;
+        }
+
+        creating = true;
+        try
+        {
+            var submission = new RepositorySubmission
+            {
+                Name = newName.Trim(),
+                RepoUrl = newRepoUrl.Trim(),
+                GitToken = string.IsNullOrWhiteSpace(newGitToken) ? null : newGitToken.Trim()
+            };
+
+            await RepositoryRepo.CreateAsync(submission);
+
+            newName = "";
+            newRepoUrl = "";
+            newGitToken = "";
+
+            repositories = await RepositoryRepo.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            creating = false;
+        }
+    }
+
+    private string GetShortRepoUrl(string url)
+    {
+        if (url.StartsWith("https://github.com/"))
+            return url.Replace("https://github.com/", "");
+        if (url.StartsWith("git@github.com:"))
+            return url.Replace("git@github.com:", "").Replace(".git", "");
+        return url;
+    }
+}

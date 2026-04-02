@@ -40,6 +40,7 @@ public static class IlmarinenServerExtensions
         services.AddSingleton<WorkerRepository>();
         services.AddScoped<ArtifactRepository>();
         services.AddScoped<PipelineRepository>();
+        services.AddScoped<RepositoryRepository>();
         services.AddScoped<SubscriberRepository>();
         services.AddScoped<NotificationRepository>();
         services.AddSingleton<JobScheduler>();

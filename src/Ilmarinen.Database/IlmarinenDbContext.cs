@@ -18,6 +18,7 @@ public class IlmarinenDbContext : DbContext
     public DbSet<JobLogChunk> JobLogChunks => Set<JobLogChunk>();
     public DbSet<JobArtifact> JobArtifacts => Set<JobArtifact>();
     public DbSet<Pipeline> Pipelines => Set<Pipeline>();
+    public DbSet<Repository> Repositories => Set<Repository>();
     public DbSet<Subscriber> Subscribers => Set<Subscriber>();
     public DbSet<Notification> Notifications => Set<Notification>();
 
@@ -41,6 +42,15 @@ public class IlmarinenDbContext : DbContext
         modelBuilder.Entity<Pipeline>(e =>
         {
             e.HasIndex(p => p.Name).IsUnique();
+            e.HasOne(p => p.Repository)
+                .WithMany()
+                .HasForeignKey(p => p.RepositoryId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Repository>(e =>
+        {
+            e.HasIndex(r => r.Name).IsUnique();
         });
 
         modelBuilder.Entity<JobLogChunk>(e =>

@@ -23,30 +23,23 @@
                 <span class="detail-value"><input type="text" @bind="editName" /></span>
 
                 <span class="detail-label">Repository</span>
-                <span class="detail-value"><input type="text" @bind="editRepoUrl" /></span>
+                <span class="detail-value">
+                    <select @bind="editRepositoryId">
+                        @if (repositories != null)
+                        {
+                            @foreach (var repo in repositories)
+                            {
+                                <option value="@repo.Id">@repo.Name (@repo.RepoUrl)</option>
+                            }
+                        }
+                    </select>
+                </span>
 
                 <span class="detail-label">Default Ref</span>
                 <span class="detail-value"><input type="text" @bind="editRef" /></span>
 
                 <span class="detail-label">Script</span>
                 <span class="detail-value"><input type="text" @bind="editScriptPath" /></span>
-
-                <span class="detail-label">Git Token</span>
-                <span class="detail-value">
-                    @if (removingToken)
-                    {
-                        <span style="opacity: 0.5;">Will be removed</span>
-                        <button class="btn" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = false">Undo</button>
-                    }
-                    else
-                    {
-                        <input type="password" @bind="editGitToken" placeholder="@(pipeline.HasGitToken ? "Leave blank to keep current" : "Optional")" />
-                        @if (pipeline.HasGitToken)
-                        {
-                            <button class="btn btn-danger" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = true">Remove</button>
-                        }
-                    }
-                </span>
 
                 <span class="detail-label">Schedule</span>
                 <span class="detail-value">
@@ -85,7 +78,10 @@
                     <span class="detail-value">@pipeline.Name</span>
 
                     <span class="detail-label">Repository</span>
-                    <span class="detail-value">@pipeline.RepoUrl</span>
+                    <span class="detail-value">
+                        <a href="/repositories/@pipeline.RepositoryId">@pipeline.RepositoryName</a>
+                        <span style="color: var(--text-secondary); margin-left: 0.5rem;">@pipeline.RepoUrl</span>
+                    </span>
 
                     <span class="detail-label">Default Ref</span>
                     <span class="detail-value">@pipeline.DefaultRef</span>
@@ -191,6 +187,7 @@ else
 
     private PipelineInfo? pipeline;
     private IReadOnlyList<JobInfo>? jobs;
+    private IReadOnlyList<RepositoryInfo>? repositories;
     private string refOverride = "";
     private bool loading = true;
     private bool triggering;
@@ -201,11 +198,9 @@ else
     private bool saving;
     private string? editError;
     private string editName = "";
-    private string editRepoUrl = "";
+    private string editRepositoryId = "";
     private string editRef = "";
     private string editScriptPath = "";
-    private string editGitToken = "";
-    private bool removingToken;
     private string editSchedule = "";
     private bool clearingSchedule;
 
@@ -281,14 +276,16 @@ else
         }
     }
 
-    private void StartEdit()
+    private async Task StartEdit()
     {
+        using var scope = ScopeFactory.CreateScope();
+        var repoRepo = scope.ServiceProvider.GetRequiredService<RepositoryRepository>();
+        repositories = await repoRepo.GetAllAsync();
+
         editName = pipeline!.Name;
-        editRepoUrl = pipeline.RepoUrl;
+        editRepositoryId = pipeline.RepositoryId.ToString();
         editRef = pipeline.DefaultRef;
         editScriptPath = pipeline.ScriptPath;
-        editGitToken = "";
-        removingToken = false;
         editSchedule = "";
         clearingSchedule = false;
         editError = null;
@@ -309,14 +306,16 @@ else
         editError = null;
         try
         {
+            Ulid? newRepoId = null;
+            if (Ulid.TryParse(editRepositoryId, out var parsedRepoId) && parsedRepoId != pipeline!.RepositoryId)
+                newRepoId = parsedRepoId;
+
             var update = new PipelineUpdate
             {
                 Name = editName != pipeline!.Name ? editName : null,
-                RepoUrl = editRepoUrl != pipeline.RepoUrl ? editRepoUrl : null,
+                RepositoryId = newRepoId,
                 Ref = editRef != pipeline.DefaultRef ? editRef : null,
                 ScriptPath = editScriptPath != pipeline.ScriptPath ? editScriptPath : null,
-                UpdateGitToken = removingToken || !string.IsNullOrEmpty(editGitToken),
-                GitToken = removingToken ? null : (string.IsNullOrEmpty(editGitToken) ? null : editGitToken),
                 ClearSchedule = clearingSchedule,
                 Schedule = clearingSchedule ? null : ConvertScheduleToUtc(editSchedule)
             };

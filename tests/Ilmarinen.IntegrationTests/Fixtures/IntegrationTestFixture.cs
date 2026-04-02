@@ -167,6 +167,30 @@ public class IntegrationTestFixture : IAsyncDisposable
         return await response.Content.ReadAsByteArrayAsync();
     }
 
+    public async Task<RepositoryInfo> CreateRepositoryAsync(RepositorySubmission submission)
+    {
+        var response = await _httpClient.PostAsJsonAsync("/api/repositories", submission, JsonOptions);
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<RepositoryInfo>(JsonOptions))!;
+    }
+
+    public async Task<RepositoryInfo> GetRepositoryAsync(Ulid id)
+    {
+        var response = await _httpClient.GetAsync($"/api/repositories/{id}");
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<RepositoryInfo>(JsonOptions))!;
+    }
+
+    public async Task<RepositoryInfo> UpdateRepositoryAsync(Ulid id, RepositoryUpdate update)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"/api/repositories/{id}", update, JsonOptions);
+        await EnsureSuccessAsync(response);
+
+        return (await response.Content.ReadFromJsonAsync<RepositoryInfo>(JsonOptions))!;
+    }
+
     public async Task<PipelineInfo> CreatePipelineAsync(PipelineSubmission submission)
     {
         var response = await _httpClient.PostAsJsonAsync("/api/pipelines", submission, JsonOptions);
