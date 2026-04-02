@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using Ilmarinen.Worker.Services;
 using Ilmarinen.Worker;
 using Microsoft.Extensions.DependencyInjection;
@@ -38,7 +39,8 @@ builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<WorkspaceManager>();
 builder.Services.AddHostedService<WorkerService>();
 
-Log.Information("Starting worker {WorkerId}", config.GetWorkerId());
+Log.Information("Starting worker {WorkerId}, Protocol: {ProtocolHash}", config.GetWorkerId(), ProtocolVersion.Hash);
+Log.Information("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
 Log.Information("Connecting to server: {ServerUrl}", config.ServerUrl);
 
 var host = builder.Build();

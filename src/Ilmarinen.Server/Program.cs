@@ -1,4 +1,5 @@
 using Ilmarinen.Database;
+using Ilmarinen.Protocol;
 using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -62,9 +63,11 @@ app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 
 Log.Information(
-    "Ilmarinen Server starting - Public: {PublicPort}, Worker: {WorkerPort}",
+    "Ilmarinen Server starting - Public: {PublicPort}, Worker: {WorkerPort}, Protocol: {ProtocolHash}",
     serverConfig.PublicPort,
-    serverConfig.WorkerPort);
+    serverConfig.WorkerPort,
+    ProtocolVersion.Hash);
+Log.Information("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
 
 app.Run();
 

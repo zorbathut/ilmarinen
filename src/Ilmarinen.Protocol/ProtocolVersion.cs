@@ -21,9 +21,14 @@ public static class ProtocolVersion
         "Ilmarinen.Protocol.Shared"
     ];
 
-    public static string Hash { get; } = ComputeHash();
+    /// <summary>
+    /// Returns the full text that gets hashed, for debugging protocol mismatches.
+    /// </summary>
+    public static string HashInput { get; } = ComputeHashInput();
 
-    private static string ComputeHash()
+    public static string Hash { get; } = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(HashInput)))[..12];
+
+    private static string ComputeHashInput()
     {
         var protocolAssembly = typeof(ProtocolVersion).Assembly;
 
@@ -61,8 +66,7 @@ public static class ProtocolVersion
             sb.AppendLine();
         }
 
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
-        return Convert.ToHexString(hash)[..12];
+        return sb.ToString();
     }
 
     private static void CollectTypes(Type type, SortedDictionary<string, Type> collected)

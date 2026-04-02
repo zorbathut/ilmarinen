@@ -84,6 +84,8 @@ public class Commands
                 Console.Error.WriteLine($"  CLI:    {ProtocolVersion.Hash}");
                 Console.Error.WriteLine($"  Server: {versionResponse?.ProtocolHash ?? "unknown"}");
                 Console.Error.WriteLine("Rebuild CLI and server with the same protocol definitions.");
+                if (Environment.GetEnvironmentVariable("DEBUG") != null)
+                    Console.Error.WriteLine($"CLI protocol hash input:\n{ProtocolVersion.HashInput}");
             }
         }
         catch (HttpRequestException)
