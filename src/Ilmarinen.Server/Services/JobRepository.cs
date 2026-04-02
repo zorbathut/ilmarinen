@@ -91,7 +91,18 @@ public class JobRepository
         var pipelineName = job.PipelineId != null
             ? await _db.Pipelines.Where(p => p.Id == job.PipelineId).Select(p => p.Name).FirstOrDefaultAsync()
             : null;
-        return ToJobInfo(job, artifacts, workerName, pipelineName);
+
+        // For single-job fetch, check pipeline+repo existence for retry eligibility
+        HashSet<Ulid>? retryablePipelines = null;
+        if (job.PipelineId != null && job.GitTokenMode == GitTokenMode.Inherit)
+        {
+            var exists = await _db.Pipelines
+                .Where(p => p.Id == job.PipelineId && p.Repository != null)
+                .AnyAsync();
+            retryablePipelines = exists ? new HashSet<Ulid> { job.PipelineId.Value } : new HashSet<Ulid>();
+        }
+
+        return ToJobInfo(job, artifacts, workerName, pipelineName, retryablePipelines);
     }
 
     public async Task<JobSubmission?> GetSubmissionAsync(Ulid id)
@@ -106,6 +117,60 @@ public class JobRepository
             GitTokenMode = job.GitTokenMode,
             GitToken = _encryption.Decrypt(job.EncryptedGitToken)
         } : null;
+    }
+
+    /// <summary>
+    /// Creates a new job by retrying a completed (failed/cancelled) job.
+    /// Returns null if the job doesn't exist or isn't in a terminal state.
+    /// Throws if retry is blocked (e.g. explicit token was cleared).
+    /// </summary>
+    public async Task<JobSubmission?> BuildRetrySubmissionAsync(Ulid id)
+    {
+        var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
+        if (job == null) return null;
+
+        if (job.Status is not (JobStatus.Failed or JobStatus.Cancelled))
+            return null;
+
+        switch (job.GitTokenMode)
+        {
+            case GitTokenMode.None:
+                return new JobSubmission
+                {
+                    PipelineId = job.PipelineId,
+                    RepoUrl = job.RepoUrl,
+                    Ref = job.Ref,
+                    ScriptPath = job.ScriptPath,
+                    GitTokenMode = GitTokenMode.None
+                };
+
+            case GitTokenMode.Inherit:
+            {
+                if (job.PipelineId == null)
+                    throw new InvalidOperationException("Job has Inherit token mode but no pipeline");
+
+                var pipelineExists = await _db.Pipelines
+                    .Where(p => p.Id == job.PipelineId && p.Repository != null)
+                    .AnyAsync();
+
+                if (!pipelineExists)
+                    throw new InvalidOperationException("Pipeline or its repository no longer exists");
+
+                return new JobSubmission
+                {
+                    PipelineId = job.PipelineId,
+                    Ref = job.Ref,
+                    ScriptPath = job.ScriptPath,
+                    GitTokenMode = GitTokenMode.Inherit
+                };
+            }
+
+            case GitTokenMode.Explicit:
+                throw new InvalidOperationException("Cannot retry: explicit git token was cleared after job completion");
+
+            default:
+                throw new InvalidOperationException($"Unknown GitTokenMode: {job.GitTokenMode}");
+        }
     }
 
     public async Task UpdateStatusAsync(Ulid id, JobStatus status, Ulid? workerId = null)
@@ -163,9 +228,12 @@ public class JobRepository
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
 
+        var retryablePipelines = await GetRetryablePipelineIdsAsync();
+
         return jobs.Select(j => ToJobInfo(j,
             workerName: j.WorkerId != null && workerNames.TryGetValue(j.WorkerId.Value, out var wName) ? wName : null,
-            pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null)).ToList();
+            pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null,
+            retryablePipelines: retryablePipelines)).ToList();
     }
 
     public async Task<IReadOnlyList<JobInfo>> GetByPipelineAsync(Ulid pipelineId)
@@ -178,9 +246,12 @@ public class JobRepository
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
 
+        var retryablePipelines = await GetRetryablePipelineIdsAsync();
+
         return jobs.Select(j => ToJobInfo(j,
             workerName: j.WorkerId != null && workerNames.TryGetValue(j.WorkerId.Value, out var wName) ? wName : null,
-            pipelineName: pipelineName)).ToList();
+            pipelineName: pipelineName,
+            retryablePipelines: retryablePipelines)).ToList();
     }
 
     public async Task<IReadOnlyList<JobInfo>> GetByWorkerAsync(Ulid workerId)
@@ -193,9 +264,12 @@ public class JobRepository
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
 
+        var retryablePipelines = await GetRetryablePipelineIdsAsync();
+
         return jobs.Select(j => ToJobInfo(j,
             workerName: workerName,
-            pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null)).ToList();
+            pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null,
+            retryablePipelines: retryablePipelines)).ToList();
     }
 
     public async Task<IReadOnlyList<Ulid>> GetQueuedJobIdsAsync()
@@ -222,22 +296,73 @@ public class JobRepository
         return rows > 0;
     }
 
-    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null, string? workerName = null, string? pipelineName = null) => new()
+    /// <summary>
+    /// Returns the set of pipeline IDs whose repository still exists.
+    /// Used to determine retry eligibility for Inherit-mode jobs.
+    /// </summary>
+    private async Task<HashSet<Ulid>> GetRetryablePipelineIdsAsync()
     {
-        Id = job.Id,
-        Status = job.Status,
-        RepoUrl = job.RepoUrl,
-        Ref = job.Ref,
-        Commit = job.Commit,
-        ScriptPath = job.ScriptPath,
-        WorkerId = job.WorkerId,
-        WorkerName = workerName,
-        CreatedAt = job.CreatedAt,
-        StartedAt = job.StartedAt,
-        CompletedAt = job.CompletedAt,
-        Artifacts = artifacts,
-        GitTokenMode = job.GitTokenMode,
-        PipelineId = job.PipelineId,
-        PipelineName = pipelineName
-    };
+        var ids = await _db.Pipelines
+            .Where(p => p.Repository != null)
+            .Select(p => p.Id)
+            .ToListAsync();
+
+        return ids.ToHashSet();
+    }
+
+    /// <summary>
+    /// Computes retry eligibility for a job.
+    /// </summary>
+    private static (bool canRetry, string? reason) ComputeRetryEligibility(Job job, HashSet<Ulid>? retryablePipelines)
+    {
+        // Only terminal jobs can be retried
+        if (job.Status is not (JobStatus.Failed or JobStatus.Cancelled))
+            return (false, null);
+
+        switch (job.GitTokenMode)
+        {
+            case GitTokenMode.None:
+                return (true, null);
+
+            case GitTokenMode.Inherit:
+                if (job.PipelineId == null)
+                    return (false, "Pipeline reference is missing");
+                if (retryablePipelines != null && !retryablePipelines.Contains(job.PipelineId.Value))
+                    return (false, "Pipeline or its repository no longer exists");
+                // If retryablePipelines is null (not loaded), assume retryable
+                return (true, null);
+
+            case GitTokenMode.Explicit:
+                return (false, "Explicit git token was cleared after completion");
+
+            default:
+                return (false, $"Unknown token mode: {job.GitTokenMode}");
+        }
+    }
+
+    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null, string? workerName = null, string? pipelineName = null, HashSet<Ulid>? retryablePipelines = null)
+    {
+        var (canRetry, retryBlockedReason) = ComputeRetryEligibility(job, retryablePipelines);
+
+        return new()
+        {
+            Id = job.Id,
+            Status = job.Status,
+            RepoUrl = job.RepoUrl,
+            Ref = job.Ref,
+            Commit = job.Commit,
+            ScriptPath = job.ScriptPath,
+            WorkerId = job.WorkerId,
+            WorkerName = workerName,
+            CreatedAt = job.CreatedAt,
+            StartedAt = job.StartedAt,
+            CompletedAt = job.CompletedAt,
+            Artifacts = artifacts,
+            GitTokenMode = job.GitTokenMode,
+            PipelineId = job.PipelineId,
+            PipelineName = pipelineName,
+            CanRetry = canRetry,
+            RetryBlockedReason = retryBlockedReason
+        };
+    }
 }

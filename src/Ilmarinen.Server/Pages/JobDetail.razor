@@ -1,4 +1,5 @@
 @page "/jobs/{Id}"
+@using Ilmarinen.Protocol
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
@@ -50,10 +51,23 @@
                 <span class="detail-value">@(job.CompletedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</span>
             </div>
 
-            @if (job.Status is JobStatus.Pending or JobStatus.Queued or JobStatus.Running)
-            {
-                <button class="btn btn-danger" @onclick="CancelJob">Cancel Job</button>
-            }
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                @if (job.Status is JobStatus.Pending or JobStatus.Queued or JobStatus.Running)
+                {
+                    <button class="btn btn-danger" @onclick="CancelJob">Cancel Job</button>
+                }
+                @if (job.Status is JobStatus.Failed or JobStatus.Cancelled)
+                {
+                    @if (job.CanRetry)
+                    {
+                        <button class="btn" @onclick="RetryJob">Retry</button>
+                    }
+                    else
+                    {
+                        <button class="btn" disabled title="@job.RetryBlockedReason">Retry</button>
+                    }
+                }
+            </div>
         </div>
     </div>
 
@@ -146,6 +160,21 @@ else
         if (Ulid.TryParse(Id, out var ulid))
         {
             await Scheduler.CancelJobAsync(ulid);
+        }
+    }
+
+    private async Task RetryJob()
+    {
+        if (Ulid.TryParse(Id, out var ulid))
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
+            var submission = await jobRepo.BuildRetrySubmissionAsync(ulid);
+            if (submission != null)
+            {
+                var newJobId = await Scheduler.EnqueueJobAsync(submission);
+                Navigation.NavigateTo($"/jobs/{newJobId}");
+            }
         }
     }
 

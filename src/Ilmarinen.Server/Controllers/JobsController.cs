@@ -3,6 +3,7 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using NUlid;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -54,6 +55,29 @@ public class JobsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<JobInfo>>> GetAllJobs()
     {
         return Ok(await _jobs.GetAllAsync());
+    }
+
+    [HttpPost("{id}/retry")]
+    public async Task<ActionResult<JobSubmissionResult>> RetryJob(string id)
+    {
+        if (!Ulid.TryParse(id, out var ulid))
+            return BadRequest("Invalid job ID");
+
+        JobSubmission? submission;
+        try
+        {
+            submission = await _jobs.BuildRetrySubmissionAsync(ulid);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        if (submission == null)
+            return NotFound();
+
+        var jobId = await _scheduler.EnqueueJobAsync(submission);
+        return Ok(new JobSubmissionResult { Id = jobId });
     }
 
     [HttpDelete("{id}")]

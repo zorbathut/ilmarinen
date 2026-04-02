@@ -111,6 +111,15 @@ public class IntegrationTestFixture : IAsyncDisposable
         return result!.Id;
     }
 
+    public async Task<Ulid> RetryJobAsync(Ulid jobId)
+    {
+        var response = await _httpClient.PostAsync($"/api/jobs/{jobId}/retry", null);
+        await EnsureSuccessAsync(response);
+
+        var result = await response.Content.ReadFromJsonAsync<JobSubmissionResult>(JsonOptions);
+        return result!.Id;
+    }
+
     public async Task<JobInfo> GetJobAsync(Ulid jobId)
     {
         var response = await _httpClient.GetAsync($"/api/jobs/{jobId}");
