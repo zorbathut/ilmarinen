@@ -7,9 +7,10 @@ services:
       ILMARINEN_SERVER_URL: http://server:8081
       # Set after registering a worker via the server UI or POST /api/workers
       ILMARINEN_WORKER_KEY: "register-worker-on-server-first"
+      ILMARINEN_WORKSPACE_PATH: /data/workspaces
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - worker-workspace:/tmp/ilmarinen-worker
+      - worker-workspace:/data/workspaces
 
 volumes:
   worker-workspace:

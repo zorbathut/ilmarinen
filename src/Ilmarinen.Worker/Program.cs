@@ -12,10 +12,13 @@ var workerKey = Environment.GetEnvironmentVariable("ILMARINEN_WORKER_KEY")
     ?? throw new InvalidOperationException(
         "ILMARINEN_WORKER_KEY is not set. Register this worker on the server first.");
 
+var workspacePath = Environment.GetEnvironmentVariable("ILMARINEN_WORKSPACE_PATH");
+
 var config = new WorkerConfig
 {
     ServerUrl = serverUrl,
-    WorkerKey = workerKey
+    WorkerKey = workerKey,
+    WorkspacePath = workspacePath ?? WorkerConfig.GetDefaultWorkspacePath()
 };
 
 var builder = Host.CreateApplicationBuilder(args);

@@ -18,7 +18,15 @@ public class WorkerConfig
     /// The name is for human readability; the ULID is the actual identity.
     /// </summary>
     public required string WorkerKey { get; init; }
-    public string WorkspacePath { get; init; } = Path.Combine(Path.GetTempPath(), "ilmarinen-worker");
+    public string WorkspacePath { get; init; } = GetDefaultWorkspacePath();
+
+    public static string GetDefaultWorkspacePath()
+    {
+        var dataDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrEmpty(dataDir))
+            dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+        return Path.Combine(dataDir, "ilmarinen", "workspaces");
+    }
 
 
     /// <summary>
