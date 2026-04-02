@@ -32,8 +32,8 @@
                 @(worker.IsConnected ? (worker.IsReady ? "Ready" : "Busy") : "Offline")
             </span>
 
-            <span class="detail-label">Current Job</span>
-            <span class="detail-value"><JobLink JobId="worker.CurrentJobId" /></span>
+            <span class="detail-label">Current Jobs</span>
+            <span class="detail-value"><JobsLink JobIds="worker.CurrentJobs" /></span>
 
             <span class="detail-label">Registered</span>
             <span class="detail-value">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm:ss")</span>

@@ -67,7 +67,7 @@
                         </td>
                         <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
                         <td>@worker.Id.ToString()[..8]</td>
-                        <td><JobLink JobId="worker.CurrentJobId" /></td>
+                        <td><JobsLink JobIds="worker.CurrentJobs" /></td>
                         <td>
                             @if (worker.Workspaces.Count > 0)
                             {

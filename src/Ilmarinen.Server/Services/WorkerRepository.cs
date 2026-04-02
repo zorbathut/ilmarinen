@@ -176,10 +176,10 @@ public class WorkerRepository
         if (connectionId != null)
             _workerWorkspaces.TryGetValue(connectionId, out workspaces);
 
-        var currentJobId = await db.Jobs
+        var currentJobIds = await db.Jobs
             .Where(j => j.WorkerId == id && j.Status == JobStatus.Running)
-            .Select(j => (Ulid?)j.Id)
-            .FirstOrDefaultAsync();
+            .Select(j => j.Id)
+            .ToListAsync();
 
         return new WorkerView
         {
@@ -187,7 +187,7 @@ public class WorkerRepository
             Name = w.Name,
             IsConnected = isConnected,
             IsReady = isReady,
-            CurrentJobId = currentJobId,
+            CurrentJobs = currentJobIds,
             RegisteredAt = w.RegisteredAt,
             LastSeen = w.LastSeen,
             Workspaces = workspaces ?? []
@@ -203,13 +203,13 @@ public class WorkerRepository
             .OrderByDescending(w => w.LastSeen)
             .ToListAsync();
 
-        // Get all currently running jobs to derive CurrentJobId
+        // Get all currently running jobs to derive CurrentJobs
         var runningJobs = await db.Jobs
             .Where(j => j.Status == JobStatus.Running && j.WorkerId != null)
             .Select(j => new { j.WorkerId, JobId = j.Id })
             .ToListAsync();
 
-        var workerToJob = runningJobs.ToDictionary(j => j.WorkerId!.Value, j => j.JobId);
+        var workerToJobs = runningJobs.ToLookup(j => j.WorkerId!.Value, j => j.JobId);
 
         return workers.Select(w =>
         {
@@ -227,7 +227,7 @@ public class WorkerRepository
                 Name = w.Name,
                 IsConnected = isConnected,
                 IsReady = isReady,
-                CurrentJobId = workerToJob.TryGetValue(w.Id, out var jobId) ? jobId : null,
+                CurrentJobs = workerToJobs[w.Id].ToList(),
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 Workspaces = workspaces ?? []
@@ -249,7 +249,7 @@ public class WorkerView
     public required string Name { get; init; }
     public bool IsConnected { get; init; }
     public bool IsReady { get; init; }
-    public Ulid? CurrentJobId { get; init; }
+    public IReadOnlyList<Ulid> CurrentJobs { get; init; } = [];
     public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
     public IReadOnlyList<WorkspaceInfo> Workspaces { get; init; } = [];
