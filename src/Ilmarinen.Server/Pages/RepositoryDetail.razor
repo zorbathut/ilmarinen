@@ -70,6 +70,10 @@
                 <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                     <button class="btn" @onclick="StartEdit">Edit</button>
                     <button class="btn btn-danger" @onclick="DeleteRepository">Delete</button>
+                    @if (deleteError != null)
+                    {
+                        <div style="color: var(--danger); font-size: 0.85rem; max-width: 200px;">@deleteError</div>
+                    }
                 </div>
             </div>
         }
@@ -206,14 +210,24 @@ else
         }
     }
 
+    private string? deleteError;
+
     private async Task DeleteRepository()
     {
+        deleteError = null;
         if (Ulid.TryParse(Id, out var ulid))
         {
             using var scope = ScopeFactory.CreateScope();
             var repoRepo = scope.ServiceProvider.GetRequiredService<RepositoryRepository>();
-            await repoRepo.DeleteAsync(ulid);
-            Navigation.NavigateTo("/repositories");
+            var result = await repoRepo.DeleteAsync(ulid);
+            if (result is null or 0)
+            {
+                Navigation.NavigateTo("/repositories");
+            }
+            else
+            {
+                deleteError = $"Cannot delete: {result} pipeline(s) still reference this repository. Delete or reassign them first.";
+            }
         }
     }
 }

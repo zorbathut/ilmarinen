@@ -58,7 +58,12 @@ public class RepositoriesController : ControllerBase
         if (!Ulid.TryParse(id, out var ulid))
             return BadRequest("Invalid repository ID");
 
-        var deleted = await _repositories.DeleteAsync(ulid);
-        return deleted ? NoContent() : NotFound();
+        var result = await _repositories.DeleteAsync(ulid);
+        return result switch
+        {
+            null => NotFound(),
+            > 0 => BadRequest($"Cannot delete: {result} pipeline(s) still reference this repository"),
+            _ => NoContent()
+        };
     }
 }

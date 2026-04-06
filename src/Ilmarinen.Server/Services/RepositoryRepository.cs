@@ -70,13 +70,20 @@ public class RepositoryRepository
         return ToRepositoryInfo(repo);
     }
 
-    public async Task<bool> DeleteAsync(Ulid id)
+    /// <summary>
+    /// Returns null if not found, the count of blocking pipelines if any exist, or 0 on success.
+    /// </summary>
+    public async Task<int?> DeleteAsync(Ulid id)
     {
-        var rows = await _db.Repositories
-            .Where(r => r.Id == id)
-            .ExecuteDeleteAsync();
+        var repo = await _db.Repositories.FirstOrDefaultAsync(r => r.Id == id);
+        if (repo == null) return null;
 
-        return rows > 0;
+        var pipelineCount = await _db.Pipelines.CountAsync(p => p.RepositoryId == id);
+        if (pipelineCount > 0) return pipelineCount;
+
+        _db.Repositories.Remove(repo);
+        await _db.SaveChangesAsync();
+        return 0;
     }
 
     private static RepositoryInfo ToRepositoryInfo(Repository repo) => new()
