@@ -1,7 +1,5 @@
 using Ilmarinen.Database.Entities;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System;
 
 namespace Ilmarinen.Database;
@@ -21,13 +19,6 @@ public class IlmarinenDbContext : DbContext
     public DbSet<Repository> Repositories => Set<Repository>();
     public DbSet<Subscriber> Subscribers => Set<Subscriber>();
     public DbSet<Notification> Notifications => Set<Notification>();
-
-    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
-    {
-        configurationBuilder
-            .Properties<Ulid>()
-            .HaveConversion<UlidToGuidConverter>();
-    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -93,15 +84,5 @@ public class IlmarinenDbContext : DbContext
                 .HasForeignKey(n => n.JobId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
-    }
-}
-
-public class UlidToGuidConverter : ValueConverter<Ulid, Guid>
-{
-    public UlidToGuidConverter()
-        : base(
-            ulid => ulid.ToGuid(),
-            guid => new Ulid(guid))
-    {
     }
 }

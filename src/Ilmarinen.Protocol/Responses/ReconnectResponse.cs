@@ -1,4 +1,4 @@
-using NUlid;
+using System;
 
 namespace Ilmarinen.Protocol.Responses;
 
@@ -12,5 +12,5 @@ public record ReconnectResponse
     /// <summary>
     /// The job the server believes this worker should be running, or null.
     /// </summary>
-    public Ulid? ExpectedJobId { get; init; }
+    public Guid? ExpectedJobId { get; init; }
 }

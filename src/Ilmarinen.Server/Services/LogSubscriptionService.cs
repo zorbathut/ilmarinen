@@ -1,6 +1,5 @@
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
-using NUlid;
 using System.Collections.Concurrent;
 using System;
 
@@ -12,13 +11,13 @@ namespace Ilmarinen.Server.Services;
 /// </summary>
 public class LogSubscriptionService
 {
-    private readonly ConcurrentDictionary<Ulid, ConcurrentDictionary<string, LogSubscriber>> _subscribers = new();
+    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, LogSubscriber>> _subscribers = new();
 
     public record LogSubscriber(
         Action<LogBroadcast> OnLogChunk,
         Action<JobStatus> OnJobCompleted);
 
-    public string Subscribe(Ulid jobId, Action<LogBroadcast> onLogChunk, Action<JobStatus> onJobCompleted)
+    public string Subscribe(Guid jobId, Action<LogBroadcast> onLogChunk, Action<JobStatus> onJobCompleted)
     {
         var subscriberId = Guid.NewGuid().ToString();
         var jobSubscribers = _subscribers.GetOrAdd(jobId, _ => new ConcurrentDictionary<string, LogSubscriber>());
@@ -26,7 +25,7 @@ public class LogSubscriptionService
         return subscriberId;
     }
 
-    public void Unsubscribe(Ulid jobId, string subscriberId)
+    public void Unsubscribe(Guid jobId, string subscriberId)
     {
         if (_subscribers.TryGetValue(jobId, out var jobSubscribers))
         {
@@ -56,7 +55,7 @@ public class LogSubscriptionService
         }
     }
 
-    public void NotifyJobCompleted(Ulid jobId, JobStatus status)
+    public void NotifyJobCompleted(Guid jobId, JobStatus status)
     {
         if (_subscribers.TryGetValue(jobId, out var jobSubscribers))
         {

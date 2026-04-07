@@ -1,8 +1,9 @@
+using System;
 using Ilmarinen.Protocol.Requests;
+using System;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
-using NUlid;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -35,30 +36,30 @@ public class RepositoriesController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<RepositoryInfo>> GetRepository(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid repository ID");
 
-        var repo = await _repositories.GetAsync(ulid);
+        var repo = await _repositories.GetAsync(parsed);
         return repo != null ? Ok(repo) : NotFound();
     }
 
     [HttpPut("{id}")]
     public async Task<ActionResult<RepositoryInfo>> UpdateRepository(string id, [FromBody] RepositoryUpdate update)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid repository ID");
 
-        var repo = await _repositories.UpdateAsync(ulid, update);
+        var repo = await _repositories.UpdateAsync(parsed, update);
         return repo != null ? Ok(repo) : NotFound();
     }
 
     [HttpDelete("{id}")]
     public async Task<ActionResult> DeleteRepository(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid repository ID");
 
-        var result = await _repositories.DeleteAsync(ulid);
+        var result = await _repositories.DeleteAsync(parsed);
         return result switch
         {
             null => NotFound(),

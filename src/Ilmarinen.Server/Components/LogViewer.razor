@@ -1,7 +1,6 @@
 @using System.Text.Json
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
-@using NUlid
 @implements IDisposable
 @inject LogSubscriptionService SubscriptionService
 @inject JobLogRepository LogRepository
@@ -102,7 +101,7 @@
 
 @code {
     [Parameter]
-    public Ulid JobId { get; set; }
+    public Guid JobId { get; set; }
 
     [Parameter]
     public bool IsStreaming { get; set; }

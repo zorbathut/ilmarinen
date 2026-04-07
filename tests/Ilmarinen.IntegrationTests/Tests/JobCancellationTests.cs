@@ -1,7 +1,6 @@
 using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
-using NUlid;
 using NUnit.Framework;
 using System.Threading.Tasks;
 using System;
@@ -121,7 +120,7 @@ public class JobCancellationTests
         Assert.That(completedJob2.Status, Is.EqualTo(JobStatus.Success));
     }
 
-    private async Task WaitForJobStatusAsync(Ulid jobId, JobStatus status, int timeoutMs = 30000)
+    private async Task WaitForJobStatusAsync(Guid jobId, JobStatus status, int timeoutMs = 30000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
 

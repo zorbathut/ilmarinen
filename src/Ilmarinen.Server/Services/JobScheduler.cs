@@ -1,11 +1,12 @@
+using System;
 using Ilmarinen.Protocol.Requests;
+using System;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 
@@ -13,7 +14,7 @@ namespace Ilmarinen.Server.Services;
 
 public class JobScheduler
 {
-    private readonly ConcurrentQueue<Ulid> _pendingJobs = new();
+    private readonly ConcurrentQueue<Guid> _pendingJobs = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
     private readonly UIEventService _uiEvents;
@@ -56,7 +57,7 @@ public class JobScheduler
         _logger.LogInformation("Loaded {Count} queued jobs from database", queuedIds.Count);
     }
 
-    public async Task<Ulid> EnqueueJobAsync(JobSubmission submission)
+    public async Task<Guid> EnqueueJobAsync(JobSubmission submission)
     {
         await EnsureInitializedAsync();
 
@@ -115,7 +116,7 @@ public class JobScheduler
         return true;
     }
 
-    public async Task CompleteJobAsync(Ulid jobId, JobResult result)
+    public async Task CompleteJobAsync(Guid jobId, JobResult result)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
@@ -126,7 +127,7 @@ public class JobScheduler
         await notifications.CreateForActiveSubscribersAsync(jobId, "JobCompleted");
     }
 
-    public async Task<bool> CancelJobAsync(Ulid jobId)
+    public async Task<bool> CancelJobAsync(Guid jobId)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();

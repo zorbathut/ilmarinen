@@ -1,7 +1,6 @@
 using Ilmarinen.Database;
 using Ilmarinen.Protocol;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -81,12 +80,12 @@ public record DashboardStats
 
 public record RecentJob
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
     public required JobStatus Status { get; init; }
     public required string RepoUrl { get; init; }
     public required string Ref { get; init; }
     public required string ScriptPath { get; init; }
     public required DateTime CreatedAt { get; init; }
-    public Ulid? WorkerId { get; init; }
+    public Guid? WorkerId { get; init; }
     public string? WorkerName { get; init; }
 }

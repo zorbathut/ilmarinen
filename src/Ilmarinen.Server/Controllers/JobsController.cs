@@ -2,7 +2,6 @@ using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
-using NUlid;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -44,10 +43,10 @@ public class JobsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<JobInfo>> GetJob(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid job ID");
 
-        var job = await _jobs.GetAsync(ulid);
+        var job = await _jobs.GetAsync(parsed);
         return job != null ? Ok(job) : NotFound();
     }
 
@@ -60,13 +59,13 @@ public class JobsController : ControllerBase
     [HttpPost("{id}/retry")]
     public async Task<ActionResult<JobSubmissionResult>> RetryJob(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid job ID");
 
         JobSubmission? submission;
         try
         {
-            submission = await _jobs.BuildRetrySubmissionAsync(ulid);
+            submission = await _jobs.BuildRetrySubmissionAsync(parsed);
         }
         catch (InvalidOperationException ex)
         {
@@ -83,15 +82,15 @@ public class JobsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<ActionResult> CancelJob(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid job ID");
 
-        var cancelled = await _scheduler.CancelJobAsync(ulid);
+        var cancelled = await _scheduler.CancelJobAsync(parsed);
         return cancelled ? Ok() : NotFound();
     }
 }
 
 public record JobSubmissionResult
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
 }

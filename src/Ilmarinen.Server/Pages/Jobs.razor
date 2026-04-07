@@ -4,7 +4,6 @@
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
-@using NUlid
 @using System.Threading
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
@@ -109,7 +108,7 @@
         return $"{(int)duration.TotalHours}h {duration.Minutes}m";
     }
 
-    private async Task RetryJob(Ulid jobId)
+    private async Task RetryJob(Guid jobId)
     {
         using var scope = ScopeFactory.CreateScope();
         var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();

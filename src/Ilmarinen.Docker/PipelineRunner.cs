@@ -1,7 +1,6 @@
 using Docker.DotNet.Models;
 using Docker.DotNet;
 using Ilmarinen.Models;
-using NUlid;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -88,7 +87,7 @@ public class PipelineRunner
         var branch = await GetGitBranch();
         var commit = await GetGitCommit();
         var networkName = $"ilmarinen-{Guid.NewGuid():N}";
-        var runId = Ulid.NewUlid();
+        var runId = Guid.CreateVersion7();
 
         // Set up artifact saver (use custom if provided, otherwise save to local filesystem)
         var artifactSaver = _artifactSaver ?? CreateLocalArtifactSaver(runId);
@@ -475,13 +474,13 @@ public class PipelineRunner
         return stream;
     }
 
-    private Func<string, string?, Task<ArtifactRef>> CreateLocalArtifactSaver(Ulid runId)
+    private Func<string, string?, Task<ArtifactRef>> CreateLocalArtifactSaver(Guid runId)
     {
         var artifactDir = Path.Combine(_workDir, ".ilmarinen", "artifacts", runId.ToString());
 
         return async (hostPath, name) =>
         {
-            var artifactId = Ulid.NewUlid();
+            var artifactId = Guid.CreateVersion7();
             var fileName = name ?? Path.GetFileName(hostPath);
             var safeFileName = SanitizeFileName(fileName);
             var destFileName = $"{artifactId}-{safeFileName}";

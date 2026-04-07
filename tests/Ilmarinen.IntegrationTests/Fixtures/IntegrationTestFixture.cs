@@ -7,7 +7,6 @@ using Ilmarinen.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using NUlid;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http.Json;
@@ -30,7 +29,6 @@ public class IntegrationTestFixture : IAsyncDisposable
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
-        Converters = { new UlidJsonConverter() }
     };
 
     public HttpClient HttpClient => _httpClient;
@@ -60,7 +58,7 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     private int _workerCount;
 
-    public async Task<Ulid> StartWorkerAsync()
+    public async Task<Guid> StartWorkerAsync()
     {
         // Pre-register the worker on the server to get auth credentials
         _workerCount++;
@@ -81,7 +79,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return _workerBuilder.WorkerId;
     }
 
-    private async Task WaitForWorkerRegistrationAsync(Ulid workerId, int timeoutMs = 10000)
+    private async Task WaitForWorkerRegistrationAsync(Guid workerId, int timeoutMs = 10000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
 
@@ -102,7 +100,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         throw new TimeoutException($"Worker {workerId} did not register within {timeoutMs}ms");
     }
 
-    public async Task<Ulid> SubmitJobAsync(JobSubmission submission)
+    public async Task<Guid> SubmitJobAsync(JobSubmission submission)
     {
         var response = await _httpClient.PostAsJsonAsync("/api/jobs", submission, JsonOptions);
         await EnsureSuccessAsync(response);
@@ -111,7 +109,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return result!.Id;
     }
 
-    public async Task<Ulid> RetryJobAsync(Ulid jobId)
+    public async Task<Guid> RetryJobAsync(Guid jobId)
     {
         var response = await _httpClient.PostAsync($"/api/jobs/{jobId}/retry", null);
         await EnsureSuccessAsync(response);
@@ -120,7 +118,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return result!.Id;
     }
 
-    public async Task<JobInfo> GetJobAsync(Ulid jobId)
+    public async Task<JobInfo> GetJobAsync(Guid jobId)
     {
         var response = await _httpClient.GetAsync($"/api/jobs/{jobId}");
         await EnsureSuccessAsync(response);
@@ -128,7 +126,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<JobInfo>(JsonOptions))!;
     }
 
-    public async Task<JobInfo> WaitForJobCompletionAsync(Ulid jobId, int timeoutMs = 120000)
+    public async Task<JobInfo> WaitForJobCompletionAsync(Guid jobId, int timeoutMs = 120000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
 
@@ -154,13 +152,13 @@ public class IntegrationTestFixture : IAsyncDisposable
         throw new TimeoutException($"Job {jobId} did not complete within {timeoutMs}ms");
     }
 
-    public async Task<bool> CancelJobAsync(Ulid jobId)
+    public async Task<bool> CancelJobAsync(Guid jobId)
     {
         var response = await _httpClient.DeleteAsync($"/api/jobs/{jobId}");
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<IReadOnlyList<ArtifactInfo>> GetArtifactsAsync(Ulid jobId)
+    public async Task<IReadOnlyList<ArtifactInfo>> GetArtifactsAsync(Guid jobId)
     {
         var response = await _httpClient.GetAsync($"/api/jobs/{jobId}/artifacts");
         await EnsureSuccessAsync(response);
@@ -168,7 +166,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<List<ArtifactInfo>>(JsonOptions))!;
     }
 
-    public async Task<byte[]> DownloadArtifactAsync(Ulid jobId, Ulid artifactId)
+    public async Task<byte[]> DownloadArtifactAsync(Guid jobId, Guid artifactId)
     {
         var response = await _httpClient.GetAsync($"/api/jobs/{jobId}/artifacts/{artifactId}/download");
         await EnsureSuccessAsync(response);
@@ -184,7 +182,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<RepositoryInfo>(JsonOptions))!;
     }
 
-    public async Task<RepositoryInfo> GetRepositoryAsync(Ulid id)
+    public async Task<RepositoryInfo> GetRepositoryAsync(Guid id)
     {
         var response = await _httpClient.GetAsync($"/api/repositories/{id}");
         await EnsureSuccessAsync(response);
@@ -192,7 +190,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<RepositoryInfo>(JsonOptions))!;
     }
 
-    public async Task<RepositoryInfo> UpdateRepositoryAsync(Ulid id, RepositoryUpdate update)
+    public async Task<RepositoryInfo> UpdateRepositoryAsync(Guid id, RepositoryUpdate update)
     {
         var response = await _httpClient.PutAsJsonAsync($"/api/repositories/{id}", update, JsonOptions);
         await EnsureSuccessAsync(response);
@@ -208,7 +206,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<PipelineInfo>(JsonOptions))!;
     }
 
-    public async Task<PipelineInfo> GetPipelineAsync(Ulid id)
+    public async Task<PipelineInfo> GetPipelineAsync(Guid id)
     {
         var response = await _httpClient.GetAsync($"/api/pipelines/{id}");
         await EnsureSuccessAsync(response);
@@ -224,7 +222,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<List<PipelineInfo>>(JsonOptions))!;
     }
 
-    public async Task<Ulid> TriggerPipelineAsync(Ulid id, PipelineTrigger? trigger = null)
+    public async Task<Guid> TriggerPipelineAsync(Guid id, PipelineTrigger? trigger = null)
     {
         var response = await _httpClient.PostAsJsonAsync($"/api/pipelines/{id}/trigger", trigger, JsonOptions);
         await EnsureSuccessAsync(response);
@@ -233,7 +231,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return result!.Id;
     }
 
-    public async Task<PipelineInfo> UpdatePipelineAsync(Ulid id, PipelineUpdate update)
+    public async Task<PipelineInfo> UpdatePipelineAsync(Guid id, PipelineUpdate update)
     {
         var response = await _httpClient.PutAsJsonAsync($"/api/pipelines/{id}", update, JsonOptions);
         await EnsureSuccessAsync(response);
@@ -241,7 +239,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<PipelineInfo>(JsonOptions))!;
     }
 
-    public async Task<bool> DeletePipelineAsync(Ulid id)
+    public async Task<bool> DeletePipelineAsync(Guid id)
     {
         var response = await _httpClient.DeleteAsync($"/api/pipelines/{id}");
         return response.IsSuccessStatusCode;
@@ -255,7 +253,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<SubscriberInfo>(JsonOptions))!;
     }
 
-    public async Task<SubscriberInfo> GetSubscriberAsync(Ulid id)
+    public async Task<SubscriberInfo> GetSubscriberAsync(Guid id)
     {
         var response = await _httpClient.GetAsync($"/api/subscribers/{id}");
         await EnsureSuccessAsync(response);
@@ -263,13 +261,13 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<SubscriberInfo>(JsonOptions))!;
     }
 
-    public async Task SubscriberHeartbeatAsync(Ulid id)
+    public async Task SubscriberHeartbeatAsync(Guid id)
     {
         var response = await _httpClient.PostAsync($"/api/subscribers/{id}/heartbeat", null);
         await EnsureSuccessAsync(response);
     }
 
-    public async Task<List<JobNotification>> PullNotificationsAsync(Ulid subscriberId, int limit = 10)
+    public async Task<List<JobNotification>> PullNotificationsAsync(Guid subscriberId, int limit = 10)
     {
         var response = await _httpClient.PostAsync(
             $"/api/subscribers/{subscriberId}/notifications?limit={limit}", null);
@@ -278,7 +276,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<List<JobNotification>>(JsonOptions))!;
     }
 
-    public async Task AcknowledgeNotificationsAsync(Ulid subscriberId, List<Ulid> notificationIds)
+    public async Task AcknowledgeNotificationsAsync(Guid subscriberId, List<Guid> notificationIds)
     {
         var response = await _httpClient.PostAsJsonAsync(
             $"/api/subscribers/{subscriberId}/notifications/ack", notificationIds, JsonOptions);
@@ -286,7 +284,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     }
 
     public async Task<List<JobNotification>> WaitForNotificationsAsync(
-        Ulid subscriberId, int expectedCount = 1, int timeoutMs = 30000)
+        Guid subscriberId, int expectedCount = 1, int timeoutMs = 30000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
 
@@ -329,7 +327,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     /// <summary>
     /// Restart a worker with the same identity after StopWorkerAsync(preserveIdentity: true).
     /// </summary>
-    public async Task<Ulid> RestartWorkerAsync()
+    public async Task<Guid> RestartWorkerAsync()
     {
         if (_workerBuilder == null)
             throw new InvalidOperationException(
@@ -345,7 +343,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     /// <summary>
     /// Poll until the job reaches the expected status.
     /// </summary>
-    public async Task<JobInfo> WaitForJobStatusAsync(Ulid jobId, JobStatus expected, int timeoutMs = 30000)
+    public async Task<JobInfo> WaitForJobStatusAsync(Guid jobId, JobStatus expected, int timeoutMs = 30000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
 
@@ -377,7 +375,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         }
     }
 
-    public async Task<string> GetJobLogsAsync(Ulid jobId)
+    public async Task<string> GetJobLogsAsync(Guid jobId)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();

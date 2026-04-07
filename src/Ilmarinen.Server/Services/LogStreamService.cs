@@ -4,7 +4,6 @@ using Ilmarinen.Server.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -18,7 +17,7 @@ public class LogStreamService
     private readonly IHubContext<JobLogsHub, IJobLogsClient> _hubContext;
     private readonly LogSubscriptionService _subscriptionService;
     private readonly ILogger<LogStreamService> _logger;
-    private readonly ConcurrentDictionary<Ulid, LogBuffer> _buffers = new();
+    private readonly ConcurrentDictionary<Guid, LogBuffer> _buffers = new();
 
     private const int BufferFlushBytes = 8192;
     private const int BufferFlushMs = 500;
@@ -72,7 +71,7 @@ public class LogStreamService
     /// Flush all pending logs for a job (called when job completes).
     /// Removes the buffer since no more chunks are expected.
     /// </summary>
-    public async Task FlushAsync(Ulid jobId)
+    public async Task FlushAsync(Guid jobId)
     {
         if (_buffers.TryRemove(jobId, out var buffer))
         {
@@ -84,7 +83,7 @@ public class LogStreamService
     /// Flush pending logs for a job without removing the buffer.
     /// Used when a worker disconnects (job still running, worker may reconnect).
     /// </summary>
-    public async Task FlushJobAsync(Ulid jobId)
+    public async Task FlushJobAsync(Guid jobId)
     {
         if (_buffers.TryGetValue(jobId, out var buffer))
         {
@@ -95,7 +94,7 @@ public class LogStreamService
     /// <summary>
     /// Notify UI clients that a job has completed.
     /// </summary>
-    public async Task NotifyJobCompletedAsync(Ulid jobId, Protocol.JobStatus status)
+    public async Task NotifyJobCompletedAsync(Guid jobId, Protocol.JobStatus status)
     {
         await FlushAsync(jobId);
 
@@ -107,7 +106,7 @@ public class LogStreamService
         _subscriptionService.NotifyJobCompleted(jobId, status);
     }
 
-    private async Task FlushBufferAsync(Ulid jobId, LogBuffer buffer)
+    private async Task FlushBufferAsync(Guid jobId, LogBuffer buffer)
     {
         var chunks = buffer.Drain();
         if (chunks.Count == 0) return;

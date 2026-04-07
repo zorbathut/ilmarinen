@@ -52,11 +52,11 @@ public class WorkspaceManagerTests
     }
 
     [Test]
-    public void DiscoverWorkspaces_FiltersOutUlidDirectories()
+    public void DiscoverWorkspaces_FiltersOutGuidDirectories()
     {
-        // ULID-named dirs are ephemeral
-        Directory.CreateDirectory(Path.Combine(_tempDir, "01HY5Z0E3BQXK5M7N2P4R6S8T0"));
-        Directory.CreateDirectory(Path.Combine(_tempDir, "01J0ABCDEF0123456789ABCDEF"));
+        // GUID-named dirs are ephemeral (job IDs)
+        Directory.CreateDirectory(Path.Combine(_tempDir, Guid.NewGuid().ToString()));
+        Directory.CreateDirectory(Path.Combine(_tempDir, Guid.CreateVersion7().ToString()));
         // Named dirs are persistent
         Directory.CreateDirectory(Path.Combine(_tempDir, "real-workspace"));
 

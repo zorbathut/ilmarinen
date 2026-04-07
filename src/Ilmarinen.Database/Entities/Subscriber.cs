@@ -1,11 +1,10 @@
-using NUlid;
 using System;
 
 namespace Ilmarinen.Database.Entities;
 
 public class Subscriber
 {
-    public required Ulid Id { get; set; }
+    public required Guid Id { get; set; }
     public required string Name { get; set; }
     public bool IsActive { get; set; }
     public DateTime? LastHeartbeat { get; set; }

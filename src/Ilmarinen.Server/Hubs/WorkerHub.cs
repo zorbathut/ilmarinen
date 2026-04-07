@@ -5,7 +5,6 @@ using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -186,7 +185,7 @@ public class WorkerHub : Hub<IWorkerClient>
         };
     }
 
-    public async Task JobStarted(Ulid jobId)
+    public async Task JobStarted(Guid jobId)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
@@ -195,7 +194,7 @@ public class WorkerHub : Hub<IWorkerClient>
         await jobs.UpdateStatusAsync(jobId, JobStatus.Running);
     }
 
-    public async Task ReportCommit(Ulid jobId, string commitSha)
+    public async Task ReportCommit(Guid jobId, string commitSha)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
@@ -213,7 +212,7 @@ public class WorkerHub : Hub<IWorkerClient>
         await logService.ProcessChunkAsync(chunk);
     }
 
-    public async Task JobCompleted(Ulid jobId, JobResult result)
+    public async Task JobCompleted(Guid jobId, JobResult result)
     {
         using var scope = _scopeFactory.CreateScope();
         var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
@@ -288,7 +287,7 @@ public class WorkerHub : Hub<IWorkerClient>
 
 internal class PendingAuth
 {
-    public required Ulid WorkerId { get; init; }
+    public required Guid WorkerId { get; init; }
     public required byte[] WorkerNonce { get; init; }
     public required byte[] ServerNonce { get; init; }
     public required DateTime CreatedAt { get; init; }

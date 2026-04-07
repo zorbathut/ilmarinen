@@ -1,4 +1,3 @@
-using NUlid;
 using System;
 
 namespace Ilmarinen.Protocol.Responses;
@@ -8,7 +7,7 @@ namespace Ilmarinen.Protocol.Responses;
 /// </summary>
 public record ArtifactInfo
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
     public required string Name { get; init; }
     public required long Size { get; init; }
     public DateTime CreatedAt { get; init; }

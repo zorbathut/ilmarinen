@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -62,7 +61,7 @@ public class NotificationProcessor : BackgroundService
             try
             {
                 var notifications = await _client.PullNotificationsAsync(_options.BatchSize);
-                var acked = new List<Ulid>();
+                var acked = new List<Guid>();
 
                 foreach (var notification in notifications)
                 {

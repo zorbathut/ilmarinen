@@ -1,4 +1,4 @@
-using NUlid;
+using System;
 
 namespace Ilmarinen.Protocol.Requests;
 
@@ -14,7 +14,7 @@ namespace Ilmarinen.Protocol.Requests;
 /// </summary>
 public record JobSubmission
 {
-    public Ulid? PipelineId { get; init; }
+    public Guid? PipelineId { get; init; }
     public string? RepoUrl { get; init; }
     public string? Ref { get; init; }
     public string? ScriptPath { get; init; }

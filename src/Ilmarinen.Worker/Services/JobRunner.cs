@@ -6,7 +6,6 @@ using Ilmarinen.Scripting;
 using LibGit2Sharp;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.IO;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -257,7 +256,6 @@ public class JobRunner
             var jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
-                Converters = { new UlidJsonConverter() }
             };
 
             _logger.LogInformation("Uploading artifact {Name} ({Size} bytes)...", artifactName, fileInfo.Length);
@@ -307,5 +305,5 @@ public class JobRunner
         }
     }
 
-    private record ArtifactUploadResponse(Ulid Id, string Name, long Size);
+    private record ArtifactUploadResponse(Guid Id, string Name, long Size);
 }

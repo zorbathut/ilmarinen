@@ -1,4 +1,3 @@
-using NUlid;
 using System.Collections.Generic;
 using System;
 
@@ -9,7 +8,7 @@ namespace Ilmarinen.Protocol.Responses;
 /// </summary>
 public record JobResult
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
     public required JobStatus Status { get; init; }
     public TimeSpan Duration { get; init; }
     public IReadOnlyList<WorkspaceInfo>? Workspaces { get; init; }

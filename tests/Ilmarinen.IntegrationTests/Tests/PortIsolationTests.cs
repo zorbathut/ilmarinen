@@ -134,7 +134,7 @@ public class PortIsolationTests
         var workerId = await _fixture.StartWorkerAsync();
 
         // Assert - Worker registration succeeded
-        Assert.That(workerId, Is.Not.EqualTo(default(NUlid.Ulid)));
+        Assert.That(workerId, Is.Not.EqualTo(Guid.Empty));
     }
 
     [Test]

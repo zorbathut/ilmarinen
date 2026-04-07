@@ -2,7 +2,6 @@
 @using Ilmarinen.Protocol.Requests
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
-@using NUlid
 @inject PipelineRepository PipelineRepo
 @inject RepositoryRepository RepositoryRepo
 @inject IJSRuntime JS
@@ -124,7 +123,7 @@
             return;
         }
 
-        if (!Ulid.TryParse(newRepositoryId, out var repoId))
+        if (!Guid.TryParse(newRepositoryId, out var repoId))
         {
             error = "Please select a valid repository.";
             return;

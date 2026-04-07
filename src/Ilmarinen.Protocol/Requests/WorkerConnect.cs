@@ -1,4 +1,4 @@
-using NUlid;
+using System;
 
 namespace Ilmarinen.Protocol.Requests;
 
@@ -7,7 +7,7 @@ namespace Ilmarinen.Protocol.Requests;
 /// </summary>
 public record WorkerConnect
 {
-    public required Ulid WorkerId { get; init; }
+    public required Guid WorkerId { get; init; }
     public required string ProtocolHash { get; init; }
     public required byte[] Nonce { get; init; }
 }

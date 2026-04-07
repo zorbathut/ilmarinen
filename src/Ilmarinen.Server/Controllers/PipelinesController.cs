@@ -1,9 +1,10 @@
+using System;
 using Ilmarinen.Protocol;
+using System;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
-using NUlid;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -41,48 +42,48 @@ public class PipelinesController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<PipelineInfo>> GetPipeline(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid pipeline ID");
 
-        var pipeline = await _pipelines.GetAsync(ulid);
+        var pipeline = await _pipelines.GetAsync(parsed);
         return pipeline != null ? Ok(pipeline) : NotFound();
     }
 
     [HttpPut("{id}")]
     public async Task<ActionResult<PipelineInfo>> UpdatePipeline(string id, [FromBody] PipelineUpdate update)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid pipeline ID");
 
         if (update.Schedule != null && !CronValidator.TryParse(update.Schedule, out _))
             return BadRequest("Invalid cron expression for schedule");
 
-        var pipeline = await _pipelines.UpdateAsync(ulid, update);
+        var pipeline = await _pipelines.UpdateAsync(parsed, update);
         return pipeline != null ? Ok(pipeline) : NotFound();
     }
 
     [HttpDelete("{id}")]
     public async Task<ActionResult> DeletePipeline(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid pipeline ID");
 
-        var deleted = await _pipelines.DeleteAsync(ulid);
+        var deleted = await _pipelines.DeleteAsync(parsed);
         return deleted ? NoContent() : NotFound();
     }
 
     [HttpPost("{id}/trigger")]
     public async Task<ActionResult<JobSubmissionResult>> TriggerPipeline(string id, [FromBody] PipelineTrigger? trigger)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid pipeline ID");
 
-        if (!await _pipelines.ExistsAsync(ulid))
+        if (!await _pipelines.ExistsAsync(parsed))
             return NotFound();
 
         var submission = new JobSubmission
         {
-            PipelineId = ulid,
+            PipelineId = parsed,
             Ref = trigger?.Ref,
             GitTokenMode = GitTokenMode.Inherit
         };

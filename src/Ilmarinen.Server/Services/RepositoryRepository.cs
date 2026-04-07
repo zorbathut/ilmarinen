@@ -3,7 +3,6 @@ using Ilmarinen.Database.Entities;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -26,7 +25,7 @@ public class RepositoryRepository
     {
         var repo = new Repository
         {
-            Id = Ulid.NewUlid(),
+            Id = Guid.CreateVersion7(),
             Name = submission.Name,
             RepoUrl = submission.RepoUrl,
             EncryptedGitToken = _encryption.Encrypt(submission.GitToken),
@@ -39,7 +38,7 @@ public class RepositoryRepository
         return ToRepositoryInfo(repo);
     }
 
-    public async Task<RepositoryInfo?> GetAsync(Ulid id)
+    public async Task<RepositoryInfo?> GetAsync(Guid id)
     {
         var repo = await _db.Repositories.FirstOrDefaultAsync(r => r.Id == id);
         return repo != null ? ToRepositoryInfo(repo) : null;
@@ -54,7 +53,7 @@ public class RepositoryRepository
         return repos.Select(ToRepositoryInfo).ToList();
     }
 
-    public async Task<RepositoryInfo?> UpdateAsync(Ulid id, RepositoryUpdate update)
+    public async Task<RepositoryInfo?> UpdateAsync(Guid id, RepositoryUpdate update)
     {
         var repo = await _db.Repositories.FirstOrDefaultAsync(r => r.Id == id);
         if (repo == null) return null;
@@ -73,7 +72,7 @@ public class RepositoryRepository
     /// <summary>
     /// Returns null if not found, the count of blocking pipelines if any exist, or 0 on success.
     /// </summary>
-    public async Task<int?> DeleteAsync(Ulid id)
+    public async Task<int?> DeleteAsync(Guid id)
     {
         var repo = await _db.Repositories.FirstOrDefaultAsync(r => r.Id == id);
         if (repo == null) return null;

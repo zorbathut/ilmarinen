@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
@@ -21,16 +20,16 @@ namespace Ilmarinen.Worker.Services;
 public class WorkerService : BackgroundService
 {
     private readonly WorkerConfig _config;
-    private readonly Ulid _workerId;
+    private readonly Guid _workerId;
     private readonly WorkspaceManager _workspaceManager;
     private readonly ILogger<WorkerService> _logger;
     private readonly MessageBuffer _messageBuffer = new();
     private HubConnection? _connection;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
     private readonly object _jobLock = new();
-    private Ulid? _currentJobId;
+    private Guid? _currentJobId;
 
-    private Ulid? CurrentJobId
+    private Guid? CurrentJobId
     {
         get { lock (_jobLock) return _currentJobId; }
         set { lock (_jobLock) _currentJobId = value; }
@@ -59,7 +58,6 @@ public class WorkerService : BackgroundService
             .AddJsonProtocol(options =>
             {
                 options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
-                options.PayloadSerializerOptions.Converters.Add(new UlidJsonConverter());
             })
             .Build();
 

@@ -1,7 +1,8 @@
+using System;
 using Ilmarinen.IntegrationTests.Fixtures;
+using System;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
-using NUlid;
 using NUnit.Framework;
 using System.Linq;
 using System.Threading.Tasks;
@@ -52,7 +53,7 @@ public class NotificationTests
 
         Assert.That(info.Name, Is.EqualTo("test-subscriber"));
         Assert.That(info.IsActive, Is.True);
-        Assert.That(info.Id, Is.Not.EqualTo(default(Ulid)));
+        Assert.That(info.Id, Is.Not.EqualTo(Guid.Empty));
     }
 
     [Test]

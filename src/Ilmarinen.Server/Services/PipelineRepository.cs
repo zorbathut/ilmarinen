@@ -3,7 +3,6 @@ using Ilmarinen.Database.Entities;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -26,7 +25,7 @@ public class PipelineRepository
     {
         var pipeline = new Pipeline
         {
-            Id = Ulid.NewUlid(),
+            Id = Guid.CreateVersion7(),
             Name = submission.Name,
             RepositoryId = submission.RepositoryId,
             DefaultRef = submission.Ref,
@@ -41,7 +40,7 @@ public class PipelineRepository
         return await GetAsync(pipeline.Id) ?? throw new InvalidOperationException("Pipeline was just created but could not be loaded");
     }
 
-    public async Task<PipelineInfo?> GetAsync(Ulid id)
+    public async Task<PipelineInfo?> GetAsync(Guid id)
     {
         var pipeline = await _db.Pipelines
             .Include(p => p.Repository)
@@ -63,7 +62,7 @@ public class PipelineRepository
             .ToList();
     }
 
-    public async Task<bool> DeleteAsync(Ulid id)
+    public async Task<bool> DeleteAsync(Guid id)
     {
         var rows = await _db.Pipelines
             .Where(p => p.Id == id)
@@ -72,7 +71,7 @@ public class PipelineRepository
         return rows > 0;
     }
 
-    public async Task<PipelineInfo?> UpdateAsync(Ulid id, PipelineUpdate update)
+    public async Task<PipelineInfo?> UpdateAsync(Guid id, PipelineUpdate update)
     {
         var pipeline = await _db.Pipelines
             .Include(p => p.Repository)
@@ -98,7 +97,7 @@ public class PipelineRepository
         return await GetAsync(id);
     }
 
-    public async Task<bool> ExistsAsync(Ulid id)
+    public async Task<bool> ExistsAsync(Guid id)
     {
         return await _db.Pipelines.AnyAsync(p => p.Id == id);
     }
@@ -111,7 +110,7 @@ public class PipelineRepository
             .ToListAsync();
     }
 
-    public async Task UpdateLastTriggeredAtAsync(Ulid id, DateTime triggeredAt)
+    public async Task UpdateLastTriggeredAtAsync(Guid id, DateTime triggeredAt)
     {
         await _db.Pipelines
             .Where(p => p.Id == id)

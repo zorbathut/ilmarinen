@@ -1,11 +1,11 @@
-using NUlid;
+using System;
 
 namespace Ilmarinen.Protocol.Requests;
 
 public record PipelineUpdate
 {
     public string? Name { get; init; }
-    public Ulid? RepositoryId { get; init; }
+    public Guid? RepositoryId { get; init; }
     public string? Ref { get; init; }
     public string? ScriptPath { get; init; }
 

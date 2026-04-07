@@ -2,7 +2,6 @@ using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
-using NUlid;
 using NUnit.Framework;
 using System.Collections.Generic;
 using System.Linq;
@@ -39,7 +38,7 @@ public class PipelineTests
 
         _repository = await _fixture.CreateRepositoryAsync(new RepositorySubmission
         {
-            Name = "test-repo-" + Ulid.NewUlid().ToString()[..8],
+            Name = "test-repo-" + Guid.CreateVersion7().ToString()[..8],
             RepoUrl = _repo.Url
         });
     }
@@ -69,7 +68,7 @@ public class PipelineTests
         Assert.That(pipeline.RepoUrl, Is.EqualTo(_repo.Url));
         Assert.That(pipeline.DefaultRef, Is.EqualTo("master"));
         Assert.That(pipeline.ScriptPath, Is.EqualTo("pipeline.csx"));
-        Assert.That(pipeline.Id, Is.Not.EqualTo(default(Ulid)));
+        Assert.That(pipeline.Id, Is.Not.EqualTo(Guid.Empty));
     }
 
     [Test]
@@ -174,7 +173,7 @@ public class PipelineTests
     [Test]
     public async Task TriggerPipeline_NonExistent_Returns404()
     {
-        var fakeId = Ulid.NewUlid();
+        var fakeId = Guid.CreateVersion7();
         var response = await _fixture.HttpClient.PostAsJsonAsync(
             $"/api/pipelines/{fakeId}/trigger",
             new PipelineTrigger(),
@@ -257,14 +256,13 @@ public class PipelineTests
     [Test]
     public async Task UpdatePipeline_NonExistent_Returns404()
     {
-        var fakeId = Ulid.NewUlid();
+        var fakeId = Guid.CreateVersion7();
         var response = await _fixture.HttpClient.PutAsJsonAsync(
             $"/api/pipelines/{fakeId}",
             new PipelineUpdate { Name = "nope" },
             new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
-                Converters = { new Ilmarinen.Protocol.UlidJsonConverter() }
             });
 
         Assert.That((int)response.StatusCode, Is.EqualTo(404));
@@ -304,7 +302,6 @@ public class PipelineTests
             new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
-                Converters = { new UlidJsonConverter() }
             });
 
         Assert.That((int)response.StatusCode, Is.EqualTo(400));
@@ -361,7 +358,6 @@ public class PipelineTests
                 new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true,
-                    Converters = { new UlidJsonConverter() }
                 });
 
             job = jobs?.FirstOrDefault(j => j.PipelineId == pipeline.Id);
@@ -397,7 +393,6 @@ public class PipelineTests
             new System.Text.Json.JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
-                Converters = { new Ilmarinen.Protocol.UlidJsonConverter() }
             });
 
         Assert.That(response.IsSuccessStatusCode, Is.False);
@@ -470,7 +465,6 @@ public class PipelineTests
             new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
-                Converters = { new UlidJsonConverter() }
             });
 
         Assert.That((int)response.StatusCode, Is.EqualTo(400));
@@ -489,7 +483,6 @@ public class PipelineTests
             new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
-                Converters = { new UlidJsonConverter() }
             });
 
         Assert.That((int)response.StatusCode, Is.EqualTo(400));

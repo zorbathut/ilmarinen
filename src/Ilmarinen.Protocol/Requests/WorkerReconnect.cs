@@ -1,4 +1,4 @@
-using NUlid;
+using System;
 
 namespace Ilmarinen.Protocol.Requests;
 
@@ -11,5 +11,5 @@ public record WorkerReconnect
     /// <summary>
     /// The job the worker is currently executing, or null if idle.
     /// </summary>
-    public Ulid? RunningJobId { get; init; }
+    public Guid? RunningJobId { get; init; }
 }

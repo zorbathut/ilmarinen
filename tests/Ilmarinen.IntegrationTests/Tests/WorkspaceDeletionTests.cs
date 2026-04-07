@@ -1,8 +1,9 @@
+using System;
 using Ilmarinen.IntegrationTests.Fixtures;
+using System;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
-using NUlid;
 using NUnit.Framework;
 using System.Collections.Generic;
 using System.IO;
@@ -24,7 +25,6 @@ public class WorkspaceDeletionTests
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
-        Converters = { new UlidJsonConverter() }
     };
 
     [SetUp]
@@ -153,7 +153,7 @@ public class WorkspaceDeletionTests
     [Test]
     public async Task DeleteWorkspace_NonExistentWorker_Returns404()
     {
-        var fakeWorkerId = Ulid.NewUlid();
+        var fakeWorkerId = Guid.CreateVersion7();
 
         // Act
         var response = await _fixture.HttpClient.DeleteAsync(

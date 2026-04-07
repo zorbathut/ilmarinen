@@ -1,4 +1,3 @@
-@using NUlid
 
 @if (JobIds != null && JobIds.Count > 0)
 {
@@ -14,5 +13,5 @@ else
 
 @code {
     [Parameter]
-    public IReadOnlyList<Ulid>? JobIds { get; set; }
+    public IReadOnlyList<Guid>? JobIds { get; set; }
 }

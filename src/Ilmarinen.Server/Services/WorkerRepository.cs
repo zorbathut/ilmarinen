@@ -3,7 +3,6 @@ using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using NUlid;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -18,7 +17,7 @@ public class WorkerRepository
     private readonly IServiceScopeFactory _scopeFactory;
 
     // In-memory mapping of SignalR connection ID to worker ID
-    private readonly ConcurrentDictionary<string, Ulid> _connectionToWorker = new();
+    private readonly ConcurrentDictionary<string, Guid> _connectionToWorker = new();
 
     // In-memory set of connection IDs that are ready for work
     private readonly ConcurrentDictionary<string, bool> _readyWorkers = new();
@@ -31,7 +30,7 @@ public class WorkerRepository
         _scopeFactory = scopeFactory;
     }
 
-    public async Task ConnectAsync(string connectionId, Ulid workerId)
+    public async Task ConnectAsync(string connectionId, Guid workerId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
@@ -45,7 +44,7 @@ public class WorkerRepository
         _connectionToWorker[connectionId] = workerId;
     }
 
-    public async Task<byte[]?> GetWorkerPublicKeyAsync(Ulid workerId)
+    public async Task<byte[]?> GetWorkerPublicKeyAsync(Guid workerId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
@@ -134,7 +133,7 @@ public class WorkerRepository
             (_, list) => list.RemoveAll(ws => ws.Name == name));
     }
 
-    public string? FindConnectionIdByJobId(Ulid jobId)
+    public string? FindConnectionIdByJobId(Guid jobId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
@@ -150,7 +149,7 @@ public class WorkerRepository
         return FindConnectionIdByWorkerId(workerId.Value);
     }
 
-    public string? FindConnectionIdByWorkerId(Ulid workerId)
+    public string? FindConnectionIdByWorkerId(Guid workerId)
     {
         foreach (var (connectionId, id) in _connectionToWorker)
         {
@@ -160,7 +159,7 @@ public class WorkerRepository
         return null;
     }
 
-    public async Task<WorkerView?> GetByIdAsync(Ulid id)
+    public async Task<WorkerView?> GetByIdAsync(Guid id)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
@@ -238,18 +237,18 @@ public class WorkerRepository
 
 public class ConnectedWorker
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
     public required string ConnectionId { get; init; }
     public bool IsReady { get; init; }
 }
 
 public class WorkerView
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
     public required string Name { get; init; }
     public bool IsConnected { get; init; }
     public bool IsReady { get; init; }
-    public IReadOnlyList<Ulid> CurrentJobs { get; init; } = [];
+    public IReadOnlyList<Guid> CurrentJobs { get; init; } = [];
     public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
     public IReadOnlyList<WorkspaceInfo> Workspaces { get; init; } = [];

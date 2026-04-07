@@ -1,4 +1,4 @@
-using NUlid;
+using System;
 
 namespace Ilmarinen.Protocol.Requests;
 
@@ -7,5 +7,5 @@ namespace Ilmarinen.Protocol.Requests;
 /// </summary>
 public record WorkerHeartbeat
 {
-    public required Ulid WorkerId { get; init; }
+    public required Guid WorkerId { get; init; }
 }

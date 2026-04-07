@@ -1,6 +1,5 @@
 using Ilmarinen.Protocol.Requests;
 using Microsoft.AspNetCore.SignalR.Client;
-using NUlid;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -17,7 +16,7 @@ namespace Ilmarinen.Worker.Services;
 /// </summary>
 public class LogCollector
 {
-    private readonly Ulid _jobId;
+    private readonly Guid _jobId;
     private readonly HubConnection _connection;
     private readonly MessageBuffer _messageBuffer;
     private readonly StringBuilder _buffer = new();
@@ -31,7 +30,7 @@ public class LogCollector
     private const int FlushBytes = 4096;
     private const int FlushMs = 100;
 
-    public LogCollector(Ulid jobId, HubConnection connection, MessageBuffer messageBuffer)
+    public LogCollector(Guid jobId, HubConnection connection, MessageBuffer messageBuffer)
     {
         _jobId = jobId;
         _connection = connection;

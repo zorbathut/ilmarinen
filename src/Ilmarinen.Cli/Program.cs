@@ -4,7 +4,6 @@ using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Ilmarinen.Scripting;
-using NUlid;
 using System.IO;
 using System.Net.Http.Json;
 using System.Net.Http;
@@ -70,7 +69,6 @@ public class Commands
         var gitToken = token ?? Environment.GetEnvironmentVariable("ILMARINEN_GIT_TOKEN");
 
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        jsonOptions.Converters.Add(new UlidJsonConverter());
 
         using var http = new HttpClient();
 
@@ -123,7 +121,6 @@ public class Commands
         [Argument(Description = "Job ID")] string jobId)
     {
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        jsonOptions.Converters.Add(new UlidJsonConverter());
 
         using var http = new HttpClient();
         var response = await http.GetAsync($"{server}/api/jobs/{jobId}");
@@ -186,7 +183,7 @@ public class Commands
 
 record JobSubmissionResult
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
 }
 
 /// <summary>

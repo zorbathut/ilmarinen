@@ -1,4 +1,3 @@
-@using NUlid
 
 @if (WorkerId != null)
 {
@@ -11,7 +10,7 @@ else
 
 @code {
     [Parameter]
-    public Ulid? WorkerId { get; set; }
+    public Guid? WorkerId { get; set; }
 
     [Parameter]
     public string? WorkerName { get; set; }

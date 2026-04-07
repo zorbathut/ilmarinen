@@ -1,9 +1,10 @@
+using System;
 using Ilmarinen.Database.Entities;
+using System;
 using Ilmarinen.Database;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -25,7 +26,7 @@ public class JobLogRepository
 
         var entities = chunks.Select(c => new JobLogChunk
         {
-            Id = Ulid.NewUlid(),
+            Id = Guid.CreateVersion7(),
             JobId = c.JobId,
             SequenceNumber = c.SequenceNumber,
             Content = c.Content,
@@ -37,7 +38,7 @@ public class JobLogRepository
     }
 
     public async Task<IReadOnlyList<LogChunkInfo>> GetChunksAsync(
-        Ulid jobId,
+        Guid jobId,
         int fromSequence = 0,
         int limit = 100)
     {
@@ -55,12 +56,12 @@ public class JobLogRepository
         }).ToList();
     }
 
-    public async Task<int> GetChunkCountAsync(Ulid jobId)
+    public async Task<int> GetChunkCountAsync(Guid jobId)
     {
         return await _db.JobLogChunks.CountAsync(c => c.JobId == jobId);
     }
 
-    public async Task<int> GetMaxSequenceAsync(Ulid jobId)
+    public async Task<int> GetMaxSequenceAsync(Guid jobId)
     {
         var max = await _db.JobLogChunks
             .Where(c => c.JobId == jobId)
@@ -69,7 +70,7 @@ public class JobLogRepository
         return max ?? 0;
     }
 
-    public async Task DeleteLogsAsync(Ulid jobId)
+    public async Task DeleteLogsAsync(Guid jobId)
     {
         await _db.JobLogChunks
             .Where(c => c.JobId == jobId)

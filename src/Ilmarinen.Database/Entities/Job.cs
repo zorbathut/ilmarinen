@@ -1,22 +1,21 @@
 using Ilmarinen.Protocol;
-using NUlid;
 using System;
 
 namespace Ilmarinen.Database.Entities;
 
 public class Job
 {
-    public required Ulid Id { get; set; }
+    public required Guid Id { get; set; }
     public required JobStatus Status { get; set; }
     public required string RepoUrl { get; set; }
     public required string Ref { get; set; }
     public string? Commit { get; set; }
     public required string ScriptPath { get; set; }
-    public Ulid? WorkerId { get; set; }
+    public Guid? WorkerId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string? EncryptedGitToken { get; set; }
     public GitTokenMode GitTokenMode { get; set; }
-    public Ulid? PipelineId { get; set; }
+    public Guid? PipelineId { get; set; }
 }

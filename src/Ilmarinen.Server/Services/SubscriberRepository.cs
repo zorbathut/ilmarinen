@@ -3,7 +3,6 @@ using Ilmarinen.Database;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -34,7 +33,7 @@ public class SubscriberRepository
 
         var subscriber = new Subscriber
         {
-            Id = Ulid.NewUlid(),
+            Id = Guid.CreateVersion7(),
             Name = registration.Name,
             IsActive = true,
             LastHeartbeat = DateTime.UtcNow,
@@ -47,13 +46,13 @@ public class SubscriberRepository
         return ToInfo(subscriber);
     }
 
-    public async Task<SubscriberInfo?> GetAsync(Ulid id)
+    public async Task<SubscriberInfo?> GetAsync(Guid id)
     {
         var subscriber = await _db.Subscribers.FirstOrDefaultAsync(s => s.Id == id);
         return subscriber != null ? ToInfo(subscriber) : null;
     }
 
-    public async Task<bool> HeartbeatAsync(Ulid id)
+    public async Task<bool> HeartbeatAsync(Guid id)
     {
         var subscriber = await _db.Subscribers.FirstOrDefaultAsync(s => s.Id == id);
         if (subscriber == null) return false;
@@ -64,7 +63,7 @@ public class SubscriberRepository
         return true;
     }
 
-    public async Task<List<Ulid>> GetActiveSubscriberIdsAsync()
+    public async Task<List<Guid>> GetActiveSubscriberIdsAsync()
     {
         var now = DateTime.UtcNow;
         return await _db.Subscribers

@@ -150,10 +150,10 @@
         UIEvents.OnJobsChanged -= OnChanged;
     }
 
-    private bool IsDeleting(NUlid.Ulid workerId, string workspace) =>
+    private bool IsDeleting(Guid workerId, string workspace) =>
         deletingWorkspaces.Contains($"{workerId}:{workspace}");
 
-    private bool IsRevoking(NUlid.Ulid workerId) =>
+    private bool IsRevoking(Guid workerId) =>
         revokingWorkers.Contains(workerId.ToString());
 
     private async Task RegisterWorker()
@@ -189,7 +189,7 @@
         registrationResult = null;
     }
 
-    private async Task RevokeWorker(NUlid.Ulid workerId)
+    private async Task RevokeWorker(Guid workerId)
     {
         var key = workerId.ToString();
         revokingWorkers.Add(key);
@@ -221,7 +221,7 @@
         }
     }
 
-    private async Task DeleteWorkspace(NUlid.Ulid workerId, string workspace)
+    private async Task DeleteWorkspace(Guid workerId, string workspace)
     {
         var deleteKey = $"{workerId}:{workspace}";
         deletingWorkspaces.Add(deleteKey);

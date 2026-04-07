@@ -2,7 +2,6 @@ using Ilmarinen.Database.Entities;
 using Ilmarinen.Database;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,7 +18,7 @@ public class NotificationRepository
         _db = db;
     }
 
-    public async Task CreateForActiveSubscribersAsync(Ulid jobId, string eventType)
+    public async Task CreateForActiveSubscribersAsync(Guid jobId, string eventType)
     {
         var now = DateTime.UtcNow;
         var activeIds = await _db.Subscribers
@@ -32,7 +31,7 @@ public class NotificationRepository
         {
             _db.Notifications.Add(new Notification
             {
-                Id = Ulid.NewUlid(),
+                Id = Guid.CreateVersion7(),
                 SubscriberId = subscriberId,
                 JobId = jobId,
                 EventType = eventType,
@@ -44,7 +43,7 @@ public class NotificationRepository
             await _db.SaveChangesAsync();
     }
 
-    public async Task<List<JobNotification>> PullAsync(Ulid subscriberId, int limit = 10)
+    public async Task<List<JobNotification>> PullAsync(Guid subscriberId, int limit = 10)
     {
         var now = DateTime.UtcNow;
         var lockUntil = now.AddMinutes(5);
@@ -79,7 +78,7 @@ public class NotificationRepository
             ? await _db.Pipelines
                 .Where(p => pipelineIds.Contains(p.Id))
                 .ToDictionaryAsync(p => p.Id, p => p.Name)
-            : new Dictionary<Ulid, string>();
+            : new Dictionary<Guid, string>();
 
         return notifications.Select(n => new JobNotification
         {
@@ -98,7 +97,7 @@ public class NotificationRepository
         }).ToList();
     }
 
-    public async Task AcknowledgeAsync(IReadOnlyList<Ulid> notificationIds)
+    public async Task AcknowledgeAsync(IReadOnlyList<Guid> notificationIds)
     {
         await _db.Notifications
             .Where(n => notificationIds.Contains(n.Id))

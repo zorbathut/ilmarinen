@@ -1,7 +1,6 @@
 using Ilmarinen.Database.Entities;
 using Ilmarinen.Database;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -42,7 +41,7 @@ public class WorkerRegistrationService
         var workerPublicKeyBytes = workerKey.ExportSubjectPublicKeyInfo();
         var workerPrivateScalar = workerParams.D!;
 
-        var workerId = Ulid.NewUlid();
+        var workerId = Guid.CreateVersion7();
         var now = DateTime.UtcNow;
 
         var worker = new Worker
@@ -68,7 +67,7 @@ public class WorkerRegistrationService
         };
     }
 
-    public async Task RevokeWorkerAsync(Ulid workerId)
+    public async Task RevokeWorkerAsync(Guid workerId)
     {
         var worker = await _db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
         if (worker == null)
@@ -81,6 +80,6 @@ public class WorkerRegistrationService
 
 public record WorkerRegistrationResult
 {
-    public required Ulid WorkerId { get; init; }
+    public required Guid WorkerId { get; init; }
     public required string WorkerKey { get; init; }
 }

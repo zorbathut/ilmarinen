@@ -3,7 +3,6 @@
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
-@using NUlid
 @inject IServiceScopeFactory ScopeFactory
 @inject NavigationManager Navigation
 
@@ -140,7 +139,7 @@ else
 
     private async Task RefreshAsync()
     {
-        if (Ulid.TryParse(Id, out var ulid))
+        if (Guid.TryParse(Id, out var ulid))
         {
             using var scope = ScopeFactory.CreateScope();
             var repoRepo = scope.ServiceProvider.GetRequiredService<RepositoryRepository>();
@@ -173,7 +172,7 @@ else
 
     private async Task SaveEdit()
     {
-        if (!Ulid.TryParse(Id, out var ulid)) return;
+        if (!Guid.TryParse(Id, out var ulid)) return;
 
         saving = true;
         editError = null;
@@ -215,7 +214,7 @@ else
     private async Task DeleteRepository()
     {
         deleteError = null;
-        if (Ulid.TryParse(Id, out var ulid))
+        if (Guid.TryParse(Id, out var ulid))
         {
             using var scope = ScopeFactory.CreateScope();
             var repoRepo = scope.ServiceProvider.GetRequiredService<RepositoryRepository>();

@@ -3,7 +3,6 @@
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
-@using NUlid
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
 @inject JobScheduler Scheduler
@@ -223,7 +222,7 @@ else
 
     private async Task RefreshAsync()
     {
-        if (Ulid.TryParse(Id, out var ulid))
+        if (Guid.TryParse(Id, out var ulid))
         {
             using var scope = ScopeFactory.CreateScope();
             var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();
@@ -256,7 +255,7 @@ else
 
     private async Task TriggerRun()
     {
-        if (!Ulid.TryParse(Id, out var ulid)) return;
+        if (!Guid.TryParse(Id, out var ulid)) return;
 
         triggering = true;
         try
@@ -301,14 +300,14 @@ else
 
     private async Task SaveEdit()
     {
-        if (!Ulid.TryParse(Id, out var ulid)) return;
+        if (!Guid.TryParse(Id, out var ulid)) return;
 
         saving = true;
         editError = null;
         try
         {
-            Ulid? newRepoId = null;
-            if (Ulid.TryParse(editRepositoryId, out var parsedRepoId) && parsedRepoId != pipeline!.RepositoryId)
+            Guid? newRepoId = null;
+            if (Guid.TryParse(editRepositoryId, out var parsedRepoId) && parsedRepoId != pipeline!.RepositoryId)
                 newRepoId = parsedRepoId;
 
             var update = new PipelineUpdate
@@ -346,7 +345,7 @@ else
 
     private async Task DeletePipeline()
     {
-        if (Ulid.TryParse(Id, out var ulid))
+        if (Guid.TryParse(Id, out var ulid))
         {
             using var scope = ScopeFactory.CreateScope();
             var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();

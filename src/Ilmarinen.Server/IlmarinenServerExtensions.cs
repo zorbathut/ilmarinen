@@ -1,5 +1,6 @@
-using Ilmarinen.Protocol;
+using System;
 using Ilmarinen.Server.Hubs;
+using System;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -7,7 +8,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using NUlid;
 
 namespace Ilmarinen.Server;
 
@@ -15,22 +15,8 @@ public static class IlmarinenServerExtensions
 {
     public static IServiceCollection AddIlmarinenServer(this IServiceCollection services)
     {
-        services.ConfigureHttpJsonOptions(options =>
-        {
-            options.SerializerOptions.Converters.Add(new UlidJsonConverter());
-        });
-
-        services.AddControllers()
-            .AddJsonOptions(options =>
-            {
-                options.JsonSerializerOptions.Converters.Add(new UlidJsonConverter());
-            });
-
-        services.AddSignalR()
-            .AddJsonProtocol(options =>
-            {
-                options.PayloadSerializerOptions.Converters.Add(new UlidJsonConverter());
-            });
+        services.AddControllers();
+        services.AddSignalR();
 
         services.AddSingleton<CredentialEncryptionService>();
         services.AddSingleton<ServerKeyService>();
@@ -82,7 +68,7 @@ public static class IlmarinenServerExtensions
             ArtifactRepository artifacts,
             ILogger<ArtifactRepository> logger) =>
         {
-            if (!Ulid.TryParse(jobId, out var jobUlid))
+            if (!Guid.TryParse(jobId, out var jobGuid))
                 return Results.BadRequest("Invalid job ID");
 
             if (string.IsNullOrWhiteSpace(name))
@@ -94,7 +80,7 @@ public static class IlmarinenServerExtensions
                 name, contentLength, jobId);
 
             var artifact = await artifacts.SaveAsync(
-                jobUlid,
+                jobGuid,
                 name,
                 contentLength,
                 request.Body);

@@ -1,7 +1,6 @@
 using Ilmarinen.Models;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.Collections.Generic;
 using System.IO;
 using System;
@@ -32,7 +31,7 @@ public class WorkspaceManager
             return [];
 
         return Directory.GetDirectories(workspacePath)
-            .Where(dir => !Ulid.TryParse(Path.GetFileName(dir), out _))
+            .Where(dir => !Guid.TryParse(Path.GetFileName(dir), out _))
             .Select(dir => new WorkspaceInfo
             {
                 Name = Path.GetFileName(dir),

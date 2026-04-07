@@ -4,7 +4,6 @@ using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -62,7 +61,7 @@ public class JobRepository
 
         var job = new Job
         {
-            Id = Ulid.NewUlid(),
+            Id = Guid.CreateVersion7(),
             Status = JobStatus.Pending,
             RepoUrl = resolvedRepoUrl,
             Ref = resolvedRef,
@@ -79,7 +78,7 @@ public class JobRepository
         return ToJobInfo(job);
     }
 
-    public async Task<JobInfo?> GetAsync(Ulid id)
+    public async Task<JobInfo?> GetAsync(Guid id)
     {
         var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
         if (job == null) return null;
@@ -93,19 +92,19 @@ public class JobRepository
             : null;
 
         // For single-job fetch, check pipeline+repo existence for retry eligibility
-        HashSet<Ulid>? retryablePipelines = null;
+        HashSet<Guid>? retryablePipelines = null;
         if (job.PipelineId != null && job.GitTokenMode == GitTokenMode.Inherit)
         {
             var exists = await _db.Pipelines
                 .Where(p => p.Id == job.PipelineId && p.Repository != null)
                 .AnyAsync();
-            retryablePipelines = exists ? new HashSet<Ulid> { job.PipelineId.Value } : new HashSet<Ulid>();
+            retryablePipelines = exists ? new HashSet<Guid> { job.PipelineId.Value } : new HashSet<Guid>();
         }
 
         return ToJobInfo(job, artifacts, workerName, pipelineName, retryablePipelines);
     }
 
-    public async Task<JobSubmission?> GetSubmissionAsync(Ulid id)
+    public async Task<JobSubmission?> GetSubmissionAsync(Guid id)
     {
         var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
         return job != null ? new JobSubmission
@@ -124,7 +123,7 @@ public class JobRepository
     /// Returns null if the job doesn't exist or isn't in a terminal state.
     /// Throws if retry is blocked (e.g. explicit token was cleared).
     /// </summary>
-    public async Task<JobSubmission?> BuildRetrySubmissionAsync(Ulid id)
+    public async Task<JobSubmission?> BuildRetrySubmissionAsync(Guid id)
     {
         var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
         if (job == null) return null;
@@ -173,7 +172,7 @@ public class JobRepository
         }
     }
 
-    public async Task UpdateStatusAsync(Ulid id, JobStatus status, Ulid? workerId = null)
+    public async Task UpdateStatusAsync(Guid id, JobStatus status, Guid? workerId = null)
     {
         var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
         if (job == null) return;
@@ -202,7 +201,7 @@ public class JobRepository
         await _db.SaveChangesAsync();
     }
 
-    public async Task SetCommitAsync(Ulid id, string commitSha)
+    public async Task SetCommitAsync(Guid id, string commitSha)
     {
         var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
         if (job == null) return;
@@ -211,11 +210,11 @@ public class JobRepository
         await _db.SaveChangesAsync();
     }
 
-    public async Task<Ulid?> GetRunningJobForWorkerAsync(Ulid workerId)
+    public async Task<Guid?> GetRunningJobForWorkerAsync(Guid workerId)
     {
         return await _db.Jobs
             .Where(j => j.WorkerId == workerId && j.Status == JobStatus.Running)
-            .Select(j => (Ulid?)j.Id)
+            .Select(j => (Guid?)j.Id)
             .FirstOrDefaultAsync();
     }
 
@@ -236,7 +235,7 @@ public class JobRepository
             retryablePipelines: retryablePipelines)).ToList();
     }
 
-    public async Task<IReadOnlyList<JobInfo>> GetByPipelineAsync(Ulid pipelineId)
+    public async Task<IReadOnlyList<JobInfo>> GetByPipelineAsync(Guid pipelineId)
     {
         var workerNames = await _db.Workers.ToDictionaryAsync(w => w.Id, w => w.Name);
         var pipelineName = await _db.Pipelines.Where(p => p.Id == pipelineId).Select(p => p.Name).FirstOrDefaultAsync();
@@ -254,7 +253,7 @@ public class JobRepository
             retryablePipelines: retryablePipelines)).ToList();
     }
 
-    public async Task<IReadOnlyList<JobInfo>> GetByWorkerAsync(Ulid workerId)
+    public async Task<IReadOnlyList<JobInfo>> GetByWorkerAsync(Guid workerId)
     {
         var workerName = await _db.Workers.Where(w => w.Id == workerId).Select(w => w.Name).FirstOrDefaultAsync();
         var pipelineNames = await _db.Pipelines.ToDictionaryAsync(p => p.Id, p => p.Name);
@@ -272,7 +271,7 @@ public class JobRepository
             retryablePipelines: retryablePipelines)).ToList();
     }
 
-    public async Task<IReadOnlyList<Ulid>> GetQueuedJobIdsAsync()
+    public async Task<IReadOnlyList<Guid>> GetQueuedJobIdsAsync()
     {
         return await _db.Jobs
             .Where(j => j.Status == JobStatus.Queued)
@@ -281,7 +280,7 @@ public class JobRepository
             .ToListAsync();
     }
 
-    public async Task<bool> TryCancelAsync(Ulid id)
+    public async Task<bool> TryCancelAsync(Guid id)
     {
         var now = DateTime.UtcNow;
         var rows = await _db.Jobs
@@ -300,7 +299,7 @@ public class JobRepository
     /// Returns the set of pipeline IDs whose repository still exists.
     /// Used to determine retry eligibility for Inherit-mode jobs.
     /// </summary>
-    private async Task<HashSet<Ulid>> GetRetryablePipelineIdsAsync()
+    private async Task<HashSet<Guid>> GetRetryablePipelineIdsAsync()
     {
         var ids = await _db.Pipelines
             .Where(p => p.Repository != null)
@@ -313,7 +312,7 @@ public class JobRepository
     /// <summary>
     /// Computes retry eligibility for a job.
     /// </summary>
-    private static (bool canRetry, string? reason) ComputeRetryEligibility(Job job, HashSet<Ulid>? retryablePipelines)
+    private static (bool canRetry, string? reason) ComputeRetryEligibility(Job job, HashSet<Guid>? retryablePipelines)
     {
         // Only terminal jobs can be retried
         if (job.Status is not (JobStatus.Failed or JobStatus.Cancelled))
@@ -340,7 +339,7 @@ public class JobRepository
         }
     }
 
-    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null, string? workerName = null, string? pipelineName = null, HashSet<Ulid>? retryablePipelines = null)
+    private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null, string? workerName = null, string? pipelineName = null, HashSet<Guid>? retryablePipelines = null)
     {
         var (canRetry, retryBlockedReason) = ComputeRetryEligibility(job, retryablePipelines);
 

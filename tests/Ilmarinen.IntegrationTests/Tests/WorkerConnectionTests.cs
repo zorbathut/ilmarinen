@@ -1,4 +1,6 @@
+using System;
 using Ilmarinen.IntegrationTests.Fixtures;
+using System;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
 using NUnit.Framework;
@@ -44,7 +46,7 @@ public class WorkerConnectionTests
         var workerId = await _fixture.StartWorkerAsync();
 
         // Assert - Worker registration succeeded (would have thrown if not)
-        Assert.That(workerId, Is.Not.EqualTo(default(NUlid.Ulid)));
+        Assert.That(workerId, Is.Not.EqualTo(Guid.Empty));
     }
 
     [Test]

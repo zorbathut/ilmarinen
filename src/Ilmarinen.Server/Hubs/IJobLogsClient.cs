@@ -1,6 +1,7 @@
+using System;
 using Ilmarinen.Protocol.Responses;
+using System;
 using Ilmarinen.Protocol;
-using NUlid;
 using System.Threading.Tasks;
 
 namespace Ilmarinen.Server.Hubs;
@@ -8,5 +9,5 @@ namespace Ilmarinen.Server.Hubs;
 public interface IJobLogsClient
 {
     Task ReceiveLogChunk(LogBroadcast chunk);
-    Task JobCompleted(Ulid jobId, JobStatus status);
+    Task JobCompleted(Guid jobId, JobStatus status);
 }

@@ -1,7 +1,6 @@
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
-using NUlid;
 using System.Collections.Generic;
 using System.Net.Http.Json;
 using System.Net.Http;
@@ -18,7 +17,7 @@ public class IlmarinenNotificationClient : IDisposable
     private readonly bool _disposeHttpClient;
     private readonly JsonSerializerOptions _jsonOptions;
 
-    public Ulid? SubscriberId { get; private set; }
+    public Guid? SubscriberId { get; private set; }
 
     public IlmarinenNotificationClient(string baseUrl, HttpClient? httpClient = null)
     {
@@ -38,7 +37,6 @@ public class IlmarinenNotificationClient : IDisposable
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
-            Converters = { new UlidJsonConverter() }
         };
     }
 
@@ -60,7 +58,7 @@ public class IlmarinenNotificationClient : IDisposable
         return info;
     }
 
-    public async Task<bool> LoadSubscriberAsync(Ulid subscriberId)
+    public async Task<bool> LoadSubscriberAsync(Guid subscriberId)
     {
         var response = await _httpClient.GetAsync($"{_baseUrl}/api/subscribers/{subscriberId}");
         if (!response.IsSuccessStatusCode) return false;
@@ -94,7 +92,7 @@ public class IlmarinenNotificationClient : IDisposable
             ?? new List<JobNotification>();
     }
 
-    public async Task AcknowledgeAsync(IReadOnlyList<Ulid> notificationIds)
+    public async Task AcknowledgeAsync(IReadOnlyList<Guid> notificationIds)
     {
         if (SubscriberId == null)
             throw new InvalidOperationException("Must register or load a subscriber before acknowledging");

@@ -1,8 +1,9 @@
+using System;
 using Ilmarinen.IntegrationTests.Fixtures;
+using System;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
-using NUlid;
 using NUnit.Framework;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -117,7 +118,7 @@ public class RepositoryTests
     [Test]
     public async Task DeleteRepository_NonExistent_Returns404()
     {
-        var fakeId = Ulid.NewUlid();
+        var fakeId = Guid.CreateVersion7();
         var response = await _fixture.HttpClient.DeleteAsync($"/api/repositories/{fakeId}");
         Assert.That((int)response.StatusCode, Is.EqualTo(404));
     }

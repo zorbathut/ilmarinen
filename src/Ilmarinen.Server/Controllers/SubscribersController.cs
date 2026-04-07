@@ -1,8 +1,9 @@
+using System;
 using Ilmarinen.Protocol.Requests;
+using System;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
-using NUlid;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -31,37 +32,37 @@ public class SubscribersController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<SubscriberInfo>> Get(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid subscriber ID");
 
-        var info = await _subscribers.GetAsync(ulid);
+        var info = await _subscribers.GetAsync(parsed);
         return info != null ? Ok(info) : NotFound();
     }
 
     [HttpPost("{id}/heartbeat")]
     public async Task<ActionResult> Heartbeat(string id)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid subscriber ID");
 
-        var success = await _subscribers.HeartbeatAsync(ulid);
+        var success = await _subscribers.HeartbeatAsync(parsed);
         return success ? Ok() : NotFound();
     }
 
     [HttpPost("{id}/notifications")]
     public async Task<ActionResult<List<JobNotification>>> PullNotifications(string id, [FromQuery] int limit = 10)
     {
-        if (!Ulid.TryParse(id, out var ulid))
+        if (!Guid.TryParse(id, out var parsed))
             return BadRequest("Invalid subscriber ID");
 
-        var notifications = await _notifications.PullAsync(ulid, limit);
+        var notifications = await _notifications.PullAsync(parsed, limit);
         return Ok(notifications);
     }
 
     [HttpPost("{id}/notifications/ack")]
-    public async Task<ActionResult> Acknowledge(string id, [FromBody] List<Ulid> notificationIds)
+    public async Task<ActionResult> Acknowledge(string id, [FromBody] List<Guid> notificationIds)
     {
-        if (!Ulid.TryParse(id, out _))
+        if (!Guid.TryParse(id, out _))
             return BadRequest("Invalid subscriber ID");
 
         await _notifications.AcknowledgeAsync(notificationIds);

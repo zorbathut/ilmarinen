@@ -3,7 +3,6 @@ using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
-using NUlid;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System;
@@ -55,7 +54,7 @@ public class WorkersController : ControllerBase
     }
 
     [HttpDelete("{workerId}")]
-    public async Task<ActionResult> RevokeWorker(Ulid workerId)
+    public async Task<ActionResult> RevokeWorker(Guid workerId)
     {
         try
         {
@@ -76,7 +75,7 @@ public class WorkersController : ControllerBase
     }
 
     [HttpDelete("{workerId}/workspaces/{workspaceName}")]
-    public async Task<ActionResult> DeleteWorkspace(Ulid workerId, string workspaceName)
+    public async Task<ActionResult> DeleteWorkspace(Guid workerId, string workspaceName)
     {
         if (!WorkspaceConfig.IsValidName(workspaceName, out var validationError))
             return BadRequest(new { error = validationError });

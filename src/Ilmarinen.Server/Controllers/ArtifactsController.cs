@@ -1,8 +1,9 @@
+using System;
 using Ilmarinen.Protocol.Responses;
+using System;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -27,10 +28,10 @@ public class ArtifactsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ArtifactInfo>>> List(string jobId)
     {
-        if (!Ulid.TryParse(jobId, out var jobUlid))
+        if (!Guid.TryParse(jobId, out var jobGuid))
             return BadRequest("Invalid job ID");
 
-        var artifacts = await _artifacts.GetByJobIdAsync(jobUlid);
+        var artifacts = await _artifacts.GetByJobIdAsync(jobGuid);
         return Ok(artifacts);
     }
 
@@ -40,10 +41,10 @@ public class ArtifactsController : ControllerBase
     [HttpGet("{artifactId}")]
     public async Task<ActionResult<ArtifactInfo>> GetInfo(string jobId, string artifactId)
     {
-        if (!Ulid.TryParse(artifactId, out var artifactUlid))
+        if (!Guid.TryParse(artifactId, out var artifactGuid))
             return BadRequest("Invalid artifact ID");
 
-        var artifact = await _artifacts.GetAsync(artifactUlid);
+        var artifact = await _artifacts.GetAsync(artifactGuid);
         return artifact != null ? Ok(artifact) : NotFound();
     }
 
@@ -53,10 +54,10 @@ public class ArtifactsController : ControllerBase
     [HttpGet("{artifactId}/download")]
     public async Task<IActionResult> Download(string jobId, string artifactId)
     {
-        if (!Ulid.TryParse(artifactId, out var artifactUlid))
+        if (!Guid.TryParse(artifactId, out var artifactGuid))
             return BadRequest("Invalid artifact ID");
 
-        var (stream, fileName) = await _artifacts.GetContentAsync(artifactUlid);
+        var (stream, fileName) = await _artifacts.GetContentAsync(artifactGuid);
 
         if (stream == null)
             return NotFound();

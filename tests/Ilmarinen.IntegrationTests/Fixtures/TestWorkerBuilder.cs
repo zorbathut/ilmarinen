@@ -1,9 +1,10 @@
+using System;
 using Ilmarinen.Worker.Services;
+using System;
 using Ilmarinen.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.IO;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
@@ -12,7 +13,7 @@ public class TestWorkerBuilder
 {
     private readonly string _serverUrl;
     private readonly string _workerKey;
-    private readonly Ulid _workerId;
+    private readonly Guid _workerId;
     private readonly string _workspacePath;
 
     public TestWorkerBuilder(string serverUrl, string workerKey)
@@ -20,11 +21,11 @@ public class TestWorkerBuilder
         _serverUrl = serverUrl;
         _workerKey = workerKey;
         // Parse the worker ID from the key (format: {name}:{ulid}:{priv}:{pub})
-        _workerId = Ulid.Parse(workerKey.Split(':')[1]);
+        _workerId = Guid.Parse(workerKey.Split(':')[1]);
         _workspacePath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-worker-{_workerId}");
     }
 
-    public Ulid WorkerId => _workerId;
+    public Guid WorkerId => _workerId;
     public string WorkspacePath => _workspacePath;
 
     public IHost Build()

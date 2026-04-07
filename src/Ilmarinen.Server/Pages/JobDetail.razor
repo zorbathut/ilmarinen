@@ -3,7 +3,6 @@
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
-@using NUlid
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
 @inject JobScheduler Scheduler
@@ -73,7 +72,7 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Logs</h2>
-        <LogViewer JobId="@jobUlid" IsStreaming="@(job.Status == JobStatus.Running)" />
+        <LogViewer JobId="@jobGuid" IsStreaming="@(job.Status == JobStatus.Running)" />
     </div>
 
     <div class="card" style="margin-top: 1rem;">
@@ -122,14 +121,14 @@ else
     public string Id { get; set; } = "";
 
     private JobInfo? job;
-    private Ulid jobUlid;
+    private Guid jobGuid;
     private bool loading = true;
 
     protected override async Task OnInitializedAsync()
     {
-        if (Ulid.TryParse(Id, out jobUlid))
+        if (Guid.TryParse(Id, out jobGuid))
         {
-            job = await FetchJobAsync(jobUlid);
+            job = await FetchJobAsync(jobGuid);
         }
         loading = false;
         UIEvents.OnJobsChanged += OnJobsChanged;
@@ -139,16 +138,16 @@ else
     {
         try
         {
-            if (jobUlid != default)
+            if (jobGuid != default)
             {
-                job = await FetchJobAsync(jobUlid);
+                job = await FetchJobAsync(jobGuid);
                 await InvokeAsync(StateHasChanged);
             }
         }
         catch { }
     }
 
-    private async Task<JobInfo?> FetchJobAsync(Ulid id)
+    private async Task<JobInfo?> FetchJobAsync(Guid id)
     {
         using var scope = ScopeFactory.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<JobRepository>();
@@ -157,7 +156,7 @@ else
 
     private async Task CancelJob()
     {
-        if (Ulid.TryParse(Id, out var ulid))
+        if (Guid.TryParse(Id, out var ulid))
         {
             await Scheduler.CancelJobAsync(ulid);
         }
@@ -165,7 +164,7 @@ else
 
     private async Task RetryJob()
     {
-        if (Ulid.TryParse(Id, out var ulid))
+        if (Guid.TryParse(Id, out var ulid))
         {
             using var scope = ScopeFactory.CreateScope();
             var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();

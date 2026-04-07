@@ -6,7 +6,6 @@ using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
-using NUlid;
 using NUnit.Framework;
 using System.Net.Http.Json;
 using System.Net;
@@ -43,7 +42,6 @@ public class WorkerAuthenticationTests
             .AddJsonProtocol(options =>
             {
                 options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
-                options.PayloadSerializerOptions.Converters.Add(new UlidJsonConverter());
             })
             .Build();
     }
@@ -66,7 +64,7 @@ public class WorkerAuthenticationTests
         var ex = Assert.ThrowsAsync<HubException>(async () =>
             await connection.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
             {
-                WorkerId = Ulid.NewUlid(),
+                WorkerId = Guid.CreateVersion7(),
                 ProtocolHash = ProtocolVersion.Hash,
                 Nonce = RandomNumberGenerator.GetBytes(32)
             }));
@@ -188,7 +186,7 @@ public class WorkerAuthenticationTests
     [Test]
     public async Task RevokeWorker_NonExistent_Returns404()
     {
-        var response = await _fixture.HttpClient.DeleteAsync($"/api/workers/{Ulid.NewUlid()}");
+        var response = await _fixture.HttpClient.DeleteAsync($"/api/workers/{Guid.CreateVersion7()}");
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }

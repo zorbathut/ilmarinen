@@ -1,13 +1,12 @@
-using NUlid;
 using System;
 
 namespace Ilmarinen.Protocol.Responses;
 
 public record PipelineInfo
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
     public required string Name { get; init; }
-    public required Ulid RepositoryId { get; init; }
+    public required Guid RepositoryId { get; init; }
     public required string RepositoryName { get; init; }
     public required string RepoUrl { get; init; }
     public required string DefaultRef { get; init; }

@@ -1,13 +1,12 @@
-using NUlid;
 using System;
 
 namespace Ilmarinen.Database.Entities;
 
 public class Notification
 {
-    public required Ulid Id { get; set; }
-    public required Ulid SubscriberId { get; set; }
-    public required Ulid JobId { get; set; }
+    public required Guid Id { get; set; }
+    public required Guid SubscriberId { get; set; }
+    public required Guid JobId { get; set; }
     public required string EventType { get; set; }
     public bool IsProcessed { get; set; }
     public DateTime? LockedUntil { get; set; }

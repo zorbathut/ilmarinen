@@ -1,4 +1,3 @@
-@using NUlid
 
 @if (PipelineId != null)
 {
@@ -11,7 +10,7 @@ else
 
 @code {
     [Parameter]
-    public Ulid? PipelineId { get; set; }
+    public Guid? PipelineId { get; set; }
 
     [Parameter]
     public string? PipelineName { get; set; }

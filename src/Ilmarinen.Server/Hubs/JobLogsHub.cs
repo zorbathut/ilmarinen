@@ -3,7 +3,6 @@ using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using NUlid;
 using System.Threading.Tasks;
 using System;
 
@@ -24,7 +23,7 @@ public class JobLogsHub : Hub<IJobLogsClient>
     /// UI client subscribes to logs for a specific job.
     /// Sends historical logs then joins live group.
     /// </summary>
-    public async Task Subscribe(Ulid jobId, int? fromSequence = null)
+    public async Task Subscribe(Guid jobId, int? fromSequence = null)
     {
         var groupName = $"job-logs-{jobId}";
         await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
@@ -55,7 +54,7 @@ public class JobLogsHub : Hub<IJobLogsClient>
     /// <summary>
     /// UI client unsubscribes from job logs.
     /// </summary>
-    public async Task Unsubscribe(Ulid jobId)
+    public async Task Unsubscribe(Guid jobId)
     {
         var groupName = $"job-logs-{jobId}";
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);

@@ -1,4 +1,3 @@
-using NUlid;
 using System.IO;
 using System.Security.Cryptography;
 using System;
@@ -45,10 +44,10 @@ public class WorkerConfig
     public string GetHostWorkspacePath() =>
         string.IsNullOrEmpty(HostWorkspacePath) ? WorkspacePath : HostWorkspacePath;
 
-    public Ulid GetWorkerId()
+    public Guid GetWorkerId()
     {
         var parts = GetKeyParts();
-        return Ulid.Parse(parts.id);
+        return Guid.Parse(parts.id);
     }
 
     public ECDsa GetWorkerPrivateKey()

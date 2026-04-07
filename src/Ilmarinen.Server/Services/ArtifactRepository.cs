@@ -2,7 +2,6 @@ using Ilmarinen.Database.Entities;
 using Ilmarinen.Database;
 using Ilmarinen.Protocol.Responses;
 using Microsoft.EntityFrameworkCore;
-using NUlid;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -22,9 +21,9 @@ public class ArtifactRepository
         _storagePath = config.ArtifactStoragePath;
     }
 
-    public async Task<ArtifactInfo> SaveAsync(Ulid jobId, string name, long size, Stream content)
+    public async Task<ArtifactInfo> SaveAsync(Guid jobId, string name, long size, Stream content)
     {
-        var artifactId = Ulid.NewUlid();
+        var artifactId = Guid.CreateVersion7();
         var relativePath = $"{jobId}/{artifactId}-{SanitizeFileName(name)}";
         var fullPath = Path.Combine(_storagePath, relativePath);
 
@@ -51,13 +50,13 @@ public class ArtifactRepository
         return ToArtifactInfo(artifact);
     }
 
-    public async Task<ArtifactInfo?> GetAsync(Ulid id)
+    public async Task<ArtifactInfo?> GetAsync(Guid id)
     {
         var artifact = await _db.JobArtifacts.FirstOrDefaultAsync(a => a.Id == id);
         return artifact != null ? ToArtifactInfo(artifact) : null;
     }
 
-    public async Task<IReadOnlyList<ArtifactInfo>> GetByJobIdAsync(Ulid jobId)
+    public async Task<IReadOnlyList<ArtifactInfo>> GetByJobIdAsync(Guid jobId)
     {
         var artifacts = await _db.JobArtifacts
             .Where(a => a.JobId == jobId)
@@ -67,7 +66,7 @@ public class ArtifactRepository
         return artifacts.Select(ToArtifactInfo).ToList();
     }
 
-    public async Task<(Stream? Stream, string? FileName)> GetContentAsync(Ulid id)
+    public async Task<(Stream? Stream, string? FileName)> GetContentAsync(Guid id)
     {
         var artifact = await _db.JobArtifacts.FirstOrDefaultAsync(a => a.Id == id);
         if (artifact == null) return (null, null);

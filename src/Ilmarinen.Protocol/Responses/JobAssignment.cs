@@ -1,4 +1,4 @@
-using NUlid;
+using System;
 
 namespace Ilmarinen.Protocol.Responses;
 
@@ -7,7 +7,7 @@ namespace Ilmarinen.Protocol.Responses;
 /// </summary>
 public record JobAssignment
 {
-    public required Ulid Id { get; init; }
+    public required Guid Id { get; init; }
     public required string RepoUrl { get; init; }
     public required string Ref { get; init; }
     public required string ScriptPath { get; init; }

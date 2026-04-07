@@ -1,13 +1,12 @@
-using NUlid;
 using System;
 
 namespace Ilmarinen.Protocol.Responses;
 
 public record JobNotification
 {
-    public required Ulid NotificationId { get; init; }
+    public required Guid NotificationId { get; init; }
     public required string EventType { get; init; }
-    public required Ulid JobId { get; init; }
+    public required Guid JobId { get; init; }
     public required JobStatus Status { get; init; }
     public required string RepoUrl { get; init; }
     public required string Ref { get; init; }
