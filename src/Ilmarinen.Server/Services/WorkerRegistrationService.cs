@@ -55,7 +55,7 @@ public class WorkerRegistrationService
         _db.Workers.Add(worker);
         await _db.SaveChangesAsync();
 
-        // Build combined key: {name}:{ulidBase64}:{workerPrivBase64}:{serverPubBase64}
+        // Build combined key: {name}:{guid}:{workerPrivBase64}:{serverPubBase64}
         var workerPrivBase64 = Convert.ToBase64String(workerPrivateScalar);
         var serverPubBase64 = _serverKey.GetPublicKeyBase64();
         var combinedKey = $"{name}:{workerId}:{workerPrivBase64}:{serverPubBase64}";

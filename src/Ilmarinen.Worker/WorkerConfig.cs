@@ -47,7 +47,39 @@ public class WorkerConfig
     public Guid GetWorkerId()
     {
         var parts = GetKeyParts();
-        return Guid.Parse(parts.id);
+        // New keys use standard Guid format; legacy keys use 26-char Crockford Base32 (Ulid)
+        if (Guid.TryParse(parts.id, out var guid))
+            return guid;
+        return UlidStringToGuid(parts.id);
+    }
+
+    /// <summary>
+    /// Converts a 26-char Crockford Base32 Ulid string to a Guid, for legacy worker keys.
+    /// </summary>
+    private static Guid UlidStringToGuid(string ulidString)
+    {
+        if (ulidString.Length != 26)
+            throw new FormatException($"Invalid worker ID format: '{ulidString}'. Expected a GUID or 26-char ULID.");
+
+        const string alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+        var upper = ulidString.ToUpperInvariant();
+        var bytes = new byte[16];
+        var bits = new System.Collections.BitArray(130);
+        for (var i = 0; i < 26; i++)
+        {
+            var val = alphabet.IndexOf(upper[i]);
+            if (val < 0)
+                throw new FormatException($"Invalid character '{ulidString[i]}' in ULID string.");
+            for (var b = 4; b >= 0; b--)
+                bits[i * 5 + (4 - b)] = (val & (1 << b)) != 0;
+        }
+        for (var i = 0; i < 128; i++)
+            if (bits[i])
+                bytes[i / 8] |= (byte)(1 << (7 - (i % 8)));
+
+        // NUlid stored bytes big-endian in the Ulid struct, then used Guid(byte[])
+        // which interprets the first 4 bytes as little-endian int32, next 2 as LE int16, etc.
+        return new Guid(bytes);
     }
 
     public ECDsa GetWorkerPrivateKey()

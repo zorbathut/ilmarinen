@@ -20,7 +20,7 @@ public class TestWorkerBuilder
     {
         _serverUrl = serverUrl;
         _workerKey = workerKey;
-        // Parse the worker ID from the key (format: {name}:{ulid}:{priv}:{pub})
+        // Parse the worker ID from the key (format: {name}:{guid}:{priv}:{pub})
         _workerId = Guid.Parse(workerKey.Split(':')[1]);
         _workspacePath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-worker-{_workerId}");
     }
