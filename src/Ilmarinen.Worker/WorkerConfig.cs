@@ -55,6 +55,8 @@ public class WorkerConfig
 
     /// <summary>
     /// Converts a 26-char Crockford Base32 Ulid string to a Guid, for legacy worker keys.
+    /// NUlid on .NET 6+ used new Guid(ReadOnlySpan&lt;byte&gt;) which is big-endian,
+    /// unlike new Guid(byte[]) which has mixed-endian first 3 components.
     /// </summary>
     private static Guid UlidStringToGuid(string ulidString)
     {
@@ -63,7 +65,7 @@ public class WorkerConfig
 
         const string alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
         var upper = ulidString.ToUpperInvariant();
-        var bytes = new byte[16];
+        Span<byte> bytes = stackalloc byte[16];
         var bits = new System.Collections.BitArray(130);
         for (var i = 0; i < 26; i++)
         {
@@ -77,9 +79,8 @@ public class WorkerConfig
             if (bits[i])
                 bytes[i / 8] |= (byte)(1 << (7 - (i % 8)));
 
-        // NUlid stored bytes big-endian in the Ulid struct, then used Guid(byte[])
-        // which interprets the first 4 bytes as little-endian int32, next 2 as LE int16, etc.
-        return new Guid(bytes);
+        // NUlid on .NET 6+ used new Guid(ReadOnlySpan<byte>) — big-endian, no byte swapping
+        return new Guid(bytes, bigEndian: true);
     }
 
     public ECDsa GetWorkerPrivateKey()
