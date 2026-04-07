@@ -12,9 +12,9 @@ public class WorkerConfig
     public required string ServerUrl { get; init; }
 
     /// <summary>
-    /// Combined worker key: {name}:{ulidBase64}:{workerPrivBase64}:{serverPubBase64}
+    /// Combined worker key: {name}:{guid}:{workerPrivBase64}:{serverPubBase64}
     /// Set via ILMARINEN_WORKER_KEY environment variable.
-    /// The name is for human readability; the ULID is the actual identity.
+    /// The name is for human readability; the GUID is the actual identity.
     /// </summary>
     public required string WorkerKey { get; init; }
     public string WorkspacePath { get; init; } = GetDefaultWorkspacePath();
@@ -47,40 +47,7 @@ public class WorkerConfig
     public Guid GetWorkerId()
     {
         var parts = GetKeyParts();
-        // New keys use standard Guid format; legacy keys use 26-char Crockford Base32 (Ulid)
-        if (Guid.TryParse(parts.id, out var guid))
-            return guid;
-        return UlidStringToGuid(parts.id);
-    }
-
-    /// <summary>
-    /// Converts a 26-char Crockford Base32 Ulid string to a Guid, for legacy worker keys.
-    /// NUlid on .NET 6+ used new Guid(ReadOnlySpan&lt;byte&gt;) which is big-endian,
-    /// unlike new Guid(byte[]) which has mixed-endian first 3 components.
-    /// </summary>
-    private static Guid UlidStringToGuid(string ulidString)
-    {
-        if (ulidString.Length != 26)
-            throw new FormatException($"Invalid worker ID format: '{ulidString}'. Expected a GUID or 26-char ULID.");
-
-        const string alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-        var upper = ulidString.ToUpperInvariant();
-        Span<byte> bytes = stackalloc byte[16];
-        var bits = new System.Collections.BitArray(130);
-        for (var i = 0; i < 26; i++)
-        {
-            var val = alphabet.IndexOf(upper[i]);
-            if (val < 0)
-                throw new FormatException($"Invalid character '{ulidString[i]}' in ULID string.");
-            for (var b = 4; b >= 0; b--)
-                bits[i * 5 + (4 - b)] = (val & (1 << b)) != 0;
-        }
-        for (var i = 0; i < 128; i++)
-            if (bits[i])
-                bytes[i / 8] |= (byte)(1 << (7 - (i % 8)));
-
-        // NUlid on .NET 6+ used new Guid(ReadOnlySpan<byte>) — big-endian, no byte swapping
-        return new Guid(bytes, bigEndian: true);
+        return Guid.Parse(parts.id);
     }
 
     public ECDsa GetWorkerPrivateKey()
