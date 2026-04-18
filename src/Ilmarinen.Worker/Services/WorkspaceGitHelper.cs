@@ -63,10 +63,14 @@ public static class WorkspaceGitHelper
             // Reset any modified/staged files from previous runs
             repo.Reset(ResetMode.Hard);
 
-            // Fetch latest
+            // Fetch latest (including forced tag updates, matching `git fetch --tags --force`)
             var remote = repo.Network.Remotes["origin"];
-            var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
-            var fetchOptions = new FetchOptions();
+            var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification)
+                .Concat(new[] { "+refs/tags/*:refs/tags/*" });
+            var fetchOptions = new FetchOptions
+            {
+                TagFetchMode = TagFetchMode.All,
+            };
             if (!string.IsNullOrEmpty(gitToken))
             {
                 fetchOptions.CredentialsProvider = (url, user, types) =>
