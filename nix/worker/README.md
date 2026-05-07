@@ -20,17 +20,16 @@ The worker is published as a self-contained executable — no .NET runtime is ne
    # Edit ilmarinen-secrets.nix with your server URL and worker key
    ```
 
-3. **Build and install the worker:**
+3. **Deploy:**
    ```bash
    ./deploy.sh
    ```
 
-4. **Apply the NixOS configuration:**
-   ```bash
-   sudo nixos-rebuild switch -I nixos-config=./configuration.nix
-   ```
+   The script enters its own `nix-shell` for the .NET SDK, builds and installs the
+   worker, applies the NixOS configuration, and restarts the service. No manual
+   `nix-shell` or `nixos-rebuild` step required.
 
-5. **Check the service:**
+4. **Check the service:**
    ```bash
    sudo systemctl status ilmarinen-worker
    journalctl -u ilmarinen-worker -f
@@ -55,12 +54,11 @@ You can also remove or comment out the `wsl.defaultUser` line and the `<nixos-ws
 
 ## Updating
 
-The server validates that workers are built from the same git commit. When the server is updated, re-run `deploy.sh` from the same commit and restart the service:
+The server validates that workers are built from the same git commit. When the server is updated, re-run `deploy.sh` from the same commit:
 
 ```bash
 git pull
 ./deploy.sh
-sudo systemctl restart ilmarinen-worker
 ```
 
 ## Configuration

@@ -46,44 +46,22 @@ that is **not** checked into source control:
 }
 ```
 
-### First-time setup
-
-1. Generate `nix/deps.json` if it hasn't been done yet:
-
-   ```bash
-   nix-shell nix/shell.nix
-   nix-build -A fetch-deps && ./result nix/deps.json
-   ```
-
-2. Deploy the worker binary and apply the NixOS configuration:
-
-   ```bash
-   ./nix/worker/deploy.sh
-   sudo nixos-rebuild switch -I nixos-config=./nix/worker/configuration.nix
-   ```
-
-3. Check that it's running:
-
-   ```bash
-   sudo systemctl status ilmarinen-worker
-   journalctl -u ilmarinen-worker -f
-   ```
-
-### Updating
-
-After pulling new changes:
+### Deploying
 
 ```bash
 ./nix/worker/deploy.sh
-sudo systemctl restart ilmarinen-worker
 ```
 
-If NuGet dependencies changed, regenerate deps first:
+The script enters its own `nix-shell`, builds and installs the worker, applies
+the NixOS configuration, and restarts the service. Then check it's running:
 
 ```bash
-nix-shell nix/shell.nix
-nix-build -A fetch-deps && ./result nix/deps.json
+sudo systemctl status ilmarinen-worker
+journalctl -u ilmarinen-worker -f
 ```
+
+If you've changed NuGet dependencies in a `.csproj`, regenerate `nix/deps.json`
+and commit it before deploying — see "Updating NuGet Dependencies" above.
 
 ### Configuration Notes
 
