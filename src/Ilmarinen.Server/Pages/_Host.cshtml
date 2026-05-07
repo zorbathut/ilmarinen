@@ -153,6 +153,17 @@
         }
         .connected { background-color: var(--success); }
         .disconnected { background-color: var(--error); }
+        .unhealthy { background-color: var(--badge-failed-bg); }
+        .diagnostic-status-healthy { color: var(--success); font-weight: 500; }
+        .diagnostic-status-unhealthy { color: var(--error); font-weight: 500; }
+        .diagnostic-status-running { color: var(--accent); font-weight: 500; }
+        .diagnostic-status-unknown { color: var(--text-secondary); }
+        .diagnostic-step-table { width: 100%; margin-top: 0.5rem; }
+        .diagnostic-step-table td { padding: 0.25rem 0.5rem; vertical-align: top; }
+        .diagnostic-step-ok { color: var(--success); font-weight: 500; }
+        .diagnostic-step-fail { color: var(--error); font-weight: 500; }
+        .diagnostic-step-message { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem; }
+        .diagnostic-step-suggestion { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem; font-style: italic; }
         a { color: var(--accent); text-decoration: none; }
         a:hover { text-decoration: underline; }
         .log-container {

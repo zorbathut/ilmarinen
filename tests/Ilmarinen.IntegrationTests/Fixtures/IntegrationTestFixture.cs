@@ -58,7 +58,9 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     private int _workerCount;
 
-    public async Task<Guid> StartWorkerAsync()
+    public Task<Guid> StartWorkerAsync() => StartWorkerAsync(diagnostic: null, waitForReady: true);
+
+    public async Task<Guid> StartWorkerAsync(Ilmarinen.Worker.Services.IWorkerDiagnostic? diagnostic, bool waitForReady)
     {
         // Pre-register the worker on the server to get auth credentials
         _workerCount++;
@@ -66,20 +68,48 @@ public class IntegrationTestFixture : IAsyncDisposable
         var registrationService = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
         var result = await registrationService.RegisterWorkerAsync($"test-worker-{_workerCount}");
 
-        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey);
+        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey, diagnostic);
         _workerHost = _workerBuilder.Build();
         _workerCts = new CancellationTokenSource();
 
         // Start worker in background
         _ = _workerHost.RunAsync(_workerCts.Token);
 
-        // Wait for worker to register
-        await WaitForWorkerRegistrationAsync(_workerBuilder.WorkerId);
+        if (waitForReady)
+        {
+            await WaitForWorkerReadyAsync(_workerBuilder.WorkerId);
+        }
+        else
+        {
+            await WaitForWorkerConnectionAsync(_workerBuilder.WorkerId);
+        }
 
         return _workerBuilder.WorkerId;
     }
 
-    private async Task WaitForWorkerRegistrationAsync(Guid workerId, int timeoutMs = 10000)
+    /// <summary>
+    /// Waits until the worker has connected and authenticated (does not require Ready).
+    /// Useful for tests of the not-ready path.
+    /// </summary>
+    public async Task WaitForWorkerConnectionAsync(Guid workerId, int timeoutMs = 30000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var scope = _factory.Services.CreateScope();
+            var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+            if (workers.FindConnectionIdByWorkerId(workerId) != null)
+                return;
+            await Task.Delay(100);
+        }
+        throw new TimeoutException($"Worker {workerId} did not connect within {timeoutMs}ms");
+    }
+
+    /// <summary>
+    /// Waits until the worker is connected, has run its startup diagnostic, and is Ready.
+    /// Default timeout includes time for the diagnostic to pull alpine and run a container.
+    /// </summary>
+    public async Task WaitForWorkerReadyAsync(Guid workerId, int timeoutMs = 60000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
 
@@ -88,8 +118,8 @@ public class IntegrationTestFixture : IAsyncDisposable
             using var scope = _factory.Services.CreateScope();
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-            var connectionId = workers.FindConnectionIdByWorkerId(workerId);
-            if (connectionId != null)
+            var view = await workers.GetByIdAsync(workerId);
+            if (view != null && view.IsReady)
             {
                 return;
             }
@@ -97,7 +127,8 @@ public class IntegrationTestFixture : IAsyncDisposable
             await Task.Delay(100);
         }
 
-        throw new TimeoutException($"Worker {workerId} did not register within {timeoutMs}ms");
+        throw new TimeoutException(
+            $"Worker {workerId} did not become Ready within {timeoutMs}ms");
     }
 
     public async Task<Guid> SubmitJobAsync(JobSubmission submission)
@@ -336,7 +367,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         _workerHost = _workerBuilder.Build();
         _workerCts = new CancellationTokenSource();
         _ = _workerHost.RunAsync(_workerCts.Token);
-        await WaitForWorkerRegistrationAsync(_workerBuilder.WorkerId);
+        await WaitForWorkerReadyAsync(_workerBuilder.WorkerId);
         return _workerBuilder.WorkerId;
     }
 

@@ -244,6 +244,30 @@ public class WorkerHub : Hub<IWorkerClient>
         return Task.CompletedTask;
     }
 
+    public Task ReportDiagnostic(DiagnosticReport report)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        // Reject reports from connections that haven't authenticated. The connection
+        // mapping is set in Authenticate(); without it we'd accept reports from any
+        // bare SignalR caller.
+        var worker = workers.GetByConnectionId(Context.ConnectionId);
+        if (worker == null)
+        {
+            _logger.LogWarning(
+                "Rejected ReportDiagnostic from unauthenticated connection {ConnectionId}",
+                Context.ConnectionId);
+            throw new HubException("Worker not authenticated.");
+        }
+
+        workers.SetDiagnostic(worker.Id, report);
+        _uiEvents.NotifyWorkersChanged();
+        _logger.LogInformation("Worker {WorkerId} diagnostic: {Status} - {Summary}",
+            worker.Id, report.Status, report.Summary);
+        return Task.CompletedTask;
+    }
+
     public async Task Heartbeat(WorkerHeartbeat status)
     {
         using var scope = _scopeFactory.CreateScope();

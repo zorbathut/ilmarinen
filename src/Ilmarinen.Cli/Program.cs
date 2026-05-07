@@ -5,10 +5,12 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Ilmarinen.Scripting;
 using System.IO;
+using System.Linq;
 using System.Net.Http.Json;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Threading;
 using System;
 
 CoconaLiteApp.Run<Commands>(args);
@@ -54,6 +56,67 @@ public class Commands
                 Console.Error.WriteLine(ex.StackTrace);
             return 1;
         }
+    }
+
+    /// <summary>Check that the local environment can run pipelines (Docker, network, agent API).</summary>
+    [Command("check")]
+    public async Task<int> Check()
+    {
+        await using var diagnostic = new DockerDiagnostic(workerContainerId: null);
+
+        // Cancel on Ctrl-C so the diagnostic's cleanup step still runs (otherwise the
+        // process gets killed mid-pull and we leak the diagnostic container/network).
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            if (!cts.IsCancellationRequested)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Cancelling — running cleanup...");
+                e.Cancel = true;
+                cts.Cancel();
+            }
+        };
+
+        var progress = new Progress<DiagnosticStepResult>(step =>
+        {
+            var status = step.Success ? "[ ok ]" : "[FAIL]";
+            var duration = FormatDuration(step.Duration);
+            Console.WriteLine($"{status} {step.Name} ({duration})");
+            if (!step.Success && step.Message != null)
+                Console.WriteLine($"       {step.Message}");
+            if (!step.Success && step.Suggestion != null)
+                Console.WriteLine($"       Suggestion: {step.Suggestion}");
+        });
+
+        DiagnosticReport report;
+        try
+        {
+            report = await diagnostic.RunAsync(progress, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Cancelled.");
+            return 130;
+        }
+
+        Console.WriteLine();
+        if (report.Status == DiagnosticStatus.Healthy)
+        {
+            Console.WriteLine("Healthy: all checks passed.");
+            return 0;
+        }
+
+        Console.WriteLine($"Unhealthy: {report.Summary}");
+        return 1;
+    }
+
+    private static string FormatDuration(TimeSpan d)
+    {
+        if (d.TotalSeconds < 1) return $"{d.TotalMilliseconds:0}ms";
+        if (d.TotalSeconds < 60) return $"{d.TotalSeconds:0.0}s";
+        return $"{(int)d.TotalMinutes}m{d.Seconds:00}s";
     }
 
     /// <summary>Submit a job to the server</summary>

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -22,29 +23,62 @@ public class WorkerService : BackgroundService
     private readonly WorkerConfig _config;
     private readonly Guid _workerId;
     private readonly WorkspaceManager _workspaceManager;
+    private readonly IWorkerDiagnostic _diagnostic;
     private readonly ILogger<WorkerService> _logger;
     private readonly MessageBuffer _messageBuffer = new();
     private HubConnection? _connection;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
-    private readonly object _jobLock = new();
+
+    // Single-activity gate. Job assignment and diagnostic each call TryEnter(...) and
+    // refuse if the worker is already doing the other thing.
+    private readonly object _activityLock = new();
+    private WorkerActivity _activity = WorkerActivity.Idle;
     private Guid? _currentJobId;
+
+    private DiagnosticReport? _lastDiagnostic;
+    private CancellationToken _stoppingToken;
 
     private Guid? CurrentJobId
     {
-        get { lock (_jobLock) return _currentJobId; }
-        set { lock (_jobLock) _currentJobId = value; }
+        get { lock (_activityLock) return _activity == WorkerActivity.RunningJob ? _currentJobId : null; }
     }
 
-    public WorkerService(WorkerConfig config, WorkspaceManager workspaceManager, ILogger<WorkerService> logger)
+    private bool TryEnterActivity(WorkerActivity activity, Guid? jobId)
+    {
+        lock (_activityLock)
+        {
+            if (_activity != WorkerActivity.Idle) return false;
+            _activity = activity;
+            _currentJobId = jobId;
+            return true;
+        }
+    }
+
+    private void ExitActivity()
+    {
+        lock (_activityLock)
+        {
+            _activity = WorkerActivity.Idle;
+            _currentJobId = null;
+        }
+    }
+
+    public WorkerService(
+        WorkerConfig config,
+        WorkspaceManager workspaceManager,
+        IWorkerDiagnostic diagnostic,
+        ILogger<WorkerService> logger)
     {
         _config = config;
         _workerId = config.GetWorkerId();
         _workspaceManager = workspaceManager;
+        _diagnostic = diagnostic;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _stoppingToken = stoppingToken;
         Directory.CreateDirectory(_config.WorkspacePath);
 
         // Discover Docker environment (host path for bind mounts, container ID for networking)
@@ -67,6 +101,7 @@ public class WorkerService : BackgroundService
         _connection.On<JobAssignment>("AssignJob", OnJobAssigned);
         _connection.On<string>("CancelJob", OnCancelJob);
         _connection.On<string>("DeleteWorkspace", OnDeleteWorkspace);
+        _connection.On("RunDiagnostic", OnRunDiagnostic);
 
         _connection.Reconnecting += _ =>
         {
@@ -77,11 +112,33 @@ public class WorkerService : BackgroundService
         _connection.Reconnected += async _ =>
         {
             _logger.LogInformation("Reconnected to server, re-authenticating...");
-            await ConnectAndSync();
+            try
+            {
+                await ConnectAndSync();
+            }
+            catch (Exception ex)
+            {
+                // If post-reconnect sync fails, force the connection to disconnected state
+                // so the heartbeat loop manually reconnects rather than leaving us as a
+                // zombie (connected, but server doesn't have our auth/diagnostic state).
+                _logger.LogError(ex, "ConnectAndSync after reconnect failed; tearing down connection to retry");
+                try { await _connection!.StopAsync(); } catch { }
+            }
         };
 
         await ConnectWithRetryAsync(stoppingToken);
-        await ConnectAndSync();
+        try
+        {
+            await ConnectAndSync();
+        }
+        catch (Exception ex)
+        {
+            // ConnectAndSync now does much more I/O than before (diagnostic + ReportDiagnostic).
+            // Don't fault the BackgroundService on a transient failure here — let the heartbeat
+            // loop notice the disconnected state and retry.
+            _logger.LogError(ex, "Initial ConnectAndSync failed; tearing down to retry via heartbeat loop");
+            try { await _connection.StopAsync(stoppingToken); } catch { }
+        }
 
         _logger.LogInformation("Worker {WorkerId} connected and ready", _workerId);
 
@@ -185,7 +242,8 @@ public class WorkerService : BackgroundService
 
     /// <summary>
     /// Re-authenticate with the server, replay buffered messages, reconcile state,
-    /// and signal ready only if no job is running.
+    /// run the startup diagnostic on first connect (cached on subsequent connects),
+    /// and signal ready only if no job is running and the diagnostic passed.
     /// </summary>
     private async Task ConnectAndSync()
     {
@@ -226,15 +284,146 @@ public class WorkerService : BackgroundService
             return;
         }
 
-        // Only signal ready if no job is running
-        if (currentJob == null)
+        // If a job is running we don't gate it on the diagnostic — the in-flight job
+        // is the source of truth. Skip Ready (the existing contract) and skip the diagnostic.
+        if (currentJob != null)
+            return;
+
+        // First connect ever: run the diagnostic. Subsequent reconnects re-push the cached
+        // result so the server reconstructs its state without re-running (and without
+        // the per-reconnect cost of an image pull / container run).
+        if (_lastDiagnostic == null)
+        {
+            _logger.LogInformation("Running startup diagnostic...");
+            try
+            {
+                _lastDiagnostic = await _diagnostic.RunAsync(_config.WorkerContainerId, _stoppingToken);
+                _logger.LogInformation("Startup diagnostic: {Status} - {Summary}",
+                    _lastDiagnostic.Status, _lastDiagnostic.Summary);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Diagnostic itself threw — treating as Unhealthy");
+                _lastDiagnostic = new DiagnosticReport
+                {
+                    Status = DiagnosticStatus.Unhealthy,
+                    Summary = $"Diagnostic threw: {ex.Message}",
+                    Steps = [],
+                    CheckedAt = DateTime.UtcNow
+                };
+            }
+        }
+
+        await _connection!.SendAsync("ReportDiagnostic", _lastDiagnostic);
+
+        if (_lastDiagnostic.Status == DiagnosticStatus.Healthy)
         {
             await _connection!.SendAsync("Ready");
+        }
+        else
+        {
+            _logger.LogWarning("Worker is online but not functional: {Summary}", _lastDiagnostic.Summary);
+        }
+    }
+
+    private Task OnRunDiagnostic()
+    {
+        // Fire-and-forget so the SignalR dispatch loop stays unblocked.
+        _ = ExecuteDiagnosticAsync();
+        return Task.CompletedTask;
+    }
+
+    private async Task ExecuteDiagnosticAsync()
+    {
+        if (!TryEnterActivity(WorkerActivity.RunningDiagnostic, jobId: null))
+        {
+            // Race: a job arrived (or was already running) before the worker received the
+            // RunDiagnostic request. The server marked us not-ready preparing to fire the
+            // diagnostic, but a job was already in-flight. Re-push the cached report so
+            // the UI doesn't sit on stale "Running" or pre-click state, and re-publish
+            // ready-on-healthy so the worker can pick up more jobs.
+            _logger.LogInformation("Cannot run diagnostic: worker is busy");
+            if (_lastDiagnostic != null)
+            {
+                await SendReliableAsync("ReportDiagnostic", _lastDiagnostic);
+                if (_lastDiagnostic.Status == DiagnosticStatus.Healthy)
+                    await SendReliableAsync("Ready");
+            }
+            return;
+        }
+
+        try
+        {
+            // The "Running" placeholder is a transient UI hint; don't buffer it. If the
+            // connection is dropped while it's queued, replaying it later (after the real
+            // result has already arrived) would briefly clobber the final report with a
+            // stale "Running" status.
+            try
+            {
+                if (_connection?.State == HubConnectionState.Connected)
+                {
+                    await _connection.SendAsync("ReportDiagnostic", new DiagnosticReport
+                    {
+                        Status = DiagnosticStatus.Running,
+                        Summary = "Running diagnostic...",
+                        Steps = [],
+                        CheckedAt = DateTime.UtcNow
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not push Running placeholder; will push final report when ready");
+            }
+
+            DiagnosticReport report;
+            try
+            {
+                report = await _diagnostic.RunAsync(_config.WorkerContainerId, _stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Diagnostic threw");
+                report = new DiagnosticReport
+                {
+                    Status = DiagnosticStatus.Unhealthy,
+                    Summary = $"Diagnostic threw: {ex.Message}",
+                    Steps = [],
+                    CheckedAt = DateTime.UtcNow
+                };
+            }
+
+            _lastDiagnostic = report;
+            await SendReliableAsync("ReportDiagnostic", report);
+
+            // Server flipped us not-ready before invoking the diagnostic. If we're healthy,
+            // ask to be marked ready again. If we're unhealthy, stay not-ready.
+            if (report.Status == DiagnosticStatus.Healthy)
+                await SendReliableAsync("Ready");
+        }
+        finally
+        {
+            ExitActivity();
         }
     }
 
     private Task OnJobAssigned(JobAssignment job)
     {
+        if (!TryEnterActivity(WorkerActivity.RunningJob, job.Id))
+        {
+            _logger.LogWarning(
+                "Job {JobId} assigned but worker is busy (current activity: {Activity}). Reporting failure.",
+                job.Id, _activity);
+            _ = SendReliableAsync("JobCompleted", job.Id, new JobResult
+            {
+                Id = job.Id,
+                Status = JobStatus.Failed,
+                Duration = TimeSpan.Zero,
+                Workspaces = _workspaceManager.DiscoverWorkspaces()
+            });
+            return Task.CompletedTask;
+        }
+
         // Return immediately so the SignalR dispatch loop stays unblocked
         // (otherwise CancelJob messages can't be delivered while a job is running)
         _ = ExecuteJobAsync(job);
@@ -250,66 +439,84 @@ public class WorkerService : BackgroundService
         var jobKey = job.Id.ToString();
         using var cts = new CancellationTokenSource();
         _runningJobs[jobKey] = cts;
-        CurrentJobId = job.Id;
 
+        // Use try/finally to guarantee activity-state cleanup. If a catch handler itself
+        // throws (e.g. WorkspaceManager.DiscoverWorkspaces failing during shutdown), we
+        // would otherwise leave _activity stuck at RunningJob and refuse all future work.
+        JobResult result;
         try
         {
-            await SendReliableAsync("JobStarted", job.Id);
-
-            var runner = new JobRunner(_config, _workspaceManager, job, _connection!, _logger, logCollector);
-            var result = await runner.ExecuteAsync(cts.Token);
-
-            var status = cts.IsCancellationRequested ? JobStatus.Cancelled : result.Status;
-
-            result = result with
+            try
             {
-                Status = status,
-                Duration = DateTime.UtcNow - startTime,
-                Workspaces = _workspaceManager.DiscoverWorkspaces()
-            };
+                await SendReliableAsync("JobStarted", job.Id);
 
-            await logCollector.FlushAsync();
-            await SendReliableAsync("JobCompleted", job.Id, result);
-            _logger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
-        }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            _logger.LogInformation("Job {JobId} was cancelled", job.Id);
+                var runner = new JobRunner(_config, _workspaceManager, job, _connection!, _logger, logCollector);
+                var runResult = await runner.ExecuteAsync(cts.Token);
 
-            logCollector.WriteStderr("Job cancelled.");
-            await TryFlushLogsAsync(logCollector);
+                var status = cts.IsCancellationRequested ? JobStatus.Cancelled : runResult.Status;
 
-            await SendReliableAsync("JobCompleted", job.Id, new JobResult
+                result = runResult with
+                {
+                    Status = status,
+                    Duration = DateTime.UtcNow - startTime,
+                    Workspaces = SafeDiscoverWorkspaces()
+                };
+
+                await logCollector.FlushAsync();
+                _logger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
-                Id = job.Id,
-                Status = JobStatus.Cancelled,
-                Duration = DateTime.UtcNow - startTime,
-                Workspaces = _workspaceManager.DiscoverWorkspaces()
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Job {JobId} failed with exception", job.Id);
+                _logger.LogInformation("Job {JobId} was cancelled", job.Id);
 
-            logCollector.WriteStderr($"Job failed with exception: {ex}");
-            await TryFlushLogsAsync(logCollector);
+                logCollector.WriteStderr("Job cancelled.");
+                await TryFlushLogsAsync(logCollector);
 
-            await SendReliableAsync("JobCompleted", job.Id, new JobResult
+                result = new JobResult
+                {
+                    Id = job.Id,
+                    Status = JobStatus.Cancelled,
+                    Duration = DateTime.UtcNow - startTime,
+                    Workspaces = SafeDiscoverWorkspaces()
+                };
+            }
+            catch (Exception ex)
             {
-                Id = job.Id,
-                Status = JobStatus.Failed,
-                Duration = DateTime.UtcNow - startTime,
-                Workspaces = _workspaceManager.DiscoverWorkspaces()
-            });
+                _logger.LogError(ex, "Job {JobId} failed with exception", job.Id);
+
+                logCollector.WriteStderr($"Job failed with exception: {ex}");
+                await TryFlushLogsAsync(logCollector);
+
+                result = new JobResult
+                {
+                    Id = job.Id,
+                    Status = JobStatus.Failed,
+                    Duration = DateTime.UtcNow - startTime,
+                    Workspaces = SafeDiscoverWorkspaces()
+                };
+            }
         }
         finally
         {
+            // Clear activity BEFORE notifying the server so that when the server marks us
+            // ready and immediately assigns the next job, our state machine accepts it.
+            // Done in finally so we don't leak the activity flag if a catch handler throws.
             _runningJobs.TryRemove(jobKey, out _);
-            CurrentJobId = null;
+            ExitActivity();
         }
 
-        // Signal ready for next job
+        await SendReliableAsync("JobCompleted", job.Id, result);
         await SendReliableAsync("Ready");
+    }
+
+    private IReadOnlyList<WorkspaceInfo> SafeDiscoverWorkspaces()
+    {
+        try { return _workspaceManager.DiscoverWorkspaces(); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "DiscoverWorkspaces failed; continuing with empty list");
+            return [];
+        }
     }
 
     /// <summary>
@@ -431,4 +638,11 @@ public class WorkerService : BackgroundService
         // Fallback: assume we're not in Docker, paths are the same
         return (_config.WorkspacePath, null);
     }
+}
+
+internal enum WorkerActivity
+{
+    Idle,
+    RunningJob,
+    RunningDiagnostic
 }

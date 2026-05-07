@@ -1,5 +1,7 @@
 @page "/workers/{Id}"
 @using Ilmarinen.Models
+@using Ilmarinen.Protocol
+@using Ilmarinen.Protocol.Requests
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Hubs
 @using Ilmarinen.Server.Services
@@ -27,8 +29,8 @@
 
             <span class="detail-label">Status</span>
             <span class="detail-value">
-                <span class="connection-badge @(worker.IsConnected ? "connected" : "disconnected")"></span>
-                @(worker.IsConnected ? (worker.IsReady ? "Ready" : "Busy") : "Offline")
+                <span class="connection-badge @GetBadgeClass(worker)"></span>
+                @GetStatusLabel(worker)
             </span>
 
             <span class="detail-label">Current Jobs</span>
@@ -87,6 +89,77 @@
     }
 
     <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title">Diagnostic</h2>
+        @if (worker.Diagnostic != null)
+        {
+            <div class="detail-grid">
+                <span class="detail-label">Status</span>
+                <span class="detail-value diagnostic-status-@worker.Diagnostic.Status.ToString().ToLower()">
+                    @worker.Diagnostic.Status
+                </span>
+
+                <span class="detail-label">Summary</span>
+                <span class="detail-value">@worker.Diagnostic.Summary</span>
+
+                <span class="detail-label">Last checked</span>
+                <span class="detail-value">@worker.Diagnostic.CheckedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</span>
+            </div>
+
+            @if (worker.Diagnostic.Steps.Count > 0)
+            {
+                <table class="diagnostic-step-table" style="margin-top: 1rem;">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th>Step</th>
+                            <th>Duration</th>
+                            <th>Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var step in worker.Diagnostic.Steps)
+                        {
+                            <tr>
+                                <td class="@(step.Success ? "diagnostic-step-ok" : "diagnostic-step-fail")">
+                                    @(step.Success ? "ok" : "FAIL")
+                                </td>
+                                <td><code>@step.Name</code></td>
+                                <td>@FormatDuration(step.Duration)</td>
+                                <td>
+                                    @if (step.Message != null)
+                                    {
+                                        <div class="diagnostic-step-message">@step.Message</div>
+                                    }
+                                    @if (step.Suggestion != null)
+                                    {
+                                        <div class="diagnostic-step-suggestion">Hint: @step.Suggestion</div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+        else
+        {
+            <p style="color: var(--text-secondary);">No diagnostic reported yet.</p>
+        }
+
+        <div style="margin-top: 1rem;">
+            <button @onclick="RunDiagnostic"
+                    disabled="@(!CanRunDiagnostic())"
+                    title="@(CanRunDiagnostic() ? "" : "Worker is busy or offline")">
+                @(IsDiagnosticRunning() ? "Running..." : "Run diagnostic")
+            </button>
+            @if (diagnosticError != null)
+            {
+                <span style="margin-left: 1rem; color: var(--error);">@diagnosticError</span>
+            }
+        </div>
+    </div>
+
+    <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Job History</h2>
         <table>
             <thead>
@@ -142,7 +215,65 @@ else
     private bool loading = true;
     private HashSet<string> deletingWorkspaces = new();
     private string? deleteError;
+    private string? diagnosticError;
     private Timer? _timer;
+
+    private static string GetBadgeClass(WorkerView w)
+    {
+        if (!w.IsConnected) return "disconnected";
+        if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy) return "unhealthy";
+        return "connected";
+    }
+
+    private static string GetStatusLabel(WorkerView w)
+    {
+        if (!w.IsConnected) return "Offline";
+        if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy) return "Unhealthy";
+        return w.IsReady ? "Ready" : "Busy";
+    }
+
+    private bool IsDiagnosticRunning() =>
+        worker?.Diagnostic?.Status == DiagnosticStatus.Running;
+
+    private bool CanRunDiagnostic() =>
+        worker != null && worker.IsConnected && worker.CurrentJobs.Count == 0 && !IsDiagnosticRunning();
+
+    private static string FormatDuration(TimeSpan d)
+    {
+        if (d.TotalSeconds < 1) return $"{d.TotalMilliseconds:0}ms";
+        if (d.TotalSeconds < 60) return $"{d.TotalSeconds:0.0}s";
+        return $"{(int)d.TotalMinutes}m{d.Seconds:00}s";
+    }
+
+    private async Task RunDiagnostic()
+    {
+        diagnosticError = null;
+        if (!Guid.TryParse(Id, out var workerId))
+            return;
+
+        using var scope = ScopeFactory.CreateScope();
+        var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        var connectionId = workerRepo.FindConnectionIdByWorkerId(workerId);
+        if (connectionId == null)
+        {
+            diagnosticError = "Worker not connected.";
+            return;
+        }
+
+        // Mark not-ready before invoking so the scheduler doesn't race a job onto the worker
+        // while the diagnostic is running.
+        workerRepo.SetReady(connectionId, false);
+        UIEvents.NotifyWorkersChanged();
+
+        try
+        {
+            await HubContext.Clients.Client(connectionId).RunDiagnostic();
+        }
+        catch (Exception ex)
+        {
+            diagnosticError = $"Failed to dispatch diagnostic: {ex.Message}";
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {

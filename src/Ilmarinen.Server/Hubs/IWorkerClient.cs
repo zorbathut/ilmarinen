@@ -9,4 +9,5 @@ public interface IWorkerClient
     Task CancelJob(string jobId);
     Task Ping();
     Task DeleteWorkspace(string workspaceName);
+    Task RunDiagnostic();
 }

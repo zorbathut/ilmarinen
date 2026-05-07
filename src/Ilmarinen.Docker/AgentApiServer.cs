@@ -108,15 +108,24 @@ public class AgentApiServer : IAsyncDisposable
                 return;
             }
 
+            var path = request.Url?.AbsolutePath ?? "";
+            var method = request.HttpMethod;
+
+            // Ping is available without a job context — used by the diagnostic to
+            // verify a container can reach the agent API server (the most common
+            // DinD networking failure mode).
+            if (method == "GET" && path == "/api/ping")
+            {
+                await WriteJsonResponse(response, new { status = "ok" });
+                return;
+            }
+
             if (_currentContext == null)
             {
                 response.StatusCode = 503;
                 await WriteJsonResponse(response, new { error = "No active context" });
                 return;
             }
-
-            var path = request.Url?.AbsolutePath ?? "";
-            var method = request.HttpMethod;
 
             // Route requests
             if (method == "POST" && path == "/api/run")

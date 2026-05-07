@@ -4,7 +4,6 @@ using Ilmarinen.Models;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System;
@@ -45,7 +44,7 @@ public class PipelineRunner
         Func<string, string?, Task<ArtifactRef>>? artifactSaver = null,
         Action<string, string>? onOutput = null)
     {
-        _client = CreateDockerClient();
+        _client = DockerClientFactory.Create();
         _workDir = workDir ?? Directory.GetCurrentDirectory();
         _hostWorkDir = hostWorkDir ?? _workDir;
         _workerContainerId = workerContainerId;
@@ -54,23 +53,6 @@ public class PipelineRunner
         _onOutput = onOutput;
         _userSpec = LinuxInterop.GetUserSpec();
         _dockerSocketGid = LinuxInterop.GetDockerSocketGid();
-    }
-
-    private static DockerClient CreateDockerClient()
-    {
-        var dockerHost = Environment.GetEnvironmentVariable("DOCKER_HOST");
-
-        if (!string.IsNullOrEmpty(dockerHost))
-        {
-            return new DockerClientConfiguration(new Uri(dockerHost)).CreateClient();
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return new DockerClientConfiguration(new Uri("npipe://./pipe/docker_engine")).CreateClient();
-        }
-
-        return new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock")).CreateClient();
     }
 
     /// <summary>

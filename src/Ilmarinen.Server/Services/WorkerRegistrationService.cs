@@ -12,11 +12,13 @@ public class WorkerRegistrationService
 {
     private readonly IlmarinenDbContext _db;
     private readonly ServerKeyService _serverKey;
+    private readonly WorkerRepository _workers;
 
-    public WorkerRegistrationService(IlmarinenDbContext db, ServerKeyService serverKey)
+    public WorkerRegistrationService(IlmarinenDbContext db, ServerKeyService serverKey, WorkerRepository workers)
     {
         _db = db;
         _serverKey = serverKey;
+        _workers = workers;
     }
 
     public async Task<WorkerRegistrationResult> RegisterWorkerAsync(string name)
@@ -75,6 +77,7 @@ public class WorkerRegistrationService
 
         _db.Workers.Remove(worker);
         await _db.SaveChangesAsync();
+        _workers.ClearDiagnostic(workerId);
     }
 }
 
