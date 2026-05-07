@@ -11,6 +11,7 @@ public enum FailureKind
     ContainerCreateFailed,
     ContainerExecFailed,
     OutputMismatch,
+    ContainerDnsFailure,
     AgentApiUnreachable,
     Timeout
 }

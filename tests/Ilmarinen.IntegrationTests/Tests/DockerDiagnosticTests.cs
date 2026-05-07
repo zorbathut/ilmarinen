@@ -23,11 +23,11 @@ public class DockerDiagnosticTests
         Assert.That(report.Status, Is.EqualTo(DiagnosticStatus.Healthy),
             $"Expected Healthy, got {report.Status}. Summary: {report.Summary}. " +
             $"Steps: {string.Join("; ", report.Steps.Select(s => $"{s.Name}={s.Success}"))}");
-        Assert.That(report.Steps, Has.Count.EqualTo(6));
+        Assert.That(report.Steps, Has.Count.EqualTo(7));
         Assert.That(report.Steps.Select(s => s.Name), Is.EqualTo(new[]
         {
             "docker_daemon", "image_pull", "container_run",
-            "output_capture", "agent_api_reachability", "cleanup"
+            "output_capture", "container_internet", "agent_api_reachability", "cleanup"
         }));
         Assert.That(report.Steps.All(s => s.Success), Is.True,
             $"Expected all steps successful. Failures: {string.Join("; ", report.Steps.Where(s => !s.Success).Select(s => $"{s.Name}: {s.Message}"))}");

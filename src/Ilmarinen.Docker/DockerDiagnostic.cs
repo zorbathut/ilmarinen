@@ -97,6 +97,7 @@ public class DockerDiagnostic : IAsyncDisposable
         await RunStep("image_pull", CheckImagePullAsync, isFatal: true);
         await RunStep("container_run", CheckContainerRunAsync, isFatal: true);
         await RunStep("output_capture", CheckOutputCaptureAsync, isFatal: true);
+        await RunStep("container_internet", CheckContainerInternetAsync, isFatal: true);
         await RunStep("agent_api_reachability", CheckAgentApiReachabilityAsync, isFatal: true);
         await RunStep("cleanup", CleanupAsync, isFatal: false);
 
@@ -142,19 +143,16 @@ public class DockerDiagnostic : IAsyncDisposable
     {
         try
         {
-            try
-            {
-                await _client.Images.InspectImageAsync(TestImage, ct);
-                return Ok($"{TestImage} (already cached)");
-            }
-            catch (DockerImageNotFoundException) { }
-
+            // Always call CreateImageAsync, even if the image looks cached locally. Docker
+            // still contacts the registry to verify the manifest is up-to-date — that's
+            // exactly the round-trip we want to test. If layers are unchanged, no bytes
+            // are downloaded; the check is fast (~hundreds of ms) but real.
             await _client.Images.CreateImageAsync(
                 new ImagesCreateParameters { FromImage = TestImage },
                 null,
                 new Progress<JSONMessage>(),
                 ct);
-            return Ok($"Pulled {TestImage}");
+            return Ok($"Registry reachable for {TestImage}");
         }
         catch (Exception ex)
         {
@@ -270,6 +268,37 @@ public class DockerDiagnostic : IAsyncDisposable
         catch (Exception ex)
         {
             return Fail($"Exec failed: {ex.Message}", FailureKind.ContainerExecFailed, null);
+        }
+    }
+
+    private async Task<DiagnosticStepResult> CheckContainerInternetAsync(CancellationToken ct)
+    {
+        if (_testContainerId == null)
+            return Fail("No test container available", FailureKind.Unknown, null);
+
+        try
+        {
+            // Tests Docker's embedded DNS resolver (127.0.0.11) — the path real pipelines
+            // use during `docker build` metadata fetch and any RUN step that hits the
+            // network. This is *different* from the daemon's pull-time DNS, so a worker
+            // can have host DNS working (image_pull passes) but container DNS broken.
+            // busybox provides nslookup in alpine; exit 0 on resolve, non-zero on failure.
+            var (stdout, stderr, exitCode) = await ExecAsync(
+                _testContainerId, ["nslookup", "docker.io"]);
+
+            if (exitCode != 0)
+            {
+                return Fail(
+                    $"nslookup docker.io failed (exit {exitCode}): {Truncate(stderr.Length > 0 ? stderr : stdout, 200)}",
+                    FailureKind.ContainerDnsFailure,
+                    "DNS resolution from inside containers is broken. Pipelines that fetch image metadata or RUN commands needing the network will fail. Usually a misconfigured Docker embedded DNS or stale daemon — try restarting the daemon, or check that the host's /etc/resolv.conf has reachable nameservers.");
+            }
+
+            return Ok("Container resolved docker.io");
+        }
+        catch (Exception ex)
+        {
+            return Fail($"DNS check failed: {ex.Message}", FailureKind.ContainerDnsFailure, null);
         }
     }
 
