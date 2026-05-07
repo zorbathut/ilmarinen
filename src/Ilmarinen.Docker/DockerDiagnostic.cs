@@ -94,10 +94,11 @@ public class DockerDiagnostic : IAsyncDisposable
         }
 
         await RunStep("docker_daemon", CheckDaemonAsync, isFatal: true);
+        await RunStep("dns_worker", CheckWorkerDnsAsync, isFatal: true);
         await RunStep("image_pull", CheckImagePullAsync, isFatal: true);
         await RunStep("container_run", CheckContainerRunAsync, isFatal: true);
         await RunStep("output_capture", CheckOutputCaptureAsync, isFatal: true);
-        await RunStep("container_internet", CheckContainerInternetAsync, isFatal: true);
+        await RunStep("dns_container", CheckContainerDnsAsync, isFatal: true);
         await RunStep("agent_api_reachability", CheckAgentApiReachabilityAsync, isFatal: true);
         await RunStep("cleanup", CleanupAsync, isFatal: false);
 
@@ -271,7 +272,27 @@ public class DockerDiagnostic : IAsyncDisposable
         }
     }
 
-    private async Task<DiagnosticStepResult> CheckContainerInternetAsync(CancellationToken ct)
+    private async Task<DiagnosticStepResult> CheckWorkerDnsAsync(CancellationToken ct)
+    {
+        // Resolve from the worker host itself via the OS resolver. Pairs with dns_container:
+        // if dns_worker fails, host DNS is broken (resolv.conf, network); if dns_worker
+        // passes but dns_container fails, the failure is specifically Docker's embedded
+        // resolver forwarding (127.0.0.11), not the host.
+        try
+        {
+            var entry = await System.Net.Dns.GetHostEntryAsync("docker.io", ct);
+            var addr = entry.AddressList.Length > 0 ? entry.AddressList[0].ToString() : "(no address)";
+            return Ok($"Worker resolved docker.io to {addr}");
+        }
+        catch (Exception ex)
+        {
+            return Fail($"Worker could not resolve docker.io: {ex.Message}",
+                FailureKind.WorkerDnsFailure,
+                "The worker host itself cannot resolve DNS. Check /etc/resolv.conf and that the configured nameservers are reachable. Image pulls will also fail until this is fixed.");
+        }
+    }
+
+    private async Task<DiagnosticStepResult> CheckContainerDnsAsync(CancellationToken ct)
     {
         if (_testContainerId == null)
             return Fail("No test container available", FailureKind.Unknown, null);
@@ -280,8 +301,7 @@ public class DockerDiagnostic : IAsyncDisposable
         {
             // Tests Docker's embedded DNS resolver (127.0.0.11) — the path real pipelines
             // use during `docker build` metadata fetch and any RUN step that hits the
-            // network. This is *different* from the daemon's pull-time DNS, so a worker
-            // can have host DNS working (image_pull passes) but container DNS broken.
+            // network. Distinct from the host resolver tested by dns_worker.
             // busybox provides nslookup in alpine; exit 0 on resolve, non-zero on failure.
             var (stdout, stderr, exitCode) = await ExecAsync(
                 _testContainerId, ["nslookup", "docker.io"]);
@@ -291,7 +311,7 @@ public class DockerDiagnostic : IAsyncDisposable
                 return Fail(
                     $"nslookup docker.io failed (exit {exitCode}): {Truncate(stderr.Length > 0 ? stderr : stdout, 200)}",
                     FailureKind.ContainerDnsFailure,
-                    "DNS resolution from inside containers is broken. Pipelines that fetch image metadata or RUN commands needing the network will fail. Usually a misconfigured Docker embedded DNS or stale daemon — try restarting the daemon, or check that the host's /etc/resolv.conf has reachable nameservers.");
+                    "DNS works on the host (dns_worker passed) but not inside containers. Docker's embedded resolver at 127.0.0.11 is failing to forward queries. Usually a stale daemon — try restarting Docker.");
             }
 
             return Ok("Container resolved docker.io");
