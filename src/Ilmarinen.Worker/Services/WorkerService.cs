@@ -505,8 +505,10 @@ public class WorkerService : BackgroundService
             ExitActivity();
         }
 
+        // The server's JobCompleted handler marks this worker ready and dispatches the
+        // next queued job. Sending an explicit Ready here too would double-trigger
+        // dispatch and could stack a second job on this worker.
         await SendReliableAsync("JobCompleted", job.Id, result);
-        await SendReliableAsync("Ready");
     }
 
     private IReadOnlyList<WorkspaceInfo> SafeDiscoverWorkspaces()

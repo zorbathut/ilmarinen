@@ -194,7 +194,6 @@ public class WorkerRepository
 
         var connectionId = FindConnectionIdByWorkerId(w.Id);
         var isConnected = connectionId != null;
-        var isReady = connectionId != null && _readyWorkers.ContainsKey(connectionId);
 
         ImmutableList<WorkspaceInfo>? workspaces = null;
         DiagnosticReport? diagnostic = null;
@@ -206,6 +205,12 @@ public class WorkerRepository
             .Where(j => j.WorkerId == id && j.Status == JobStatus.Running)
             .Select(j => j.Id)
             .ToListAsync();
+
+        // A worker holding a Running job is never ready, even if the in-memory flag
+        // still says so — the flag can lag reality until the next assignment attempt.
+        var isReady = connectionId != null
+            && _readyWorkers.ContainsKey(connectionId)
+            && currentJobIds.Count == 0;
 
         return new WorkerView
         {
@@ -242,7 +247,9 @@ public class WorkerRepository
         {
             var connectionId = FindConnectionIdByWorkerId(w.Id);
             var isConnected = connectionId != null;
-            var isReady = connectionId != null && _readyWorkers.ContainsKey(connectionId);
+            var isReady = connectionId != null
+                && _readyWorkers.ContainsKey(connectionId)
+                && !workerToJobs[w.Id].Any();
 
             ImmutableList<WorkspaceInfo>? workspaces = null;
             DiagnosticReport? diagnostic = null;

@@ -1,0 +1,158 @@
+using Ilmarinen.Database;
+using Ilmarinen.IntegrationTests.Fixtures;
+using Ilmarinen.Protocol;
+using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Server.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using NUnit.Framework;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+namespace Ilmarinen.IntegrationTests.Tests;
+
+/// <summary>
+/// Exercises <see cref="JobScheduler"/> against a single connected worker without a
+/// real worker process, by driving the same WorkerRepository/JobScheduler calls the
+/// WorkerHub makes. The invariant under test: a worker must never have more than one
+/// job dispatched to it at once, no matter how readiness signals overlap.
+/// </summary>
+[TestFixture]
+[Category("Integration")]
+public class JobSchedulingTests
+{
+    private IntegrationTestFixture _fixture = null!;
+
+    [SetUp]
+    public async Task SetUp()
+    {
+        _fixture = new IntegrationTestFixture();
+        await _fixture.SetupAsync();
+    }
+
+    [TearDown]
+    public async Task TearDown()
+    {
+        await _fixture.DisposeAsync();
+    }
+
+    private static JobSubmission Submission() => new()
+    {
+        RepoUrl = "https://example.invalid/repo.git",
+        Ref = "master",
+        ScriptPath = "pipeline.csx",
+        GitTokenMode = GitTokenMode.None
+    };
+
+    private async Task<Guid> RegisterReadyWorkerAsync(string connectionId)
+    {
+        using var scope = _fixture.Services.CreateScope();
+        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
+        var result = await registration.RegisterWorkerAsync($"sched-test-{Guid.NewGuid():N}");
+
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        await workers.ConnectAsync(connectionId, result.WorkerId);
+        workers.SetReady(connectionId, true);
+
+        return result.WorkerId;
+    }
+
+    private async Task<int> RunningJobCountAsync(Guid workerId)
+    {
+        using var scope = _fixture.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        return await db.Jobs.CountAsync(j => j.WorkerId == workerId && j.Status == JobStatus.Running);
+    }
+
+    [Test]
+    public async Task JobCompletedThenReady_AssignsOnlyOneJob()
+    {
+        const string conn = "conn-completed-then-ready";
+        var workerId = await RegisterReadyWorkerAsync(conn);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+
+        // First job is dispatched immediately to the idle worker.
+        var job1 = await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1), "first job should be assigned");
+
+        // Two more jobs queue up while the worker is busy.
+        await scheduler.EnqueueJobAsync(Submission());
+        await scheduler.EnqueueJobAsync(Submission());
+
+        // The worker finishes job1. WorkerHub.JobCompleted marks the worker ready and
+        // tries to assign; the worker then *also* sends an explicit Ready, which the hub
+        // handles the same way. Both signals must not result in two simultaneous jobs.
+        await scheduler.CompleteJobAsync(job1, new JobResult { Id = job1, Status = JobStatus.Success });
+
+        workers.SetReady(conn, true);
+        await scheduler.TryAssignJobAsync(conn); // JobCompleted path
+
+        workers.SetReady(conn, true);
+        await scheduler.TryAssignJobAsync(conn); // redundant Ready path
+
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1),
+            "a worker must never have more than one job running at once");
+    }
+
+    [Test]
+    public async Task Ready_WhileWorkerHasRunningJob_DoesNotLeaveWorkerReady()
+    {
+        const string conn = "conn-ready-while-busy";
+        var workerId = await RegisterReadyWorkerAsync(conn);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+
+        await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
+
+        // A stray Ready arrives while the worker is still running its job.
+        workers.SetReady(conn, true);
+        await scheduler.TryAssignJobAsync(conn);
+
+        Assert.That(workers.GetByConnectionId(conn)!.IsReady, Is.False,
+            "a worker with a running job must not be marked ready");
+
+        // The UI-facing readers must agree — a worker shown as Ready while a job runs
+        // is the impossible state users reported.
+        var view = await workers.GetByIdAsync(workerId);
+        Assert.That(view!.IsReady, Is.False);
+        Assert.That(view.CurrentJobs, Has.Count.EqualTo(1));
+
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task ConcurrentAssignAttempts_NeverDoubleDispatch()
+    {
+        const string conn = "conn-concurrent";
+        var workerId = await RegisterReadyWorkerAsync(conn);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+
+        // First job is dispatched on enqueue; the rest queue up behind the busy worker.
+        var jobIds = new List<Guid>();
+        for (var i = 0; i < 6; i++)
+            jobIds.Add(await scheduler.EnqueueJobAsync(Submission()));
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
+
+        // The worker finishes. Fire many assignment attempts at once — the overlap
+        // produced by JobCompleted, Ready, and EnqueueJob racing on one connection.
+        // Only one job may land on the worker.
+        await scheduler.CompleteJobAsync(jobIds[0], new JobResult { Id = jobIds[0], Status = JobStatus.Success });
+        workers.SetReady(conn, true);
+
+        var attempts = Enumerable.Range(0, 8)
+            .Select(_ => Task.Run(() => scheduler.TryAssignJobAsync(conn)));
+        await Task.WhenAll(attempts);
+
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1),
+            "concurrent assignment attempts must not stack jobs on one worker");
+    }
+}
