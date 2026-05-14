@@ -3,22 +3,28 @@ using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 
 /// <summary>
-/// Exercises <see cref="JobScheduler"/> against a single connected worker without a
-/// real worker process, by driving the same WorkerRepository/JobScheduler calls the
-/// WorkerHub makes. The invariant under test: a worker must never have more than one
-/// job dispatched to it at once, no matter how readiness signals overlap.
+/// Exercises <see cref="JobScheduler"/> and <see cref="WorkerHub"/> against a single
+/// connected worker without a real worker process, by driving the same scheduler/hub
+/// calls a worker would. The invariant under test: a worker must never have more than
+/// one job dispatched to it at once, no matter how readiness signals overlap.
 /// </summary>
 [TestFixture]
 [Category("Integration")]
@@ -66,6 +72,22 @@ public class JobSchedulingTests
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
         return await db.Jobs.CountAsync(j => j.WorkerId == workerId && j.Status == JobStatus.Running);
     }
+
+    private async Task<JobStatus> JobStatusAsync(Guid jobId)
+    {
+        using var scope = _fixture.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        return (await db.Jobs.FirstAsync(j => j.Id == jobId)).Status;
+    }
+
+    private WorkerHub MakeHub(string connectionId) => new(
+        _fixture.Services.GetRequiredService<IServiceScopeFactory>(),
+        _fixture.Services.GetRequiredService<ServerKeyService>(),
+        _fixture.Services.GetRequiredService<UIEventService>(),
+        _fixture.Services.GetRequiredService<ILogger<WorkerHub>>())
+    {
+        Context = new FakeHubCallerContext(connectionId)
+    };
 
     [Test]
     public async Task JobCompletedThenReady_AssignsOnlyOneJob()
@@ -154,5 +176,38 @@ public class JobSchedulingTests
 
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1),
             "concurrent assignment attempts must not stack jobs on one worker");
+    }
+
+    [Test]
+    public async Task JobCompleted_ForAJobTheWorkerIsNotRunning_IsIgnored()
+    {
+        const string conn = "conn-stale-completion";
+        var workerId = await RegisterReadyWorkerAsync(conn);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+
+        // The worker is busy with its real job; a second job sits Queued, unassigned.
+        var realJob = await scheduler.EnqueueJobAsync(Submission());
+        var queuedJob = await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
+
+        // A confused/stale JobCompleted arrives naming the queued job — one this worker
+        // never ran. The hub must not mark it complete or free the busy worker.
+        await MakeHub(conn).JobCompleted(queuedJob, new JobResult { Id = queuedJob, Status = JobStatus.Success });
+
+        Assert.That(await JobStatusAsync(queuedJob), Is.EqualTo(JobStatus.Queued),
+            "a JobCompleted for a job the worker isn't running must not change that job");
+        Assert.That(await JobStatusAsync(realJob), Is.EqualTo(JobStatus.Running));
+    }
+
+    private sealed class FakeHubCallerContext(string connectionId) : HubCallerContext
+    {
+        public override string ConnectionId { get; } = connectionId;
+        public override string? UserIdentifier => null;
+        public override ClaimsPrincipal? User => null;
+        public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
+        public override IFeatureCollection Features { get; } = new FeatureCollection();
+        public override CancellationToken ConnectionAborted => CancellationToken.None;
+        public override void Abort() { }
     }
 }

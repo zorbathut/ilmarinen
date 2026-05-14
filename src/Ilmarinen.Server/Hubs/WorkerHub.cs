@@ -217,7 +217,29 @@ public class WorkerHub : Hub<IWorkerClient>
         using var scope = _scopeFactory.CreateScope();
         var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
         var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
+
+        var worker = workers.GetByConnectionId(Context.ConnectionId);
+        if (worker == null)
+        {
+            _logger.LogWarning(
+                "Rejected JobCompleted for {JobId} from unauthenticated connection {ConnectionId}",
+                jobId, Context.ConnectionId);
+            throw new HubException("Worker not authenticated.");
+        }
+
+        // A worker runs one job at a time. A JobCompleted naming anything other than
+        // its current assignment is a stale or confused message — acting on it would
+        // mark the wrong job complete and free a still-busy worker for more work.
+        var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
+        if (runningJob != null && runningJob != jobId)
+        {
+            _logger.LogWarning(
+                "Worker {WorkerId} reported JobCompleted for {JobId} but its running job is {RunningJobId}; ignoring",
+                worker.Id, jobId, runningJob.Value);
+            return;
+        }
 
         _logger.LogInformation("Job completed: {JobId} - {Status}", jobId, result.Status);
         await scheduler.CompleteJobAsync(jobId, result);
