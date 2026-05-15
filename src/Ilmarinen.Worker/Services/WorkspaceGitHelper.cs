@@ -1,7 +1,6 @@
 using LibGit2Sharp;
-using System.IO;
-using System.Linq;
 using System;
+using System.IO;
 
 namespace Ilmarinen.Worker.Services;
 
@@ -63,12 +62,21 @@ public static class WorkspaceGitHelper
             // Reset any modified/staged files from previous runs
             repo.Reset(ResetMode.Hard);
 
-            // Fetch latest (including forced tag updates, matching `git fetch --tags --force`)
+            // The persistent workspace is a cache; the remote is authoritative.
+            // Force-fetch all branches and tags (the leading `+` overwrites local refs
+            // on non-fast-forward updates), and prune anything deleted on the remote.
             var remote = repo.Network.Remotes["origin"];
-            var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification)
-                .Concat(new[] { "+refs/tags/*:refs/tags/*" });
+            var refSpecs = new[]
+            {
+                "+refs/heads/*:refs/remotes/origin/*",
+                "+refs/tags/*:refs/tags/*",
+            };
             var fetchOptions = new FetchOptions
             {
+                Prune = true,
+                // libgit2 only honours an explicit `+refs/tags/*:refs/tags/*` refspec
+                // when TagFetchMode is also set; without this, force-overwriting a
+                // diverged local tag silently no-ops.
                 TagFetchMode = TagFetchMode.All,
             };
             if (!string.IsNullOrEmpty(gitToken))
