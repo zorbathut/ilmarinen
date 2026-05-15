@@ -144,6 +144,7 @@ public class JobRunner
             }
 
             // 6. Run pipeline with log streaming and artifact upload
+            _logger.LogInformation("git describe: {Description}", DescribeHead(workDir));
             _logger.LogInformation("Running {StepCount} step(s)...", scriptResult.Steps.Count);
 
             // Compute host path for Docker bind mounts (may differ when running in Docker)
@@ -231,6 +232,15 @@ public class JobRunner
     {
         using var repo = new Repository(workDir);
         return repo.Head.Tip.Sha;
+    }
+
+    private static string DescribeHead(string workDir)
+    {
+        using var repo = new Repository(workDir);
+        return repo.Describe(repo.Head.Tip, new DescribeOptions
+        {
+            UseCommitIdAsFallback = true,
+        });
     }
 
     private void DeleteDirectory(string path)
