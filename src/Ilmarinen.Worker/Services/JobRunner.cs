@@ -295,7 +295,7 @@ public class JobRunner
                         Size = result.Size
                     };
                 }
-                catch (HttpRequestException ex) when (attempt < maxAttempts)
+                catch (HttpRequestException ex) when (attempt < maxAttempts && (ex.StatusCode == null || (int)ex.StatusCode >= 500))
                 {
                     _logger.LogWarning(ex, "Artifact upload failed (attempt {Attempt}/{MaxAttempts}), retrying in 5 seconds...", attempt, maxAttempts);
                     await Task.Delay(5000, jobToken);
