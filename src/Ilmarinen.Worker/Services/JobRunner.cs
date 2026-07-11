@@ -285,13 +285,12 @@ public class JobRunner
                     var response = await ArtifactHttpClient.PostAsync(url, content, jobToken);
                     response.EnsureSuccessStatusCode();
 
-                    var result = await response.Content.ReadFromJsonAsync<ArtifactUploadResponse>(jsonOptions, jobToken);
+                    var result = await response.Content.ReadFromJsonAsync<ArtifactInfo>(jsonOptions, jobToken);
 
                     _logger.LogInformation("Artifact uploaded: {Id} ({Name})", result!.Id, result.Name);
 
                     return new ArtifactRef
                     {
-                        Id = result.Id.ToString(),
                         Name = result.Name,
                         Size = result.Size
                     };
@@ -317,6 +316,4 @@ public class JobRunner
             file.Attributes = FileAttributes.Normal;
         }
     }
-
-    private record ArtifactUploadResponse(Guid Id, string Name, long Size);
 }

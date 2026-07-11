@@ -436,7 +436,6 @@ public class PipelineRunner : IDisposable
 
             return new ArtifactRef
             {
-                Id = artifactId.ToString(),
                 Name = fileName,
                 Size = fileInfo.Length
             };

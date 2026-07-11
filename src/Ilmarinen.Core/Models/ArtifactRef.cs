@@ -6,11 +6,6 @@ namespace Ilmarinen.Models;
 public sealed record ArtifactRef
 {
     /// <summary>
-    /// Unique identifier for this artifact.
-    /// </summary>
-    public required string Id { get; init; }
-
-    /// <summary>
     /// Display name of the artifact.
     /// </summary>
     public required string Name { get; init; }
