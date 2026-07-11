@@ -4,7 +4,7 @@ using System;
 
 namespace Ilmarinen.Docker;
 
-internal static class DockerClientFactory
+public static class DockerClientFactory
 {
     public static DockerClient Create()
     {

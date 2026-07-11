@@ -1,4 +1,5 @@
 using Docker.DotNet;
+using Ilmarinen.Docker;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
@@ -580,12 +581,7 @@ public class WorkerService : BackgroundService
     {
         try
         {
-            var dockerHost = Environment.GetEnvironmentVariable("DOCKER_HOST");
-            var uri = !string.IsNullOrEmpty(dockerHost)
-                ? new Uri(dockerHost)
-                : new Uri("unix:///var/run/docker.sock");
-
-            var client = new DockerClientConfiguration(uri).CreateClient();
+            using var client = DockerClientFactory.Create();
 
             // Container ID is typically the hostname when running in Docker
             var containerId = System.Net.Dns.GetHostName();
