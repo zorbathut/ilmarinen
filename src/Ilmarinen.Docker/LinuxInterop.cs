@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System;
@@ -5,7 +6,7 @@ using System;
 namespace Ilmarinen.Docker;
 
 /// <summary>
-/// P/Invoke helpers for Linux system calls.
+/// Helpers for Linux-specific process and file identity.
 /// </summary>
 internal static class LinuxInterop
 {
@@ -14,27 +15,6 @@ internal static class LinuxInterop
 
     [DllImport("libc", SetLastError = true)]
     private static extern uint getgid();
-
-    // stat structure for x86_64 Linux (glibc). We only need fields up to st_gid, but must include padding for correct layout
-    [StructLayout(LayoutKind.Sequential)]
-    private struct StatBuffer
-    {
-        public ulong st_dev;      // Device ID
-        public ulong st_ino;      // Inode number
-        public ulong st_nlink;    // Number of hard links
-        public uint st_mode;      // File mode
-        public uint st_uid;       // User ID of owner
-        public uint st_gid;       // Group ID of owner
-        // Remaining fields omitted - we only need up to st_gid. The buffer is larger to ensure stat() doesn't overflow
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 100)]
-        public byte[] _padding;
-    }
-
-    // Use __xstat on glibc - stat() is a macro that calls this. Version 1 is _STAT_VER for x86_64
-    [DllImport("libc", EntryPoint = "__xstat", SetLastError = true)]
-    private static extern int xstat(int version, string path, out StatBuffer buf);
-
-    private const int StatVersion = 1; // _STAT_VER for x86_64
 
     /// <summary>
     /// Gets the user spec (UID:GID) for the current process on Linux.
@@ -61,9 +41,37 @@ internal static class LinuxInterop
         if (!File.Exists(socketPath))
             return null;
 
-        if (xstat(StatVersion, socketPath, out var buf) == 0)
-            return buf.st_gid;
+        // Shelling out to stat avoids P/Invoking the libc stat family, whose symbol names and struct layouts vary by libc and architecture. Both coreutils and busybox stat support -c %g.
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "stat",
+                ArgumentList = { "-c", "%g", socketPath },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            });
+            if (process == null)
+            {
+                Console.Error.WriteLine("Warning: could not start `stat` to determine the Docker socket GID; nested containers may lack socket access.");
+                return null;
+            }
 
-        return null;
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit();
+
+            if (process.ExitCode == 0 && uint.TryParse(output, out var gid))
+            {
+                return gid;
+            }
+
+            Console.Error.WriteLine($"Warning: `stat -c %g {socketPath}` failed (exit {process.ExitCode}); nested containers may lack socket access.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: could not determine the Docker socket GID ({ex.Message}); nested containers may lack socket access.");
+            return null;
+        }
     }
 }
