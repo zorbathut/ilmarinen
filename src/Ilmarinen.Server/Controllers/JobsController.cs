@@ -89,8 +89,3 @@ public class JobsController : ControllerBase
         return cancelled ? Ok() : NotFound();
     }
 }
-
-public record JobSubmissionResult
-{
-    public required Guid Id { get; init; }
-}

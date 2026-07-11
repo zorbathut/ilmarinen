@@ -243,11 +243,6 @@ public class Commands
     }
 }
 
-record JobSubmissionResult
-{
-    public required Guid Id { get; init; }
-}
-
 /// <summary>
 /// RFC 7807 ProblemDetails for parsing server error responses.
 /// </summary>
