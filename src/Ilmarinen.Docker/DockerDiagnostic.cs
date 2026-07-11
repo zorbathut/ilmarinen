@@ -83,9 +83,7 @@ public class DockerDiagnostic : IAsyncDisposable
             steps.Add(result);
             progress?.Report(result);
 
-            // Any step failure flips overall to Unhealthy. Non-fatal steps don't abort the
-            // run (so cleanup still happens after a docker_daemon failure), but their
-            // failure is not silently masked — a leaked container is a real operator problem.
+            // Any step failure flips overall to Unhealthy. Non-fatal steps don't abort the run (so cleanup still happens after a docker_daemon failure), but their failure is not silently masked — a leaked container is a real operator problem.
             if (!result.Success && failedStepName == null)
             {
                 failedStepName = name;
@@ -144,10 +142,7 @@ public class DockerDiagnostic : IAsyncDisposable
     {
         try
         {
-            // Always call CreateImageAsync, even if the image looks cached locally. Docker
-            // still contacts the registry to verify the manifest is up-to-date — that's
-            // exactly the round-trip we want to test. If layers are unchanged, no bytes
-            // are downloaded; the check is fast (~hundreds of ms) but real.
+            // Always call CreateImageAsync, even if the image looks cached locally. Docker still contacts the registry to verify the manifest is up-to-date — that's exactly the round-trip we want to test. If layers are unchanged, no bytes are downloaded; the check is fast (~hundreds of ms) but real.
             await _client.Images.CreateImageAsync(
                 new ImagesCreateParameters { FromImage = TestImage },
                 null,
@@ -178,9 +173,7 @@ public class DockerDiagnostic : IAsyncDisposable
     {
         try
         {
-            // Spin up an AgentApiServer so the agent_api_reachability step can probe it.
-            // Doing this here (rather than as a separate step) means the test container
-            // is already configured with the right ILMARINEN_API/_TOKEN env vars from start.
+            // Spin up an AgentApiServer so the agent_api_reachability step can probe it. Doing this here (rather than as a separate step) means the test container is already configured with the right ILMARINEN_API/_TOKEN env vars from start.
             _apiServer = new AgentApiServer();
 
             _testNetworkName = $"ilmarinen-diag-{Guid.NewGuid():N}";
@@ -194,8 +187,7 @@ public class DockerDiagnostic : IAsyncDisposable
                 }
             }, ct);
 
-            // In Docker-in-Docker, attach the worker container to the diagnostic network so the
-            // test container can reach the AgentApiServer running inside the worker.
+            // In Docker-in-Docker, attach the worker container to the diagnostic network so the test container can reach the AgentApiServer running inside the worker.
             if (_workerContainerId != null)
             {
                 await _client.Networks.ConnectNetworkAsync(_testNetworkName, new NetworkConnectParameters
@@ -274,10 +266,7 @@ public class DockerDiagnostic : IAsyncDisposable
 
     private async Task<DiagnosticStepResult> CheckWorkerDnsAsync(CancellationToken ct)
     {
-        // Resolve from the worker host itself via the OS resolver. Pairs with dns_container:
-        // if dns_worker fails, host DNS is broken (resolv.conf, network); if dns_worker
-        // passes but dns_container fails, the failure is specifically Docker's embedded
-        // resolver forwarding (127.0.0.11), not the host.
+        // Resolve from the worker host itself via the OS resolver. Pairs with dns_container: if dns_worker fails, host DNS is broken (resolv.conf, network); if dns_worker passes but dns_container fails, the failure is specifically Docker's embedded resolver forwarding (127.0.0.11), not the host.
         try
         {
             var entry = await System.Net.Dns.GetHostEntryAsync("docker.io", ct);
@@ -299,9 +288,7 @@ public class DockerDiagnostic : IAsyncDisposable
 
         try
         {
-            // Tests Docker's embedded DNS resolver (127.0.0.11) — the path real pipelines
-            // use during `docker build` metadata fetch and any RUN step that hits the
-            // network. Distinct from the host resolver tested by dns_worker.
+            // Tests Docker's embedded DNS resolver (127.0.0.11) — the path real pipelines use during `docker build` metadata fetch and any RUN step that hits the network. Distinct from the host resolver tested by dns_worker.
             // busybox provides nslookup in alpine; exit 0 on resolve, non-zero on failure.
             var (stdout, stderr, exitCode) = await ExecAsync(
                 _testContainerId, ["nslookup", "docker.io"]);
@@ -329,10 +316,7 @@ public class DockerDiagnostic : IAsyncDisposable
 
         try
         {
-            // busybox wget (alpine default): -q quiet, -O- to stdout. Exit 0 on HTTP 2xx.
-            // Token-in-shell is safe today because AgentApiServer's token is Guid.ToString("N")
-            // — pure [0-9a-f], no shell-special characters. If that ever changes, this command
-            // will need to escape (or, better, pass the token via a here-doc).
+            // busybox wget (alpine default): -q quiet, -O- to stdout. Exit 0 on HTTP 2xx. Token-in-shell is safe today because AgentApiServer's token is Guid.ToString("N") — pure [0-9a-f], no shell-special characters. If that ever changes, this command will need to escape (or, better, pass the token via a here-doc).
             var (stdout, stderr, exitCode) = await ExecAsync(_testContainerId,
             [
                 "sh", "-c",

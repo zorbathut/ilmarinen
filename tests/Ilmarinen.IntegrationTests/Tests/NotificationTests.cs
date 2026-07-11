@@ -190,9 +190,7 @@ public class NotificationTests
 
         await _fixture.AcknowledgeNotificationsAsync(subscriber.Id, notificationIds);
 
-        // After ack, pulling again should return empty (notifications are processed)
-        // Need to wait for lock to expire or pull should skip processed ones
-        // Actually, ack marks them as processed, so next pull should be empty
+        // Ack marks the notifications processed, so the next pull should be empty.
         var afterAck = await _fixture.PullNotificationsAsync(subscriber.Id);
         Assert.That(afterAck, Is.Empty);
     }

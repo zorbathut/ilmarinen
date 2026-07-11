@@ -22,9 +22,7 @@ public class JobScheduler
     private bool _initialized;
     private readonly object _initLock = new();
 
-    // Serializes the check-and-assign sequence within this process. Assignment is
-    // triggered concurrently from multiple places (JobCompleted, Ready, EnqueueJob),
-    // and the window between "is this worker free?" and "mark it busy" must be atomic.
+    // Serializes the check-and-assign sequence within this process. Assignment is triggered concurrently from multiple places (JobCompleted, Ready, EnqueueJob), and the window between "is this worker free?" and "mark it busy" must be atomic.
     private readonly SemaphoreSlim _assignLock = new(1, 1);
 
     public JobScheduler(
@@ -100,11 +98,7 @@ public class JobScheduler
             if (worker == null || !worker.IsReady)
                 return false;
 
-            // The in-memory ready flag can be set redundantly — the worker sends an
-            // explicit Ready after every JobCompleted, and the JobCompleted handler
-            // marks it ready too. The DB is the source of truth for "busy": a worker
-            // already running a job must never be handed another, and a stale Ready
-            // that put the flag up gets corrected here.
+            // The in-memory ready flag can be set redundantly — the worker sends an explicit Ready after every JobCompleted, and the JobCompleted handler marks it ready too. The DB is the source of truth for "busy": a worker already running a job must never be handed another, and a stale Ready that put the flag up gets corrected here.
             if (await jobs.GetRunningJobForWorkerAsync(worker.Id) != null)
             {
                 workers.SetReady(connectionId, false);

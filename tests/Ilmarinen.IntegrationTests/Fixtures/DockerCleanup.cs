@@ -102,8 +102,7 @@ public class DockerCleanup
 
         if (pools != null && pools.Count > 0)
         {
-            // Each pool has a Base (e.g. "10.42.0.0/16") and Size (e.g. 26).
-            // Total subnets per pool = 2^(Size - BasePrefix).
+            // Each pool has a Base (e.g. "10.42.0.0/16") and Size (e.g. 26). Total subnets per pool = 2^(Size - BasePrefix).
             totalSubnets = 0;
             foreach (var pool in pools)
             {

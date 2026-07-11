@@ -89,8 +89,7 @@ public class TestPostgresContainer : IAsyncDisposable
         // Uses setsid -f to create new session AND fork - this makes the watchdog:
         // 1. Immune to SIGHUP when parent dies
         // 2. Independent of parent's file descriptors (no broken pipe issues)
-        // We can't track/kill this process (it's double-forked), but that's fine -
-        // on normal dispose the container is already stopped.
+        // We can't track/kill this process (it's double-forked), but that's fine - on normal dispose the container is already stopped.
         Process.Start(new ProcessStartInfo
         {
             FileName = "setsid",
@@ -116,8 +115,7 @@ public class TestPostgresContainer : IAsyncDisposable
                 using var tcp = new TcpClient();
                 await tcp.ConnectAsync("localhost", Port);
 
-                // Port is open, but PostgreSQL might not be ready yet
-                // Try a simple connection
+                // Port is open, but PostgreSQL might not be ready yet — try a simple connection
                 await using var conn = new Npgsql.NpgsqlConnection(ConnectionString);
                 await conn.OpenAsync();
                 return;

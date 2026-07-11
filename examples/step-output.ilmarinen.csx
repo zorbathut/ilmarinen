@@ -1,7 +1,6 @@
 // Step Output Demo
 //
-// Demonstrates building an image in one step and using it in another.
-// The first step returns an ImageRef which is used by the second step.
+// Demonstrates building an image in one step and using it in another. The first step returns an ImageRef which is used by the second step.
 
 // Step 1: Build an image and return the ImageRef
 var build = Step<ImageRef>("build")

@@ -37,8 +37,7 @@ public class DockerDiagnosticTests
     [Test]
     public async Task Diagnostic_DaemonUnreachable_ReturnsUnhealthy()
     {
-        // Point at a TCP port nothing is listening on. Using the internal ctor avoids
-        // mutating DOCKER_HOST, which would race with parallel tests in this assembly.
+        // Point at a TCP port nothing is listening on. Using the internal ctor avoids mutating DOCKER_HOST, which would race with parallel tests in this assembly.
         await using var diagnostic = new DockerDiagnostic(
             dockerHostUri: "tcp://127.0.0.1:1", workerContainerId: null);
 
@@ -62,9 +61,7 @@ public class DockerDiagnosticTests
         var observed = new List<string>();
         var progress = new Progress<DiagnosticStepResult>(r =>
         {
-            // Note: Progress<T> reports on the synchronization context — for tests we
-            // don't need ordering guarantees with the result list, only that we get
-            // each step exactly once.
+            // Note: Progress<T> reports on the synchronization context — for tests we don't need ordering guarantees with the result list, only that we get each step exactly once.
             lock (observed) observed.Add(r.Name);
         });
 

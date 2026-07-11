@@ -106,9 +106,7 @@ public class JobSchedulingTests
         await scheduler.EnqueueJobAsync(Submission());
         await scheduler.EnqueueJobAsync(Submission());
 
-        // The worker finishes job1. WorkerHub.JobCompleted marks the worker ready and
-        // tries to assign; the worker then *also* sends an explicit Ready, which the hub
-        // handles the same way. Both signals must not result in two simultaneous jobs.
+        // The worker finishes job1. WorkerHub.JobCompleted marks the worker ready and tries to assign; the worker then *also* sends an explicit Ready, which the hub handles the same way. Both signals must not result in two simultaneous jobs.
         await scheduler.CompleteJobAsync(job1, new JobResult { Id = job1, Status = JobStatus.Success });
 
         workers.SetReady(conn, true);
@@ -140,8 +138,7 @@ public class JobSchedulingTests
         Assert.That(workers.GetByConnectionId(conn)!.IsReady, Is.False,
             "a worker with a running job must not be marked ready");
 
-        // The UI-facing readers must agree — a worker shown as Ready while a job runs
-        // is the impossible state users reported.
+        // The UI-facing readers must agree — a worker shown as Ready while a job runs is an impossible state.
         var view = await workers.GetByIdAsync(workerId);
         Assert.That(view!.IsReady, Is.False);
         Assert.That(view.CurrentJobs, Has.Count.EqualTo(1));
@@ -164,9 +161,7 @@ public class JobSchedulingTests
             jobIds.Add(await scheduler.EnqueueJobAsync(Submission()));
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
 
-        // The worker finishes. Fire many assignment attempts at once — the overlap
-        // produced by JobCompleted, Ready, and EnqueueJob racing on one connection.
-        // Only one job may land on the worker.
+        // The worker finishes. Fire many assignment attempts at once — the overlap produced by JobCompleted, Ready, and EnqueueJob racing on one connection. Only one job may land on the worker.
         await scheduler.CompleteJobAsync(jobIds[0], new JobResult { Id = jobIds[0], Status = JobStatus.Success });
         workers.SetReady(conn, true);
 
@@ -191,8 +186,7 @@ public class JobSchedulingTests
         var queuedJob = await scheduler.EnqueueJobAsync(Submission());
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
 
-        // A confused/stale JobCompleted arrives naming the queued job — one this worker
-        // never ran. The hub must not mark it complete or free the busy worker.
+        // A confused/stale JobCompleted arrives naming the queued job — one this worker never ran. The hub must not mark it complete or free the busy worker.
         await MakeHub(conn).JobCompleted(queuedJob, new JobResult { Id = queuedJob, Status = JobStatus.Success });
 
         Assert.That(await JobStatusAsync(queuedJob), Is.EqualTo(JobStatus.Queued),

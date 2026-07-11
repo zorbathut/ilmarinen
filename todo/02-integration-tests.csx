@@ -1,7 +1,6 @@
 // Integration Testing Pipeline
 //
-// Demonstrates running your application as a service alongside tests.
-// Shows how to use built images as sidecars and wait for health checks.
+// Demonstrates running your application as a service alongside tests. Shows how to use built images as sidecars and wait for health checks.
 
 #r "Conductor"
 

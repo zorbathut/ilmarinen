@@ -171,9 +171,7 @@ public class WorkerHub : Hub<IWorkerClient>
         }
         else if (request.RunningJobId != null)
         {
-            // Worker thinks it's running a job, but the server has no Running record.
-            // It was cancelled/failed while disconnected, or is unknown. ExpectedJobId = null
-            // tells the worker to abort — log it for visibility.
+            // Worker thinks it's running a job, but the server has no Running record. It was cancelled/failed while disconnected, or is unknown. ExpectedJobId = null tells the worker to abort — log it for visibility.
             _logger.LogInformation(
                 "Worker {WorkerId} reports running job {JobId} which server does not consider active",
                 worker.Id, request.RunningJobId.Value);
@@ -229,9 +227,7 @@ public class WorkerHub : Hub<IWorkerClient>
             throw new HubException("Worker not authenticated.");
         }
 
-        // A worker runs one job at a time. A JobCompleted naming anything other than
-        // its current assignment is a stale or confused message — acting on it would
-        // mark the wrong job complete and free a still-busy worker for more work.
+        // A worker runs one job at a time. A JobCompleted naming anything other than its current assignment is a stale or confused message — acting on it would mark the wrong job complete and free a still-busy worker for more work.
         var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
         if (runningJob != null && runningJob != jobId)
         {
@@ -271,9 +267,7 @@ public class WorkerHub : Hub<IWorkerClient>
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-        // Reject reports from connections that haven't authenticated. The connection
-        // mapping is set in Authenticate(); without it we'd accept reports from any
-        // bare SignalR caller.
+        // Reject reports from connections that haven't authenticated. The connection mapping is set in Authenticate(); without it we'd accept reports from any bare SignalR caller.
         var worker = workers.GetByConnectionId(Context.ConnectionId);
         if (worker == null)
         {
@@ -312,8 +306,7 @@ public class WorkerHub : Hub<IWorkerClient>
         {
             _logger.LogInformation("Worker disconnected: {WorkerId}", worker.Id);
 
-            // Check if the worker had a running job — it stays Running,
-            // awaiting the worker to reconnect and resume or report completion.
+            // Check if the worker had a running job — it stays Running, awaiting the worker to reconnect and resume or report completion.
             var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
             if (runningJob != null)
             {

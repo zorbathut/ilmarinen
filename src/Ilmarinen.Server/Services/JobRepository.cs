@@ -181,8 +181,7 @@ public class JobRepository
         if (job.Status is JobStatus.Success or JobStatus.Failed)
             return;
 
-        // Cancelled can be overridden by Success or Failed: if the worker actually
-        // completed the job before the cancel reached it, the real outcome wins.
+        // Cancelled can be overridden by Success or Failed: if the worker actually completed the job before the cancel reached it, the real outcome wins.
         if (job.Status == JobStatus.Cancelled && status is not (JobStatus.Success or JobStatus.Failed))
             return;
 

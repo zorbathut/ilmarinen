@@ -32,13 +32,9 @@ public class AgentCliErrorTests
     [Test]
     public async Task AgentCli_ApiErrors_ReportsStructuredErrorDetails()
     {
-        // The agent CLI (ilmarinen-agent) communicates with the API server via HTTP.
-        // When the API returns an error (404, 422, etc.), the CLI must surface the
-        // structured error details — not silently swallow them via set -e or curl -f.
+        // The agent CLI (ilmarinen-agent) communicates with the API server via HTTP. When the API returns an error (404, 422, etc.), the CLI must surface the structured error details — not silently swallow them via set -e or curl -f.
         //
-        // Each sub-test calls an agent CLI command that triggers an API error, then
-        // asserts that: (a) exit code is non-zero, (b) stderr contains error details.
-        // If error details are lost (silent failure), the step throws and the job fails.
+        // Each sub-test calls an agent CLI command that triggers an API error, then asserts that: (a) exit code is non-zero, (b) stderr contains error details. If error details are lost (silent failure), the step throws and the job fails.
         _repo.AddFile("pipeline.csx", """
             Step("test-error-reporting")
                 .Image("docker:cli")

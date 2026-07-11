@@ -29,8 +29,7 @@ public class WorkerService : BackgroundService
     private HubConnection? _connection;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
 
-    // Single-activity gate. Job assignment and diagnostic each call TryEnter(...) and
-    // refuse if the worker is already doing the other thing.
+    // Single-activity gate. Job assignment and diagnostic each call TryEnter(...) and refuse if the worker is already doing the other thing.
     private readonly object _activityLock = new();
     private WorkerActivity _activity = WorkerActivity.Idle;
     private Guid? _currentJobId;
@@ -118,9 +117,7 @@ public class WorkerService : BackgroundService
             }
             catch (Exception ex)
             {
-                // If post-reconnect sync fails, force the connection to disconnected state
-                // so the heartbeat loop manually reconnects rather than leaving us as a
-                // zombie (connected, but server doesn't have our auth/diagnostic state).
+                // If post-reconnect sync fails, force the connection to disconnected state so the heartbeat loop manually reconnects rather than leaving us as a zombie (connected, but server doesn't have our auth/diagnostic state).
                 _logger.LogError(ex, "ConnectAndSync after reconnect failed; tearing down connection to retry");
                 try { await _connection!.StopAsync(); } catch { }
             }
@@ -133,9 +130,7 @@ public class WorkerService : BackgroundService
         }
         catch (Exception ex)
         {
-            // ConnectAndSync now does much more I/O than before (diagnostic + ReportDiagnostic).
-            // Don't fault the BackgroundService on a transient failure here — let the heartbeat
-            // loop notice the disconnected state and retry.
+            // ConnectAndSync does significant I/O (diagnostic + ReportDiagnostic). Don't fault the BackgroundService on a transient failure here — let the heartbeat loop notice the disconnected state and retry.
             _logger.LogError(ex, "Initial ConnectAndSync failed; tearing down to retry via heartbeat loop");
             try { await _connection.StopAsync(stoppingToken); } catch { }
         }
@@ -249,8 +244,7 @@ public class WorkerService : BackgroundService
     {
         await Authenticate();
 
-        // Replay buffered messages first so the server has accurate state
-        // before we call Reconnect (e.g., a buffered JobCompleted).
+        // Replay buffered messages first so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
         while (_messageBuffer.TryPeek(out var msg))
         {
             try
@@ -272,8 +266,7 @@ public class WorkerService : BackgroundService
             RunningJobId = currentJob
         });
 
-        // If we're running a job the server doesn't expect, abort it.
-        // This happens when the job was cancelled or failed while we were disconnected.
+        // If we're running a job the server doesn't expect, abort it. This happens when the job was cancelled or failed while we were disconnected.
         if (currentJob != null && response.ExpectedJobId != currentJob)
         {
             _logger.LogInformation(
@@ -284,14 +277,11 @@ public class WorkerService : BackgroundService
             return;
         }
 
-        // If a job is running we don't gate it on the diagnostic — the in-flight job
-        // is the source of truth. Skip Ready (the existing contract) and skip the diagnostic.
+        // If a job is running we don't gate it on the diagnostic — the in-flight job is the source of truth. Skip Ready (the existing contract) and skip the diagnostic.
         if (currentJob != null)
             return;
 
-        // First connect ever: run the diagnostic. Subsequent reconnects re-push the cached
-        // result so the server reconstructs its state without re-running (and without
-        // the per-reconnect cost of an image pull / container run).
+        // First connect ever: run the diagnostic. Subsequent reconnects re-push the cached result so the server reconstructs its state without re-running (and without the per-reconnect cost of an image pull / container run).
         if (_lastDiagnostic == null)
         {
             _logger.LogInformation("Running startup diagnostic...");
@@ -337,11 +327,7 @@ public class WorkerService : BackgroundService
     {
         if (!TryEnterActivity(WorkerActivity.RunningDiagnostic, jobId: null))
         {
-            // Race: a job arrived (or was already running) before the worker received the
-            // RunDiagnostic request. The server marked us not-ready preparing to fire the
-            // diagnostic, but a job was already in-flight. Re-push the cached report so
-            // the UI doesn't sit on stale "Running" or pre-click state, and re-publish
-            // ready-on-healthy so the worker can pick up more jobs.
+            // Race: a job arrived (or was already running) before the worker received the RunDiagnostic request. The server marked us not-ready preparing to fire the diagnostic, but a job was already in-flight. Re-push the cached report so the UI doesn't sit on stale "Running" or pre-click state, and re-publish ready-on-healthy so the worker can pick up more jobs.
             _logger.LogInformation("Cannot run diagnostic: worker is busy");
             if (_lastDiagnostic != null)
             {
@@ -354,10 +340,7 @@ public class WorkerService : BackgroundService
 
         try
         {
-            // The "Running" placeholder is a transient UI hint; don't buffer it. If the
-            // connection is dropped while it's queued, replaying it later (after the real
-            // result has already arrived) would briefly clobber the final report with a
-            // stale "Running" status.
+            // The "Running" placeholder is a transient UI hint; don't buffer it. If the connection is dropped while it's queued, replaying it later (after the real result has already arrived) would briefly clobber the final report with a stale "Running" status.
             try
             {
                 if (_connection?.State == HubConnectionState.Connected)
@@ -396,8 +379,7 @@ public class WorkerService : BackgroundService
             _lastDiagnostic = report;
             await SendReliableAsync("ReportDiagnostic", report);
 
-            // Server flipped us not-ready before invoking the diagnostic. If we're healthy,
-            // ask to be marked ready again. If we're unhealthy, stay not-ready.
+            // Server flipped us not-ready before invoking the diagnostic. If we're healthy, ask to be marked ready again. If we're unhealthy, stay not-ready.
             if (report.Status == DiagnosticStatus.Healthy)
                 await SendReliableAsync("Ready");
         }
@@ -424,8 +406,7 @@ public class WorkerService : BackgroundService
             return Task.CompletedTask;
         }
 
-        // Return immediately so the SignalR dispatch loop stays unblocked
-        // (otherwise CancelJob messages can't be delivered while a job is running)
+        // Return immediately so the SignalR dispatch loop stays unblocked (otherwise CancelJob messages can't be delivered while a job is running)
         _ = ExecuteJobAsync(job);
         return Task.CompletedTask;
     }
@@ -440,9 +421,7 @@ public class WorkerService : BackgroundService
         using var cts = new CancellationTokenSource();
         _runningJobs[jobKey] = cts;
 
-        // Use try/finally to guarantee activity-state cleanup. If a catch handler itself
-        // throws (e.g. WorkspaceManager.DiscoverWorkspaces failing during shutdown), we
-        // would otherwise leave _activity stuck at RunningJob and refuse all future work.
+        // Use try/finally to guarantee activity-state cleanup. If a catch handler itself throws (e.g. WorkspaceManager.DiscoverWorkspaces failing during shutdown), we would otherwise leave _activity stuck at RunningJob and refuse all future work.
         JobResult result;
         try
         {
@@ -498,16 +477,12 @@ public class WorkerService : BackgroundService
         }
         finally
         {
-            // Clear activity BEFORE notifying the server so that when the server marks us
-            // ready and immediately assigns the next job, our state machine accepts it.
-            // Done in finally so we don't leak the activity flag if a catch handler throws.
+            // Clear activity BEFORE notifying the server so that when the server marks us ready and immediately assigns the next job, our state machine accepts it. Done in finally so we don't leak the activity flag if a catch handler throws.
             _runningJobs.TryRemove(jobKey, out _);
             ExitActivity();
         }
 
-        // The server's JobCompleted handler marks this worker ready and dispatches the
-        // next queued job. Sending an explicit Ready here too would double-trigger
-        // dispatch and could stack a second job on this worker.
+        // The server's JobCompleted handler marks this worker ready and dispatches the next queued job. Sending an explicit Ready here too would double-trigger dispatch and could stack a second job on this worker.
         await SendReliableAsync("JobCompleted", job.Id, result);
     }
 

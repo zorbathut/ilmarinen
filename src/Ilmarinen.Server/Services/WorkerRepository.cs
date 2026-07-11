@@ -26,10 +26,7 @@ public class WorkerRepository
     // In-memory mapping of connection ID to workspace details
     private readonly ConcurrentDictionary<string, ImmutableList<WorkspaceInfo>> _workerWorkspaces = new();
 
-    // Diagnostic state, keyed by worker ID (not connection ID) so it survives reconnects.
-    // Cleared on revoke, not disconnect — a reconnecting worker re-pushes its cached
-    // diagnostic so the value here is replaced anyway, and keeping it across the brief
-    // reconnect window avoids a "no diagnostic" UI flicker.
+    // Diagnostic state, keyed by worker ID (not connection ID) so it survives reconnects. Cleared on revoke, not disconnect — a reconnecting worker re-pushes its cached diagnostic so the value here is replaced anyway, and keeping it across the brief reconnect window avoids a "no diagnostic" UI flicker.
     private readonly ConcurrentDictionary<Guid, DiagnosticReport> _workerDiagnostics = new();
 
     public WorkerRepository(IServiceScopeFactory scopeFactory)
@@ -64,8 +61,7 @@ public class WorkerRepository
     {
         _workerWorkspaces.TryRemove(connectionId, out _);
         _readyWorkers.TryRemove(connectionId, out _);
-        // _workerDiagnostics is intentionally NOT cleared here — keyed on worker ID,
-        // it survives reconnects, and the worker re-pushes its cached report on auth.
+        // _workerDiagnostics is intentionally NOT cleared here — keyed on worker ID, it survives reconnects, and the worker re-pushes its cached report on auth.
 
         if (_connectionToWorker.TryRemove(connectionId, out var workerId))
         {
@@ -206,8 +202,7 @@ public class WorkerRepository
             .Select(j => j.Id)
             .ToListAsync();
 
-        // A worker holding a Running job is never ready, even if the in-memory flag
-        // still says so — the flag can lag reality until the next assignment attempt.
+        // A worker holding a Running job is never ready, even if the in-memory flag still says so — the flag can lag reality until the next assignment attempt.
         var isReady = connectionId != null
             && _readyWorkers.ContainsKey(connectionId)
             && currentJobIds.Count == 0;

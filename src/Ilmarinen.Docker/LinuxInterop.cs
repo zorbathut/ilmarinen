@@ -15,8 +15,7 @@ internal static class LinuxInterop
     [DllImport("libc", SetLastError = true)]
     private static extern uint getgid();
 
-    // stat structure for x86_64 Linux (glibc)
-    // We only need fields up to st_gid, but must include padding for correct layout
+    // stat structure for x86_64 Linux (glibc). We only need fields up to st_gid, but must include padding for correct layout
     [StructLayout(LayoutKind.Sequential)]
     private struct StatBuffer
     {
@@ -26,14 +25,12 @@ internal static class LinuxInterop
         public uint st_mode;      // File mode
         public uint st_uid;       // User ID of owner
         public uint st_gid;       // Group ID of owner
-        // Remaining fields omitted - we only need up to st_gid
-        // The buffer is larger to ensure stat() doesn't overflow
+        // Remaining fields omitted - we only need up to st_gid. The buffer is larger to ensure stat() doesn't overflow
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 100)]
         public byte[] _padding;
     }
 
-    // Use __xstat on glibc - stat() is a macro that calls this
-    // Version 1 is _STAT_VER for x86_64
+    // Use __xstat on glibc - stat() is a macro that calls this. Version 1 is _STAT_VER for x86_64
     [DllImport("libc", EntryPoint = "__xstat", SetLastError = true)]
     private static extern int xstat(int version, string path, out StatBuffer buf);
 

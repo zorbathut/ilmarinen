@@ -1,7 +1,6 @@
 // Example: Saving build artifacts
 //
-// Artifacts are files produced during pipeline execution that persist
-// beyond the job. Use ctx.SaveArtifact() to save files for later retrieval.
+// Artifacts are files produced during pipeline execution that persist beyond the job. Use ctx.SaveArtifact() to save files for later retrieval.
 
 Step("build")
     .Image("alpine:latest")

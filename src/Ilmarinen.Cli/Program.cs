@@ -64,8 +64,7 @@ public class Commands
     {
         await using var diagnostic = new DockerDiagnostic(workerContainerId: null);
 
-        // Cancel on Ctrl-C so the diagnostic's cleanup step still runs (otherwise the
-        // process gets killed mid-pull and we leak the diagnostic container/network).
+        // Cancel on Ctrl-C so the diagnostic's cleanup step still runs (otherwise the process gets killed mid-pull and we leak the diagnostic container/network).
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {

@@ -81,11 +81,7 @@ public class WorkerDiagnosticGatingTests
         await _fixture.StopWorkerAsync(preserveIdentity: true);
         await _fixture.RestartWorkerAsync();
 
-        // After restart, the worker is a fresh process — it WILL re-run the diagnostic.
-        // This test instead validates the cached-replay path: stop+restart with preserved identity
-        // is restart, not reconnect. (A within-process reconnect is hard to force in a unit test
-        // because SignalR's auto-reconnect is bound to actual transport drops.)
-        // So this test really verifies that *fresh* startup runs the diagnostic exactly once.
+        // After restart, the worker is a fresh process — it WILL re-run the diagnostic. This test instead validates the cached-replay path: stop+restart with preserved identity is restart, not reconnect. (A within-process reconnect is hard to force in a unit test because SignalR's auto-reconnect is bound to actual transport drops.) So this test really verifies that *fresh* startup runs the diagnostic exactly once.
         Assert.That(stub.CallCount, Is.EqualTo(2),
             "fresh worker process re-runs diagnostic; in-process reconnects use the cached value");
     }

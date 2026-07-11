@@ -25,8 +25,7 @@ public class TestGitRepository : IDisposable
         // Create a non-bare repository directly (simpler than bare + clone)
         Repository.Init(_workTreePath);
 
-        // Ensure the initial branch is "master" regardless of system git config
-        // (init.defaultBranch may be set to something else)
+        // Ensure the initial branch is "master" regardless of system git config (init.defaultBranch may be set to something else)
         using var repo = new Repository(_workTreePath);
         repo.Refs.UpdateTarget("HEAD", "refs/heads/master");
     }

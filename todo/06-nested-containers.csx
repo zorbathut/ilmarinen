@@ -1,7 +1,6 @@
 // Nested Container Orchestration
 //
-// Demonstrates how build scripts can dynamically build and run containers
-// using the `ilmarinen` CLI. This enables:
+// Demonstrates how build scripts can dynamically build and run containers using the `ilmarinen` CLI. This enables:
 //
 // - Python/shell scripts that make runtime decisions about what to build/run
 // - Dynamic service spawning based on test configuration
@@ -44,8 +43,7 @@
 // ============================================================================
 // EXAMPLE 1: Simple Build-Then-Run
 // ============================================================================
-// Build a test container, then run it against the application.
-// This pattern is useful when your test harness itself needs to be containerized.
+// Build a test container, then run it against the application. This pattern is useful when your test harness itself needs to be containerized.
 
 var simpleExample = Step("build-then-run")
     .Image("docker:24-cli")  // Any image works - ilmarinen CLI auto-injected
@@ -80,8 +78,7 @@ var simpleExample = Step("build-then-run")
 // ============================================================================
 // EXAMPLE 2: Python Orchestration Script
 // ============================================================================
-// A Python script that dynamically decides what to build and test based on
-// configuration. The script has full control over container orchestration.
+// A Python script that dynamically decides what to build and test based on configuration. The script has full control over container orchestration.
 
 var pythonOrchestration = Step("python-orchestration")
     .Image("python:3.11")  // Standard Python image - ilmarinen CLI auto-injected
@@ -235,8 +232,7 @@ done
 // ============================================================================
 // EXAMPLE 4: Nested Container with Conductor Context
 // ============================================================================
-// A nested container that itself needs to access secrets, artifacts, and
-// other Conductor features. The ilmarinen CLI works inside nested containers.
+// A nested container that itself needs to access secrets, artifacts, and other Conductor features. The ilmarinen CLI works inside nested containers.
 
 var nestedContext = Step("nested-with-context")
     .Image("docker:24-cli")
@@ -366,8 +362,7 @@ ilmarinen service stop queue
 // ============================================================================
 // EXAMPLE 6: Meta-CI - Testing Conductor Pipelines
 // ============================================================================
-// Use Conductor to test Conductor pipelines. The ilmarinen CLI can run
-// sub-pipelines, enabling meta-CI workflows.
+// Use Conductor to test Conductor pipelines. The ilmarinen CLI can run sub-pipelines, enabling meta-CI workflows.
 
 var metaCI = Step("meta-ci")
     .Image("docker:24-cli")
@@ -405,8 +400,7 @@ echo ""All pipelines passed!""
 // ============================================================================
 // EXAMPLE 7: HTTP API for Minimal Containers
 // ============================================================================
-// For distroless or scratch containers that can't run the CLI binary,
-// use the HTTP API directly. The API is always available at $ILMARINEN_API.
+// For distroless or scratch containers that can't run the CLI binary, use the HTTP API directly. The API is always available at $ILMARINEN_API.
 
 var httpAPIExample = Step("http-api-example")
     .Image("golang:1.21")  // Standard Go image
@@ -466,8 +460,7 @@ func main() {
 }
 ");
 
-        // Note: This pattern is useful when building distroless Go binaries
-        // that need to orchestrate containers without a shell
+        // Note: This pattern is useful when building distroless Go binaries that need to orchestrate containers without a shell
         await ctx.Shell(@"
             echo 'This example shows HTTP API usage for Go.'
             echo 'For distroless containers, compile this and include in your image.'

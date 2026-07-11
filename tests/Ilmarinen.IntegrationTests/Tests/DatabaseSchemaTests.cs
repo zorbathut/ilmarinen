@@ -46,8 +46,7 @@ public class DatabaseSchemaTests
     [Test]
     public void Model_HasNoPendingChanges()
     {
-        // Equivalent to: dotnet ef migrations has-pending-model-changes
-        // Compares the entity model (C# code) to the migration snapshot
+        // Equivalent to `dotnet ef migrations has-pending-model-changes`: compares the entity model (C# code) to the migration snapshot
         var migrationsAssembly = _dbContext.GetService<IMigrationsAssembly>();
         var snapshotModel = migrationsAssembly.ModelSnapshot?.Model;
 

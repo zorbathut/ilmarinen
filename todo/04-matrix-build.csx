@@ -1,7 +1,6 @@
 // Matrix Build Pipeline
 //
-// Build across multiple platforms and configurations in parallel.
-// Shows how to generate jobs dynamically and fan-in for aggregation.
+// Build across multiple platforms and configurations in parallel. Shows how to generate jobs dynamically and fan-in for aggregation.
 
 #r "Conductor"
 

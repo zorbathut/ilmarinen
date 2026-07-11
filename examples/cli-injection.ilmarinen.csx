@@ -1,6 +1,5 @@
 // Test CLI injection - using ilmarinen-agent CLI from within containers
-// Note: The CLI is a shell script that requires wget or curl in the container
-// Alpine images have wget by default; for debian/ubuntu, install curl first
+// The CLI is a shell script that requires wget or curl in the container — Alpine images have wget by default; for debian/ubuntu, install curl first
 
 // Helper to assert output contains expected string
 void AssertContains(string output, string expected, string message)
@@ -16,7 +15,7 @@ Step("test-cli")
         Console.WriteLine("=== Testing ilmarinen-agent CLI injection ===\n");
 
         // Check if CLI is available
-        // Note: Shell now throws automatically on failure
+        // Shell throws automatically on failure
         Console.WriteLine("1. Checking CLI availability...");
         var result = await ctx.Shell("which ilmarinen-agent");
         AssertContains(result.Stdout, "/usr/local/bin/ilmarinen-agent", "CLI not found at expected path");

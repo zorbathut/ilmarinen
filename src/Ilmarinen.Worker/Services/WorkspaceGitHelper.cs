@@ -62,9 +62,7 @@ public static class WorkspaceGitHelper
             // Reset any modified/staged files from previous runs
             repo.Reset(ResetMode.Hard);
 
-            // The persistent workspace is a cache; the remote is authoritative.
-            // Force-fetch all branches and tags (the leading `+` overwrites local refs
-            // on non-fast-forward updates), and prune anything deleted on the remote.
+            // The persistent workspace is a cache; the remote is authoritative. Force-fetch all branches and tags (the leading `+` overwrites local refs on non-fast-forward updates), and prune anything deleted on the remote.
             var remote = repo.Network.Remotes["origin"];
             var refSpecs = new[]
             {
@@ -74,9 +72,7 @@ public static class WorkspaceGitHelper
             var fetchOptions = new FetchOptions
             {
                 Prune = true,
-                // libgit2 only honours an explicit `+refs/tags/*:refs/tags/*` refspec
-                // when TagFetchMode is also set; without this, force-overwriting a
-                // diverged local tag silently no-ops.
+                // libgit2 only honours an explicit `+refs/tags/*:refs/tags/*` refspec when TagFetchMode is also set; without this, force-overwriting a diverged local tag silently no-ops.
                 TagFetchMode = TagFetchMode.All,
             };
             if (!string.IsNullOrEmpty(gitToken))

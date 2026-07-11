@@ -506,8 +506,7 @@ public class PipelineRunner
             }
         });
 
-        // In Docker-in-Docker: connect worker container to the network so job containers
-        // can reach the AgentApiServer via Docker DNS
+        // In Docker-in-Docker: connect worker container to the network so job containers can reach the AgentApiServer via Docker DNS
         if (_workerContainerId != null)
         {
             await _client.Networks.ConnectNetworkAsync(name, new NetworkConnectParameters
@@ -589,8 +588,7 @@ public class PipelineRunner
 
             try
             {
-                // Execute the action and capture output.
-                // When cancelled, we stop the container which kills all processes inside it.
+                // Execute the action and capture output. When cancelled, we stop the container which kills all processes inside it.
                 using var reg = cancellationToken.Register(() =>
                 {
                     // Fire-and-forget: stopping the container kills the entire process tree
@@ -654,8 +652,7 @@ public class PipelineRunner
             "/var/run/docker.sock:/var/run/docker.sock" // For nested containers
         };
 
-        // In Docker-in-Docker: use the worker container ID as the API host (Docker DNS resolves it)
-        // Otherwise: use host.docker.internal to reach the host machine
+        // In Docker-in-Docker: use the worker container ID as the API host (Docker DNS resolves it); otherwise use host.docker.internal to reach the host machine
         var apiHost = _workerContainerId ?? "host.docker.internal";
 
         var env = new List<string>

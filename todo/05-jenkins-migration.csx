@@ -82,8 +82,7 @@ OnFailure(async ctx =>
 // ============================================================================
 // EXPANDED VERSION
 // ============================================================================
-// If you want to break it into more stages (like the Jenkins version implies),
-// here's a more expanded version:
+// If you want to break it into more stages (like the Jenkins version implies), here's a more expanded version:
 
 /*
 var build = Step("build")

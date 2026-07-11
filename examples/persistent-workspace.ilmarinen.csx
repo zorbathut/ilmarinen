@@ -11,8 +11,7 @@ Step("build")
     .Image("mcr.microsoft.com/dotnet/sdk:8.0")
     .Run(async ctx =>
     {
-        // First run: restore downloads packages
-        // Subsequent runs: packages already cached in persistent workspace
+        // First run: restore downloads packages; subsequent runs reuse the package cache in the persistent workspace
         await ctx.Shell(@"
             echo 'Checking for existing packages...'
             if [ -d ~/.nuget ]; then

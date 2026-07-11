@@ -1,7 +1,6 @@
 // Simple .NET Application Pipeline
 // 
-// A straightforward build → test → deploy pipeline for a .NET application.
-// This is the "hello world" of Conductor pipelines.
+// A straightforward build → test → deploy pipeline for a .NET application. This is the "hello world" of Conductor pipelines.
 
 #r "Conductor"
 

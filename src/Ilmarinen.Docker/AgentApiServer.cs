@@ -111,9 +111,7 @@ public class AgentApiServer : IAsyncDisposable
             var path = request.Url?.AbsolutePath ?? "";
             var method = request.HttpMethod;
 
-            // Ping is available without a job context — used by the diagnostic to
-            // verify a container can reach the agent API server (the most common
-            // DinD networking failure mode).
+            // Ping is available without a job context — used by the diagnostic to verify a container can reach the agent API server (the most common DinD networking failure mode).
             if (method == "GET" && path == "/api/ping")
             {
                 await WriteJsonResponse(response, new { status = "ok" });
@@ -258,8 +256,7 @@ public class AgentApiServer : IAsyncDisposable
     private async Task HandleServiceStop(HttpListenerRequest request, HttpListenerResponse response)
     {
         var body = await ReadJsonBody<ServiceStopRequest>(request);
-        // Note: We need to track services by name to stop them
-        // For now, use shell command directly
+        // Services aren't tracked, so stop by container name via raw docker CLI.
         await _currentContext!.Shell($"docker stop {body.Name} && docker rm {body.Name}");
 
         await WriteJsonResponse(response, new { success = true });

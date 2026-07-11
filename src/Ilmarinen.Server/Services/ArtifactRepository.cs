@@ -27,10 +27,8 @@ public class ArtifactRepository
         var relativePath = $"{jobId}/{artifactId}-{SanitizeFileName(name)}";
         var fullPath = Path.Combine(_storagePath, relativePath);
 
-        // Ensure directory exists
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
 
-        // Stream content to disk
         await using var fileStream = File.Create(fullPath);
         await content.CopyToAsync(fileStream);
 

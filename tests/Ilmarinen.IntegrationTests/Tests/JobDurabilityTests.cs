@@ -147,8 +147,7 @@ public class JobDurabilityTests
         // Full stop — worker loses its running job state
         await _fixture.StopWorkerAsync(preserveIdentity: true);
 
-        // Restart worker — it has no _currentJobId, so it will report null
-        // The server should detect the orphaned job and mark it failed
+        // Restart worker — it has no _currentJobId, so it will report null. The server should detect the orphaned job and mark it failed.
         await _fixture.RestartWorkerAsync();
 
         // The job should be failed because the worker reconnected without it
