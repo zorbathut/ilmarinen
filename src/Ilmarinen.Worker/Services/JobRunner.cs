@@ -149,7 +149,7 @@ public class JobRunner
 
             // Compute host path for Docker bind mounts (may differ when running in Docker)
             var hostWorkDir = Path.Combine(_config.GetHostWorkspacePath(), Path.GetFileName(workDir)!);
-            var artifactSaver = CreateArtifactSaver();
+            var artifactSaver = CreateArtifactSaver(cancellationToken);
             var runner = new PipelineRunner(
                 workDir,
                 hostWorkDir,
@@ -252,9 +252,11 @@ public class JobRunner
         }
     }
 
-    private Func<string, string?, Task<ArtifactRef>> CreateArtifactSaver()
+    // Shared across jobs; the worker only ever talks to its one configured server. The generous timeout covers large artifact bodies.
+    private static readonly HttpClient ArtifactHttpClient = new() { Timeout = TimeSpan.FromMinutes(30) };
+
+    private Func<string, string?, Task<ArtifactRef>> CreateArtifactSaver(CancellationToken jobToken)
     {
-        var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         var baseUrl = _config.ServerUrl;
 
         return async (hostPath, name) =>
@@ -270,7 +272,8 @@ public class JobRunner
 
             _logger.LogInformation("Uploading artifact {Name} ({Size} bytes)...", artifactName, fileInfo.Length);
 
-            while (true)
+            const int maxAttempts = 5;
+            for (var attempt = 1; ; attempt++)
             {
                 try
                 {
@@ -279,10 +282,10 @@ public class JobRunner
                     content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
                     content.Headers.ContentLength = fileInfo.Length;
 
-                    var response = await httpClient.PostAsync(url, content);
+                    var response = await ArtifactHttpClient.PostAsync(url, content, jobToken);
                     response.EnsureSuccessStatusCode();
 
-                    var result = await response.Content.ReadFromJsonAsync<ArtifactUploadResponse>(jsonOptions);
+                    var result = await response.Content.ReadFromJsonAsync<ArtifactUploadResponse>(jsonOptions, jobToken);
 
                     _logger.LogInformation("Artifact uploaded: {Id} ({Name})", result!.Id, result.Name);
 
@@ -293,10 +296,10 @@ public class JobRunner
                         Size = result.Size
                     };
                 }
-                catch (HttpRequestException ex)
+                catch (HttpRequestException ex) when (attempt < maxAttempts)
                 {
-                    _logger.LogWarning(ex, "Artifact upload failed, retrying in 5 seconds...");
-                    await Task.Delay(5000);
+                    _logger.LogWarning(ex, "Artifact upload failed (attempt {Attempt}/{MaxAttempts}), retrying in 5 seconds...", attempt, maxAttempts);
+                    await Task.Delay(5000, jobToken);
                 }
             }
         };
