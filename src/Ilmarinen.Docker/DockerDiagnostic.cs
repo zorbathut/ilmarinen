@@ -421,32 +421,23 @@ public class DockerDiagnostic : IAsyncDisposable
     private async Task<(string stdout, string stderr, int exitCode)> ExecAsync(
         string containerId, IList<string> cmd)
     {
-        var execCreate = await _client.Exec.ExecCreateContainerAsync(containerId, new ContainerExecCreateParameters
-        {
-            Cmd = cmd,
-            AttachStdout = true,
-            AttachStderr = true,
-            User = _userSpec
-        });
-
-        using var stream = await _client.Exec.StartAndAttachContainerExecAsync(execCreate.ID, false);
-
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
-        var buffer = new byte[4096];
-        while (true)
-        {
-            var result = await stream.ReadOutputAsync(buffer, 0, buffer.Length, default);
-            if (result.EOF) break;
-            var chunk = Encoding.UTF8.GetString(buffer, 0, result.Count);
-            if (result.Target == MultiplexedStream.TargetStream.StandardOut)
-                stdout.Append(chunk);
-            else
-                stderr.Append(chunk);
-        }
 
-        var inspect = await _client.Exec.InspectContainerExecAsync(execCreate.ID);
-        return (stdout.ToString(), stderr.ToString(), (int)inspect.ExitCode);
+        var exitCode = await DockerExec.RunAsync(_client, containerId, cmd, workDir: null, _userSpec, (isStdout, chunk) =>
+        {
+            if (isStdout)
+            {
+                stdout.Append(chunk);
+            }
+            else
+            {
+                stderr.Append(chunk);
+            }
+            return Task.CompletedTask;
+        });
+
+        return (stdout.ToString(), stderr.ToString(), exitCode);
     }
 
     private static DiagnosticStepResult Ok(string message) => new()

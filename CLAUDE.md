@@ -218,7 +218,7 @@ The `IJobContext` interface provides these capabilities to step actions:
 - `WaitForHealthy(url, timeout)` - HTTP/TCP health check
 - `Secret(name)` - Retrieve secrets from environment
 
-Streaming variants (`TryExecStreaming`, `TryShellStreaming`, `TryRunStreaming`) provide real-time output.
+`DockerJobContext.RunStreaming` (not on the interface) provides real-time NDJSON output for the agent HTTP API's `run` endpoint.
 
 ### Type System
 

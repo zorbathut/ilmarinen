@@ -65,29 +65,12 @@ public class DockerJobContext : IJobContext
         var cmd = new List<string> { command };
         cmd.AddRange(args);
 
-        var execCreate = await _client.Exec.ExecCreateContainerAsync(_containerId, new ContainerExecCreateParameters
-        {
-            Cmd = cmd,
-            AttachStdout = true,
-            AttachStderr = true,
-            WorkingDir = _workDir,
-            User = _userSpec
-        });
-
-        using var multiplexed = await _client.Exec.StartAndAttachContainerExecAsync(execCreate.ID, false);
-
-        // Stream output in real-time
         var stdoutBuilder = new StringBuilder();
         var stderrBuilder = new StringBuilder();
-        var buffer = new byte[4096];
 
-        while (true)
+        var exitCode = await DockerExec.RunAsync(_client, _containerId, cmd, _workDir, _userSpec, (isStdout, chunk) =>
         {
-            var result = await multiplexed.ReadOutputAsync(buffer, 0, buffer.Length, default);
-            if (result.EOF) break;
-
-            var chunk = Encoding.UTF8.GetString(buffer, 0, result.Count);
-            if (result.Target == MultiplexedStream.TargetStream.StandardOut)
+            if (isStdout)
             {
                 stdoutBuilder.Append(chunk);
                 Console.Write(chunk);
@@ -99,13 +82,12 @@ public class DockerJobContext : IJobContext
                 Console.Error.Write(chunk);
                 _onOutput?.Invoke("e", chunk);
             }
-        }
-
-        var inspect = await _client.Exec.InspectContainerExecAsync(execCreate.ID);
+            return Task.CompletedTask;
+        });
 
         return new CommandResult
         {
-            ExitCode = (int)inspect.ExitCode,
+            ExitCode = exitCode,
             Stdout = stdoutBuilder.ToString(),
             Stderr = stderrBuilder.ToString()
         };
@@ -131,38 +113,19 @@ public class DockerJobContext : IJobContext
     /// Each line is a JSON object: {"t":"o","d":"..."} for stdout, {"t":"e","d":"..."} for stderr,
     /// or {"t":"x","c":0} for exit.
     /// </summary>
-    public async Task<CommandResult> TryExecStreaming(Stream outputStream, string command, params string[] args)
+    private async Task<CommandResult> TryExecStreaming(Stream outputStream, string command, params string[] args)
     {
         var cmd = new List<string> { command };
         cmd.AddRange(args);
 
-        var execCreate = await _client.Exec.ExecCreateContainerAsync(_containerId, new ContainerExecCreateParameters
-        {
-            Cmd = cmd,
-            AttachStdout = true,
-            AttachStderr = true,
-            WorkingDir = _workDir,
-            User = _userSpec
-        });
-
-        using var multiplexed = await _client.Exec.StartAndAttachContainerExecAsync(execCreate.ID, false);
-
         var stdoutBuilder = new StringBuilder();
         var stderrBuilder = new StringBuilder();
-        var buffer = new byte[4096];
         var writer = new StreamWriter(outputStream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
 
-        while (true)
+        var exitCode = await DockerExec.RunAsync(_client, _containerId, cmd, _workDir, _userSpec, async (isStdout, chunk) =>
         {
-            var result = await multiplexed.ReadOutputAsync(buffer, 0, buffer.Length, default);
-            if (result.EOF) break;
-
-            var chunk = Encoding.UTF8.GetString(buffer, 0, result.Count);
-            var isStdout = result.Target == MultiplexedStream.TargetStream.StandardOut;
-            var type = isStdout ? "o" : "e";
-
             // Write NDJSON line to stream
-            var json = JsonSerializer.Serialize(new { t = type, d = chunk });
+            var json = JsonSerializer.Serialize(new { t = isStdout ? "o" : "e", d = chunk });
             await writer.WriteLineAsync(json);
 
             // Accumulate for final CommandResult
@@ -178,10 +141,7 @@ public class DockerJobContext : IJobContext
                 Console.Error.Write(chunk);
                 _onOutput?.Invoke("e", chunk);
             }
-        }
-
-        var inspect = await _client.Exec.InspectContainerExecAsync(execCreate.ID);
-        var exitCode = (int)inspect.ExitCode;
+        });
 
         // Write exit message
         var exitJson = JsonSerializer.Serialize(new { t = "x", c = exitCode });
@@ -195,7 +155,7 @@ public class DockerJobContext : IJobContext
         };
     }
 
-    public Task<CommandResult> TryShellStreaming(Stream outputStream, string script)
+    private Task<CommandResult> TryShellStreaming(Stream outputStream, string script)
     {
         return TryExecStreaming(outputStream, "/bin/sh", "-c", script);
     }
@@ -216,7 +176,7 @@ public class DockerJobContext : IJobContext
     /// <summary>
     /// Runs a nested container with streaming output to the provided stream.
     /// </summary>
-    public async Task<CommandResult> TryRunStreaming(Stream outputStream, ImageRef image, params string[] command)
+    private async Task<CommandResult> TryRunStreaming(Stream outputStream, ImageRef image, params string[] command)
     {
         return await TryShellStreaming(outputStream, BuildDockerRunCommand(image, command));
     }
