@@ -2,6 +2,7 @@ using Docker.DotNet.Models;
 using Docker.DotNet;
 using Ilmarinen.Models;
 using System.Collections.Generic;
+using System.Formats.Tar;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -372,10 +373,10 @@ public class PipelineRunner
         """;
 
     /// <summary>
-    /// Creates a minimal POSIX tar archive containing a single executable script.
+    /// Creates a tar archive containing a single executable script.
     /// </summary>
     /// <remarks>
-    /// Why inline tar creation instead of bind mounting the script?
+    /// Why a tar copy instead of bind mounting the script?
     ///
     /// In Docker-in-Docker scenarios (e.g., workers running inside containers), bind mounts
     /// reference paths on the Docker *host*, not the intermediate container. If we write
@@ -384,73 +385,22 @@ public class PipelineRunner
     /// exist, causing "Permission denied" errors.
     ///
     /// By using ExtractArchiveToContainerAsync, we copy the script directly into the
-    /// container's filesystem, bypassing path mapping issues entirely. We create the tar
-    /// inline (rather than using a library) because POSIX tar is simple enough that adding
-    /// a dependency isn't worth it for a single small file.
+    /// container's filesystem, bypassing path mapping issues entirely.
     /// </remarks>
     private static MemoryStream CreateTarWithScript(string scriptContent, string fileName)
     {
         var stream = new MemoryStream();
-        var contentBytes = System.Text.Encoding.UTF8.GetBytes(scriptContent);
-
-        // Create 512-byte tar header
-        var header = new byte[512];
-
-        // Name (100 bytes at offset 0)
-        var nameBytes = System.Text.Encoding.ASCII.GetBytes(fileName);
-        Array.Copy(nameBytes, 0, header, 0, Math.Min(nameBytes.Length, 100));
-
-        // Mode (8 bytes at offset 100) - 0755 in octal ASCII
-        var modeBytes = System.Text.Encoding.ASCII.GetBytes("0000755\0");
-        Array.Copy(modeBytes, 0, header, 100, 8);
-
-        // UID (8 bytes at offset 108) - 0
-        var uidBytes = System.Text.Encoding.ASCII.GetBytes("0000000\0");
-        Array.Copy(uidBytes, 0, header, 108, 8);
-
-        // GID (8 bytes at offset 116) - 0
-        var gidBytes = System.Text.Encoding.ASCII.GetBytes("0000000\0");
-        Array.Copy(gidBytes, 0, header, 116, 8);
-
-        // Size (12 bytes at offset 124) - octal ASCII, space-terminated
-        var sizeOctal = Convert.ToString(contentBytes.Length, 8).PadLeft(11, '0');
-        var sizeBytes = System.Text.Encoding.ASCII.GetBytes(sizeOctal + " ");
-        Array.Copy(sizeBytes, 0, header, 124, 12);
-
-        // Mtime (12 bytes at offset 136) - 0
-        var mtimeBytes = System.Text.Encoding.ASCII.GetBytes("00000000000\0");
-        Array.Copy(mtimeBytes, 0, header, 136, 12);
-
-        // Checksum placeholder (8 bytes at offset 148) - spaces for calculation
-        for (int i = 148; i < 156; i++) header[i] = (byte)' ';
-
-        // Type flag (1 byte at offset 156) - '0' for regular file
-        header[156] = (byte)'0';
-
-        // Calculate checksum (sum of all header bytes treating checksum field as spaces)
-        int checksum = 0;
-        for (int i = 0; i < 512; i++) checksum += header[i];
-
-        // Write checksum (6 octal digits + null + space)
-        var checksumOctal = Convert.ToString(checksum, 8).PadLeft(6, '0');
-        var checksumBytes = System.Text.Encoding.ASCII.GetBytes(checksumOctal + "\0 ");
-        Array.Copy(checksumBytes, 0, header, 148, 8);
-
-        // Write header
-        stream.Write(header, 0, 512);
-
-        // Write file content
-        stream.Write(contentBytes, 0, contentBytes.Length);
-
-        // Pad to 512-byte boundary
-        var padding = (512 - (contentBytes.Length % 512)) % 512;
-        if (padding > 0)
+        using (var writer = new TarWriter(stream, TarEntryFormat.Ustar, leaveOpen: true))
         {
-            stream.Write(new byte[padding], 0, padding);
+            var entry = new UstarTarEntry(TarEntryType.RegularFile, fileName)
+            {
+                Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                       UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                       UnixFileMode.OtherRead | UnixFileMode.OtherExecute,
+                DataStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(scriptContent))
+            };
+            writer.WriteEntry(entry);
         }
-
-        // Write two 512-byte zero blocks as end marker
-        stream.Write(new byte[1024], 0, 1024);
 
         stream.Position = 0;
         return stream;
