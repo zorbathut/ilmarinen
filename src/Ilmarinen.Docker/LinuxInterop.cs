@@ -58,6 +58,7 @@ internal static class LinuxInterop
             }
 
             var output = process.StandardOutput.ReadToEnd().Trim();
+            var stderr = process.StandardError.ReadToEnd().Trim();
             process.WaitForExit();
 
             if (process.ExitCode == 0 && uint.TryParse(output, out var gid))
@@ -65,7 +66,7 @@ internal static class LinuxInterop
                 return gid;
             }
 
-            Console.Error.WriteLine($"Warning: `stat -c %g {socketPath}` failed (exit {process.ExitCode}); nested containers may lack socket access.");
+            Console.Error.WriteLine($"Warning: `stat -c %g {socketPath}` failed (exit {process.ExitCode}{(stderr.Length > 0 ? $": {stderr}" : "")}); nested containers may lack socket access.");
             return null;
         }
         catch (Exception ex)
