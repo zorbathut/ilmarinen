@@ -1,5 +1,6 @@
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
+using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System;
 
@@ -12,6 +13,12 @@ namespace Ilmarinen.Server.Services;
 public class LogSubscriptionService
 {
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, LogSubscriber>> _subscribers = new();
+    private readonly ILogger<LogSubscriptionService> _logger;
+
+    public LogSubscriptionService(ILogger<LogSubscriptionService> logger)
+    {
+        _logger = logger;
+    }
 
     public record LogSubscriber(
         Action<LogBroadcast> OnLogChunk,
@@ -47,9 +54,10 @@ public class LogSubscriptionService
                 {
                     subscriber.OnLogChunk(chunk);
                 }
-                catch
+                catch (Exception ex)
                 {
                     // Don't let one subscriber failure affect others
+                    _logger.LogError(ex, "Log subscriber callback failed for job {JobId}", chunk.JobId);
                 }
             }
         }
@@ -65,9 +73,10 @@ public class LogSubscriptionService
                 {
                     subscriber.OnJobCompleted(status);
                 }
-                catch
+                catch (Exception ex)
                 {
                     // Don't let one subscriber failure affect others
+                    _logger.LogError(ex, "Job-completed subscriber callback failed for job {JobId}", jobId);
                 }
             }
         }
