@@ -116,6 +116,7 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
         _app = builder.Build();
 
+        _app.UseMiddleware<ExceptionHandlerMiddleware>();
         _app.UseMiddleware<PortFilteringMiddleware>();
         _app.MapPublicEndpoints();
         _app.MapWorkerEndpoints();

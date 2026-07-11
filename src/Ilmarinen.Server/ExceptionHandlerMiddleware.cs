@@ -38,6 +38,11 @@ public class ExceptionHandlerMiddleware
         {
             await _next(context);
         }
+        catch (InvalidSubmissionException ex)
+        {
+            _logger.LogInformation("Rejected submission: {Message}", ex.Message);
+            await WriteProblemDetailsAsync(context, 400, "Bad Request", ex.Message);
+        }
         catch (ConfigurationException ex)
         {
             _logger.LogWarning(ex, "Configuration error: {Message}", ex.Message);

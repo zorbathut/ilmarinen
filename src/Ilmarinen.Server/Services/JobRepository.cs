@@ -39,7 +39,7 @@ public class JobRepository
                 .FirstOrDefaultAsync(p => p.Id == submission.PipelineId.Value);
 
             if (pipeline == null)
-                throw new ArgumentException($"Pipeline {submission.PipelineId} not found");
+                throw new InvalidSubmissionException($"Pipeline {submission.PipelineId} not found");
 
             resolvedRepoUrl ??= pipeline.Repository?.RepoUrl;
             resolvedRef ??= pipeline.DefaultRef;
@@ -53,11 +53,11 @@ public class JobRepository
             resolvedGitToken = submission.GitToken;
 
         if (string.IsNullOrEmpty(resolvedRepoUrl))
-            throw new ArgumentException("RepoUrl is required (either directly or via PipelineId)");
+            throw new InvalidSubmissionException("RepoUrl is required (either directly or via PipelineId)");
         if (string.IsNullOrEmpty(resolvedRef))
-            throw new ArgumentException("Ref is required (either directly or via PipelineId)");
+            throw new InvalidSubmissionException("Ref is required (either directly or via PipelineId)");
         if (string.IsNullOrEmpty(resolvedScriptPath))
-            throw new ArgumentException("ScriptPath is required (either directly or via PipelineId)");
+            throw new InvalidSubmissionException("ScriptPath is required (either directly or via PipelineId)");
 
         var job = new Job
         {

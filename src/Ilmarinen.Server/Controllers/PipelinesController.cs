@@ -1,12 +1,11 @@
-using System;
 using Ilmarinen.Protocol;
-using System;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.Server.Controllers;
 
@@ -76,15 +75,7 @@ public class PipelinesController : ControllerBase
             GitTokenMode = GitTokenMode.Inherit
         };
 
-        try
-        {
-            var jobId = await _scheduler.EnqueueJobAsync(submission);
-            return Ok(new JobSubmissionResult { Id = jobId });
-        }
-        catch (ArgumentException ex)
-        {
-            // The ExistsAsync guard above can race with a concurrent pipeline deletion.
-            return BadRequest(ex.Message);
-        }
+        var jobId = await _scheduler.EnqueueJobAsync(submission);
+        return Ok(new JobSubmissionResult { Id = jobId });
     }
 }
