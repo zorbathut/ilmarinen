@@ -556,17 +556,17 @@ public class PipelineRunner
         // Create and start the container
         var containerId = await CreateContainerAsync(image.Reference, networkName, apiServer);
 
-        // Copy agent script into container (avoids bind mount path issues in Docker-in-Docker)
-        using (var tarStream = CreateTarWithScript(ShellScript, "ilmarinen-agent"))
-        {
-            await _client.Containers.ExtractArchiveToContainerAsync(
-                containerId,
-                new ContainerPathStatParameters { Path = "/usr/local/bin", AllowOverwriteDirWithFile = false },
-                tarStream);
-        }
-
         try
         {
+            // Copy agent script into container (avoids bind mount path issues in Docker-in-Docker)
+            using (var tarStream = CreateTarWithScript(ShellScript, "ilmarinen-agent"))
+            {
+                await _client.Containers.ExtractArchiveToContainerAsync(
+                    containerId,
+                    new ContainerPathStatParameters { Path = "/usr/local/bin", AllowOverwriteDirWithFile = false },
+                    tarStream);
+            }
+
             await _client.Containers.StartContainerAsync(containerId, new ContainerStartParameters());
 
             var context = new DockerJobContext(
