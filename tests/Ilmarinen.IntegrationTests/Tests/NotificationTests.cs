@@ -1,11 +1,15 @@
-using System;
 using Ilmarinen.IntegrationTests.Fixtures;
-using System;
+using Ilmarinen.NotificationClient;
 using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
+using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 
@@ -252,5 +256,83 @@ public class NotificationTests
 
         Assert.That(second, Has.Count.EqualTo(1));
         Assert.That(second[0].JobId, Is.EqualTo(job2));
+    }
+
+    [Test]
+    public async Task NotificationProcessor_DeliversAndAcksNotifications()
+    {
+        await _fixture.StartWorkerAsync();
+
+        using var client = new IlmarinenNotificationClient(
+            _fixture.HttpClient.BaseAddress!.ToString(), _fixture.HttpClient);
+
+        var handled = new List<JobNotification>();
+        var processor = new NotificationProcessor(
+            client,
+            new CollectingHandler(handled),
+            new NotificationProcessorOptions
+            {
+                SubscriberName = "processor-test",
+                PollInterval = TimeSpan.FromMilliseconds(200)
+            },
+            NullLogger.Instance);
+
+        using var cts = new CancellationTokenSource();
+        var run = processor.RunAsync(cts.Token);
+
+        // The subscriber must be registered before the job completes, or no notification is created for it.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (client.SubscriberId == null && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50);
+        }
+        Assert.That(client.SubscriberId, Is.Not.Null, "processor should register on startup");
+
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            RepoUrl = _repo.Url,
+            Ref = _repo.Branch,
+            ScriptPath = "pipeline.csx"
+        });
+        await _fixture.WaitForJobCompletionAsync(jobId);
+
+        deadline = DateTime.UtcNow.AddSeconds(15);
+        while (CountHandled(handled) == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(100);
+        }
+
+        lock (handled)
+        {
+            Assert.That(handled.Select(n => n.JobId), Does.Contain(jobId),
+                "the handler should receive the job-completion notification");
+        }
+
+        cts.Cancel();
+        await run;
+
+        // Handled notifications were acked by the processor, so a fresh pull sees nothing.
+        var afterProcessor = await client.PullNotificationsAsync();
+        Assert.That(afterProcessor, Is.Empty);
+    }
+
+    private static int CountHandled(List<JobNotification> handled)
+    {
+        lock (handled)
+        {
+            return handled.Count;
+        }
+    }
+
+    private sealed class CollectingHandler(List<JobNotification> sink) : INotificationHandler
+    {
+        public Task<bool> HandleAsync(JobNotification notification, CancellationToken ct)
+        {
+            lock (sink)
+            {
+                sink.Add(notification);
+            }
+            return Task.FromResult(true);
+        }
     }
 }

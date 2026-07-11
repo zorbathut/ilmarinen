@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -8,18 +7,21 @@ using System;
 
 namespace Ilmarinen.NotificationClient;
 
-public class NotificationProcessor : BackgroundService
+/// <summary>
+/// The notification consumption loop: register with the server (with backoff), then poll, hand each notification to the handler, ack the handled ones, and heartbeat — until cancelled. Hosts embed this in whatever lifecycle they own and await RunAsync.
+/// </summary>
+public class NotificationProcessor
 {
     private readonly IlmarinenNotificationClient _client;
     private readonly INotificationHandler _handler;
     private readonly NotificationProcessorOptions _options;
-    private readonly ILogger<NotificationProcessor> _logger;
+    private readonly ILogger _logger;
 
     public NotificationProcessor(
         IlmarinenNotificationClient client,
         INotificationHandler handler,
         NotificationProcessorOptions options,
-        ILogger<NotificationProcessor> logger)
+        ILogger logger)
     {
         _client = client;
         _handler = handler;
@@ -27,7 +29,7 @@ public class NotificationProcessor : BackgroundService
         _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public async Task RunAsync(CancellationToken stoppingToken)
     {
         // Register as subscriber
         var maxRetries = 10;

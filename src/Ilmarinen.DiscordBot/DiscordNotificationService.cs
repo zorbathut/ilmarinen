@@ -6,9 +6,7 @@ using Ilmarinen.Protocol;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System.Collections.Generic;
 using System.IO;
-using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Threading;
@@ -16,7 +14,7 @@ using System;
 
 namespace Ilmarinen.DiscordBot;
 
-public class DiscordNotificationService : BackgroundService
+public class DiscordNotificationService : BackgroundService, INotificationHandler
 {
     private readonly IConfiguration _configuration;
     private readonly ILogger<DiscordNotificationService> _logger;
@@ -49,8 +47,22 @@ public class DiscordNotificationService : BackgroundService
             }
 
             await InitializeDiscordAsync(stoppingToken);
-            await InitializeNotificationClientAsync(stoppingToken);
-            await ProcessNotificationsAsync(stoppingToken);
+
+            var serverUrl = Environment.GetEnvironmentVariable("ILMARINEN_SERVER_URL")
+                ?? _config!.ServerUrl;
+            if (string.IsNullOrWhiteSpace(serverUrl))
+            {
+                throw new InvalidOperationException(
+                    "Server URL not configured. Set ILMARINEN_SERVER_URL or serverUrl in config.");
+            }
+
+            _notificationClient = new IlmarinenNotificationClient(serverUrl);
+            var processor = new NotificationProcessor(
+                _notificationClient,
+                this,
+                new NotificationProcessorOptions { SubscriberName = _config!.SubscriberName },
+                _logger);
+            await processor.RunAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -147,118 +159,10 @@ public class DiscordNotificationService : BackgroundService
         _logger.LogInformation("Discord client initialized successfully");
     }
 
-    private async Task InitializeNotificationClientAsync(CancellationToken stoppingToken)
+    public async Task<bool> HandleAsync(JobNotification notification, CancellationToken ct)
     {
-        var serverUrl = Environment.GetEnvironmentVariable("ILMARINEN_SERVER_URL")
-            ?? _config!.ServerUrl;
-
-        if (string.IsNullOrWhiteSpace(serverUrl))
-        {
-            throw new InvalidOperationException(
-                "Server URL not configured. Set ILMARINEN_SERVER_URL or serverUrl in config.");
-        }
-
-        _notificationClient = new IlmarinenNotificationClient(serverUrl);
-
-        var maxRetries = 10;
-        var retryDelay = TimeSpan.FromSeconds(5);
-
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            stoppingToken.ThrowIfCancellationRequested();
-            try
-            {
-                var info = await _notificationClient.RegisterAsync(_config!.SubscriberName);
-                _logger.LogInformation("Registered as subscriber {Name} (ID: {Id})", info.Name, info.Id);
-                return;
-            }
-            catch (HttpRequestException ex) when (attempt < maxRetries)
-            {
-                _logger.LogWarning(ex,
-                    "Failed to connect to Ilmarinen server (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}s...",
-                    attempt, maxRetries, retryDelay.TotalSeconds);
-                await Task.Delay(retryDelay, stoppingToken);
-                retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 60));
-            }
-        }
-
-        throw new InvalidOperationException(
-            $"Failed to register with Ilmarinen server after {maxRetries} attempts.");
-    }
-
-    private async Task ProcessNotificationsAsync(CancellationToken stoppingToken)
-    {
-        var pollInterval = TimeSpan.FromSeconds(5);
-        var heartbeatInterval = TimeSpan.FromSeconds(60);
-        var batchSize = 10;
-
-        _logger.LogInformation(
-            "Starting notification processor (heartbeat: {HeartbeatSec}s, poll: {PollSec}s)",
-            heartbeatInterval.TotalSeconds, pollInterval.TotalSeconds);
-
-        var heartbeatTask = HeartbeatLoopAsync(heartbeatInterval, stoppingToken);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                var notifications = await _notificationClient!.PullNotificationsAsync(batchSize);
-                var acked = new List<Guid>();
-
-                foreach (var notification in notifications)
-                {
-                    if (stoppingToken.IsCancellationRequested) break;
-
-                    try
-                    {
-                        await SendToDiscordAsync(notification);
-                        acked.Add(notification.NotificationId);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to send notification {Id} to Discord",
-                            notification.NotificationId);
-                    }
-                }
-
-                if (acked.Count > 0)
-                    await _notificationClient.AcknowledgeAsync(acked);
-
-                if (notifications.Count < batchSize)
-                    await Task.Delay(pollInterval, stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in notification polling loop");
-                await Task.Delay(pollInterval, stoppingToken);
-            }
-        }
-
-        await heartbeatTask;
-    }
-
-    private async Task HeartbeatLoopAsync(TimeSpan interval, CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(interval, stoppingToken);
-                await _notificationClient!.HeartbeatAsync();
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Heartbeat failed, will retry next interval");
-            }
-        }
+        await SendToDiscordAsync(notification);
+        return true;
     }
 
     private async Task SendToDiscordAsync(JobNotification notification)

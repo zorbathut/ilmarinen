@@ -34,6 +34,7 @@
     <ProjectReference Include="..\..\src\Ilmarinen.Server\Ilmarinen.Server.csproj" />
     <ProjectReference Include="..\..\src\Ilmarinen.Worker\Ilmarinen.Worker.csproj" />
     <ProjectReference Include="..\..\src\Ilmarinen.Database\Ilmarinen.Database.csproj" />
+    <ProjectReference Include="..\..\src\Ilmarinen.NotificationClient\Ilmarinen.NotificationClient.csproj" />
     <ProjectReference Include="..\..\src\Ilmarinen.Protocol\Ilmarinen.Protocol.csproj" />
   </ItemGroup>
 
