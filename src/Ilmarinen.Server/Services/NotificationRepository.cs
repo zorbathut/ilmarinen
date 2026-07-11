@@ -12,20 +12,18 @@ namespace Ilmarinen.Server.Services;
 public class NotificationRepository
 {
     private readonly IlmarinenDbContext _db;
+    private readonly SubscriberRepository _subscribers;
 
-    public NotificationRepository(IlmarinenDbContext db)
+    public NotificationRepository(IlmarinenDbContext db, SubscriberRepository subscribers)
     {
         _db = db;
+        _subscribers = subscribers;
     }
 
     public async Task CreateForActiveSubscribersAsync(Guid jobId, string eventType)
     {
         var now = DateTime.UtcNow;
-        var activeIds = await _db.Subscribers
-            .Where(s => s.IsActive && s.LastHeartbeat != null
-                && s.LastHeartbeat.Value.AddMinutes(s.HeartbeatTimeoutMinutes) > now)
-            .Select(s => s.Id)
-            .ToListAsync();
+        var activeIds = await _subscribers.GetActiveSubscriberIdsAsync();
 
         foreach (var subscriberId in activeIds)
         {
