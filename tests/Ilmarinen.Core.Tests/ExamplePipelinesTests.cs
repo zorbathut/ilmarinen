@@ -41,7 +41,7 @@ public class ExamplePipelinesTests
             File.Copy(srcPath, destPath);
 
             var scriptResult = await PipelineScript.LoadAsync(destPath);
-            var runner = new PipelineRunner(workDir: tempDir);
+            using var runner = new PipelineRunner(workDir: tempDir);
             var success = await runner.RunAsync(scriptResult.Steps);
             Assert.That(success, Is.True, $"Pipeline {exampleFile} failed");
         }

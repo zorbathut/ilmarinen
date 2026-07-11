@@ -14,7 +14,7 @@ namespace Ilmarinen.Docker;
 /// <summary>
 /// Runs pipeline steps using Docker.
 /// </summary>
-public class PipelineRunner
+public class PipelineRunner : IDisposable
 {
     private readonly DockerClient _client;
     private readonly string _workDir;
@@ -54,6 +54,11 @@ public class PipelineRunner
         _onOutput = onOutput;
         _userSpec = LinuxInterop.GetUserSpec();
         _dockerSocketGid = LinuxInterop.GetDockerSocketGid();
+    }
+
+    public void Dispose()
+    {
+        _client.Dispose();
     }
 
     /// <summary>

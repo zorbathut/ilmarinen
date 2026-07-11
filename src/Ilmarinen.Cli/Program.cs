@@ -44,7 +44,7 @@ public class Commands
                 return 0;
             }
 
-            var runner = new PipelineRunner();
+            using var runner = new PipelineRunner();
             var success = await runner.RunAsync(scriptResult.Steps);
 
             return success ? 0 : 1;
