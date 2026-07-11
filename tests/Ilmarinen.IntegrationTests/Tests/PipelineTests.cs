@@ -347,8 +347,8 @@ public class PipelineTests
             Schedule = "* * * * *"
         });
 
-        // Wait for the scheduler to pick it up (runs every 60s)
-        var deadline = DateTime.UtcNow.AddSeconds(90);
+        // Worst case is ~125s: the next every-minute cron occurrence can be up to 60s out, the scheduler polls every 60s, and the tick can just miss the occurrence.
+        var deadline = DateTime.UtcNow.AddSeconds(150);
         Ilmarinen.Protocol.Responses.JobInfo? job = null;
 
         while (DateTime.UtcNow < deadline)
