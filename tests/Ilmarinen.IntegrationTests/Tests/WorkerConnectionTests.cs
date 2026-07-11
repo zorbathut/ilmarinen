@@ -1,10 +1,9 @@
-using System;
 using Ilmarinen.IntegrationTests.Fixtures;
-using System;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
 using NUnit.Framework;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 

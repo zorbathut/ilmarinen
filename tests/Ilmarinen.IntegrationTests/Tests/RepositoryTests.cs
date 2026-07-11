@@ -1,6 +1,4 @@
-using System;
 using Ilmarinen.IntegrationTests.Fixtures;
-using System;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
@@ -8,6 +6,7 @@ using NUnit.Framework;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 

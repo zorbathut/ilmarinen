@@ -1,6 +1,4 @@
-using System;
 using Ilmarinen.Server.Hubs;
-using System;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -8,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System;
 
 namespace Ilmarinen.Server;
 

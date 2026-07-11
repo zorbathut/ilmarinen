@@ -1,6 +1,4 @@
-using System;
 using Ilmarinen.Database.Entities;
-using System;
 using Ilmarinen.Database;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
@@ -8,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.Server.Services;
 

@@ -1,11 +1,10 @@
-using System;
 using Ilmarinen.Worker.Services;
-using System;
 using Ilmarinen.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.IO;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
 
