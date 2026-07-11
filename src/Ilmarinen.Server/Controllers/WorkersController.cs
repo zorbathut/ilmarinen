@@ -1,4 +1,5 @@
 using Ilmarinen.Models;
+using Ilmarinen.Protocol;
 using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -90,19 +91,14 @@ public class WorkersController : ControllerBase
 
         var result = await _deletionService.WaitForResultAsync(key, TimeSpan.FromSeconds(30));
 
-        if (result.Success)
-            return Ok(result);
-
-        if (result.Error?.Contains("in use") == true)
-            return Conflict(new { error = result.Error });
-
-        if (result.Error?.Contains("does not exist") == true)
-            return NotFound(new { error = result.Error });
-
-        if (result.Error?.Contains("did not respond") == true)
-            return StatusCode(504, new { error = result.Error });
-
-        return BadRequest(new { error = result.Error });
+        return result.Status switch
+        {
+            DeleteWorkspaceStatus.Success => Ok(result),
+            DeleteWorkspaceStatus.InUse => Conflict(new { error = result.Error }),
+            DeleteWorkspaceStatus.NotFound => NotFound(new { error = result.Error }),
+            DeleteWorkspaceStatus.Timeout => StatusCode(504, new { error = result.Error }),
+            _ => BadRequest(new { error = result.Error })
+        };
     }
 }
 

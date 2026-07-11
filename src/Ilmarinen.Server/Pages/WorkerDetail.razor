@@ -344,7 +344,7 @@ else
             await HubContext.Clients.Client(connectionId).DeleteWorkspace(workspace);
             var result = await DeletionService.WaitForResultAsync(key, TimeSpan.FromSeconds(30));
 
-            if (result.Success)
+            if (result.Status == Ilmarinen.Protocol.DeleteWorkspaceStatus.Success)
             {
                 workerRepo.RemoveWorkspace(connectionId, workspace);
             }

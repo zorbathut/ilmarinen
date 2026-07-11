@@ -1,4 +1,5 @@
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using System.Threading;
@@ -23,7 +24,7 @@ public class WorkspaceDeletionService
     public async Task<DeleteWorkspaceResult> WaitForResultAsync(string key, TimeSpan timeout)
     {
         if (!_pending.TryGetValue(key, out var tcs))
-            return new DeleteWorkspaceResult { Success = false, Error = "No pending deletion." };
+            return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Error, Error = "No pending deletion." };
 
         try
         {
@@ -33,7 +34,7 @@ public class WorkspaceDeletionService
         }
         catch (OperationCanceledException)
         {
-            return new DeleteWorkspaceResult { Success = false, Error = "Worker did not respond in time." };
+            return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Timeout, Error = "Worker did not respond in time." };
         }
         finally
         {

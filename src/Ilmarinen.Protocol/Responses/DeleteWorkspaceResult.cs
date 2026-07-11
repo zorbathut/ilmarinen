@@ -5,6 +5,6 @@ namespace Ilmarinen.Protocol.Responses;
 /// </summary>
 public record DeleteWorkspaceResult
 {
-    public required bool Success { get; init; }
+    public required DeleteWorkspaceStatus Status { get; init; }
     public string? Error { get; init; }
 }

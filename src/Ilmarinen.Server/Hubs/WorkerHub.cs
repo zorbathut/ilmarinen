@@ -250,7 +250,7 @@ public class WorkerHub : Hub<IWorkerClient>
 
         deletionService.Complete(Context.ConnectionId, name, result);
 
-        if (result.Success)
+        if (result.Status == DeleteWorkspaceStatus.Success)
             workers.RemoveWorkspace(Context.ConnectionId, name);
 
         return Task.CompletedTask;

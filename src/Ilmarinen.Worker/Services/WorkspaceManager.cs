@@ -1,5 +1,6 @@
 using Ilmarinen.Models;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.IO;
@@ -59,7 +60,7 @@ public class WorkspaceManager
         // Validate name
         if (!WorkspaceConfig.IsValidName(name, out var validationError))
         {
-            return new DeleteWorkspaceResult { Success = false, Error = validationError };
+            return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Error, Error = validationError };
         }
 
         // Check if in use
@@ -69,7 +70,7 @@ public class WorkspaceManager
             {
                 return new DeleteWorkspaceResult
                 {
-                    Success = false,
+                    Status = DeleteWorkspaceStatus.InUse,
                     Error = "Workspace is currently in use by a running job."
                 };
             }
@@ -85,7 +86,7 @@ public class WorkspaceManager
         {
             return new DeleteWorkspaceResult
             {
-                Success = false,
+                Status = DeleteWorkspaceStatus.Error,
                 Error = "Workspace path is outside the workspace root."
             };
         }
@@ -94,7 +95,7 @@ public class WorkspaceManager
         {
             return new DeleteWorkspaceResult
             {
-                Success = false,
+                Status = DeleteWorkspaceStatus.NotFound,
                 Error = $"Workspace '{name}' does not exist."
             };
         }
@@ -105,14 +106,14 @@ public class WorkspaceManager
             SetAttributesNormal(new DirectoryInfo(workDir));
             Directory.Delete(workDir, recursive: true);
             _logger.LogInformation("Deleted workspace: {WorkspaceName}", name);
-            return new DeleteWorkspaceResult { Success = true };
+            return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Success };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete workspace: {WorkspaceName}", name);
             return new DeleteWorkspaceResult
             {
-                Success = false,
+                Status = DeleteWorkspaceStatus.Error,
                 Error = $"Failed to delete workspace: {ex.Message}"
             };
         }

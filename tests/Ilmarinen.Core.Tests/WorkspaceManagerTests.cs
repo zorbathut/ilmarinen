@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using Ilmarinen.Worker.Services;
 using Ilmarinen.Worker;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -92,7 +93,7 @@ public class WorkspaceManagerTests
 
         var result = _manager.TryDelete("active-ws");
 
-        Assert.That(result.Success, Is.False);
+        Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.InUse));
         Assert.That(result.Error, Does.Contain("in use"));
     }
 
@@ -101,7 +102,7 @@ public class WorkspaceManagerTests
     {
         var result = _manager.TryDelete("no-such-ws");
 
-        Assert.That(result.Success, Is.False);
+        Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.NotFound));
         Assert.That(result.Error, Does.Contain("does not exist"));
     }
 
@@ -110,7 +111,7 @@ public class WorkspaceManagerTests
     {
         var result = _manager.TryDelete("../escape");
 
-        Assert.That(result.Success, Is.False);
+        Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.Error));
         Assert.That(result.Error, Does.Contain("Path separators"));
     }
 
@@ -123,7 +124,7 @@ public class WorkspaceManagerTests
 
         var result = _manager.TryDelete("deletable");
 
-        Assert.That(result.Success, Is.True);
+        Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.Success));
         Assert.That(Directory.Exists(wsPath), Is.False);
     }
 
@@ -138,7 +139,7 @@ public class WorkspaceManagerTests
 
         var result = _manager.TryDelete("was-active");
 
-        Assert.That(result.Success, Is.True);
+        Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.Success));
         Assert.That(Directory.Exists(wsPath), Is.False);
     }
 }
