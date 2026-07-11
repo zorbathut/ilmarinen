@@ -22,14 +22,9 @@ public class Step<T>
     public required Func<IJobContext, Task<T>> Action { get; init; }
 
     /// <summary>
-    /// The output from this step (populated after execution).
+    /// The output from this step. Populated after execution on the typed step a script captures from Step&lt;T&gt;(...), so later steps can consume it.
     /// </summary>
     public T? Output { get; set; }
-
-    /// <summary>
-    /// Whether this step has been executed.
-    /// </summary>
-    public bool HasRun { get; set; }
 }
 
 /// <summary>

@@ -115,7 +115,6 @@ public class ScriptStepBuilder<T>
             {
                 var result = await step.Action(ctx);
                 step.Output = result;
-                step.HasRun = true;
                 return result;
             }
         });
@@ -161,9 +160,7 @@ public class ScriptStepBuilder : ScriptStepBuilder<object?>
         {
             Name = step.Name,
             ImageResolver = step.ImageResolver,
-            Action = step.Action,
-            Output = step.Output,
-            HasRun = step.HasRun
+            Action = step.Action
         };
     }
 

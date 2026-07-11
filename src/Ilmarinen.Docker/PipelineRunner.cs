@@ -598,8 +598,7 @@ public class PipelineRunner
                     });
                 });
 
-                step.Output = await step.Action(context);
-                step.HasRun = true;
+                await step.Action(context);
             }
             finally
             {
