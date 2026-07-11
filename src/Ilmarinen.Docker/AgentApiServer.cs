@@ -130,12 +130,6 @@ public class AgentApiServer : IAsyncDisposable
                 await HandleRun(request, response);
             else if (method == "POST" && path == "/api/build")
                 await HandleBuild(request, response);
-            else if (method == "POST" && path == "/api/service/start")
-                await HandleServiceStart(request, response);
-            else if (method == "POST" && path == "/api/service/stop")
-                await HandleServiceStop(request, response);
-            else if (method == "POST" && path == "/api/service/wait")
-                await HandleServiceWait(request, response);
             else if (method == "GET" && path.StartsWith("/api/secret/"))
                 await HandleSecret(request, response, path["/api/secret/".Length..]);
             else if (method == "GET" && path.StartsWith("/api/info/"))
@@ -242,44 +236,6 @@ public class AgentApiServer : IAsyncDisposable
         await WriteJsonResponse(response, new { reference = image.Reference });
     }
 
-    private async Task HandleServiceStart(HttpListenerRequest request, HttpListenerResponse response)
-    {
-        var body = await ReadJsonBody<ServiceStartRequest>(request);
-        var handle = await _currentContext!.StartService(
-            ImageRef.From(body.Image),
-            body.Name,
-            body.Ports);
-
-        await WriteJsonResponse(response, new { name = handle.Name });
-    }
-
-    private async Task HandleServiceStop(HttpListenerRequest request, HttpListenerResponse response)
-    {
-        var body = await ReadJsonBody<ServiceStopRequest>(request);
-        // Services aren't tracked, so stop by container name via raw docker CLI.
-        await _currentContext!.Shell($"docker stop {body.Name} && docker rm {body.Name}");
-
-        await WriteJsonResponse(response, new { success = true });
-    }
-
-    private async Task HandleServiceWait(HttpListenerRequest request, HttpListenerResponse response)
-    {
-        var body = await ReadJsonBody<ServiceWaitRequest>(request);
-        var timeout = body.TimeoutSeconds.HasValue
-            ? TimeSpan.FromSeconds(body.TimeoutSeconds.Value)
-            : (TimeSpan?)null;
-
-        try
-        {
-            await _currentContext!.WaitForHealthy(body.Url, timeout);
-            await WriteJsonResponse(response, new { healthy = true });
-        }
-        catch (TimeoutException)
-        {
-            await WriteJsonResponse(response, new { healthy = false });
-        }
-    }
-
     private async Task HandleSecret(HttpListenerRequest request, HttpListenerResponse response, string name)
     {
         try
@@ -351,9 +307,6 @@ public class AgentApiServer : IAsyncDisposable
     // Request/Response DTOs
     private record RunRequest(string Image, string[]? Command);
     private record BuildRequest(string Dockerfile, string? Tag, string? Context, Dictionary<string, string>? BuildArgs);
-    private record ServiceStartRequest(string Image, string Name, int[]? Ports);
-    private record ServiceStopRequest(string Name);
-    private record ServiceWaitRequest(string Url, int? TimeoutSeconds);
 
     /// <summary>
     /// Structured error response for API errors.
