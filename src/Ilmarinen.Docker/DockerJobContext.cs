@@ -271,7 +271,7 @@ public class DockerJobContext : IJobContext
         return result;
     }
 
-    public async Task<ServiceHandle> StartService(ImageRef image, string name, int[]? ports = null)
+    public async Task<IServiceHandle> StartService(ImageRef image, string name, int[]? ports = null)
     {
         // Prefix container name with network name to avoid collisions between concurrent/stale runs
         var containerName = $"{_networkName}-{name}";
@@ -389,7 +389,7 @@ public class DockerJobContext : IJobContext
     }
 }
 
-internal class DockerServiceHandle : ServiceHandle
+internal class DockerServiceHandle : IServiceHandle
 {
     private readonly DockerClient _client;
     private readonly string _containerId;

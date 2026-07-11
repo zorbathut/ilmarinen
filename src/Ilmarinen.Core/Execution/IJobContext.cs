@@ -73,7 +73,7 @@ public interface IJobContext
     /// <summary>
     /// Start a service container (runs in background).
     /// </summary>
-    Task<ServiceHandle> StartService(ImageRef image, string name, int[]? ports = null);
+    Task<IServiceHandle> StartService(ImageRef image, string name, int[]? ports = null);
 
     /// <summary>
     /// Wait for a service to be healthy.
@@ -103,11 +103,6 @@ public interface IServiceHandle : IAsyncDisposable
     /// </summary>
     Task StopAsync();
 }
-
-/// <summary>
-/// Alias for IServiceHandle.
-/// </summary>
-public interface ServiceHandle : IServiceHandle { }
 
 /// <summary>
 /// Result of executing a command.
