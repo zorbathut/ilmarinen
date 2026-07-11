@@ -67,6 +67,7 @@ public class ScriptStepBuilder<T>
 
     internal ScriptStepBuilder(string name, List<Step<object?>> steps)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
         _name = name;
         _steps = steps;
     }
