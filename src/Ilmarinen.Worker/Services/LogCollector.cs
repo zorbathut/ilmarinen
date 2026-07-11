@@ -23,7 +23,6 @@ public class LogCollector
     private readonly object _lock = new();
     private readonly ConcurrentQueue<Task> _pendingFlushes = new();
     private int _sequenceNumber;
-    private long _totalBytes;
     private DateTime _lastFlush = DateTime.UtcNow;
     private volatile bool _draining;
 
@@ -36,9 +35,6 @@ public class LogCollector
         _connection = connection;
         _messageBuffer = messageBuffer;
     }
-
-    public long TotalBytes => _totalBytes;
-    public int TotalChunks => _sequenceNumber;
 
     /// <summary>
     /// Write a log entry. Type is "o" for stdout, "e" for stderr.
@@ -57,7 +53,6 @@ public class LogCollector
         lock (_lock)
         {
             _buffer.AppendLine(entry);
-            _totalBytes += data.Length;
         }
 
         // Track pending flush task to ensure we can drain before shutdown

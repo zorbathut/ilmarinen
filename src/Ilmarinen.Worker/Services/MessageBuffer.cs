@@ -30,13 +30,10 @@ public class MessageBuffer
     {
         while (_messages.TryDequeue(out _)) { }
     }
-
-    public bool IsEmpty => _messages.IsEmpty;
 }
 
 public record BufferedMessage
 {
     public required string Method { get; init; }
     public required object[] Args { get; init; }
-    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
 }
