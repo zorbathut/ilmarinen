@@ -56,24 +56,4 @@ public class JobLogRepository
         }).ToList();
     }
 
-    public async Task<int> GetChunkCountAsync(Guid jobId)
-    {
-        return await _db.JobLogChunks.CountAsync(c => c.JobId == jobId);
-    }
-
-    public async Task<int> GetMaxSequenceAsync(Guid jobId)
-    {
-        var max = await _db.JobLogChunks
-            .Where(c => c.JobId == jobId)
-            .MaxAsync(c => (int?)c.SequenceNumber);
-
-        return max ?? 0;
-    }
-
-    public async Task DeleteLogsAsync(Guid jobId)
-    {
-        await _db.JobLogChunks
-            .Where(c => c.JobId == jobId)
-            .ExecuteDeleteAsync();
-    }
 }

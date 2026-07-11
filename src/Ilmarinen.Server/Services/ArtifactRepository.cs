@@ -75,8 +75,6 @@ public class ArtifactRepository
         return (File.OpenRead(fullPath), artifact.Name);
     }
 
-    public string GetFullPath(string relativePath) => Path.Combine(_storagePath, relativePath);
-
     private static string SanitizeFileName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();

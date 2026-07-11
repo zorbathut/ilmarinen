@@ -76,22 +76,10 @@ public class ServerKeyService
         return Convert.ToBase64String(_publicKeyBytes!);
     }
 
-    public byte[] GetPublicKeyBytes()
-    {
-        EnsureEnabled();
-        return _publicKeyBytes!;
-    }
-
     public byte[] Sign(byte[] data)
     {
         EnsureEnabled();
         return _key!.SignData(data, HashAlgorithmName.SHA256);
-    }
-
-    public bool Verify(byte[] data, byte[] signature)
-    {
-        EnsureEnabled();
-        return _key!.VerifyData(data, signature, HashAlgorithmName.SHA256);
     }
 
     public byte[] GetEncryptionKey()
