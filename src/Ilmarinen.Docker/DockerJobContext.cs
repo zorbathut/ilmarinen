@@ -1,4 +1,3 @@
-using Docker.DotNet.Models;
 using Docker.DotNet;
 using Ilmarinen.Execution;
 using Ilmarinen.Models;
