@@ -489,6 +489,25 @@ public class PipelineTests
     }
 
     [Test]
+    public async Task SubmitJob_UnknownPipelineId_Returns400()
+    {
+        var response = await _fixture.HttpClient.PostAsJsonAsync(
+            "/api/jobs",
+            new JobSubmission
+            {
+                PipelineId = Guid.CreateVersion7(),
+                GitTokenMode = GitTokenMode.None
+            },
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+            });
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(400),
+            "a nonexistent pipeline ID is a user mistake, not a server bug");
+    }
+
+    [Test]
     public async Task MultiplePipelines_SameRepository()
     {
         var pipeline1 = await _fixture.CreatePipelineAsync(new PipelineSubmission

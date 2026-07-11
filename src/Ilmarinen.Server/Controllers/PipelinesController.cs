@@ -88,7 +88,15 @@ public class PipelinesController : ControllerBase
             GitTokenMode = GitTokenMode.Inherit
         };
 
-        var jobId = await _scheduler.EnqueueJobAsync(submission);
-        return Ok(new JobSubmissionResult { Id = jobId });
+        try
+        {
+            var jobId = await _scheduler.EnqueueJobAsync(submission);
+            return Ok(new JobSubmissionResult { Id = jobId });
+        }
+        catch (ArgumentException ex)
+        {
+            // The ExistsAsync guard above can race with a concurrent pipeline deletion.
+            return BadRequest(ex.Message);
+        }
     }
 }

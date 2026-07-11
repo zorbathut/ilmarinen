@@ -36,8 +36,15 @@ public class JobsController : ControllerBase
         if (submission.GitTokenMode == Protocol.GitTokenMode.Inherit && submission.PipelineId == null)
             return BadRequest("GitTokenMode.Inherit requires a PipelineId");
 
-        var jobId = await _scheduler.EnqueueJobAsync(submission);
-        return Ok(new JobSubmissionResult { Id = jobId });
+        try
+        {
+            var jobId = await _scheduler.EnqueueJobAsync(submission);
+            return Ok(new JobSubmissionResult { Id = jobId });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     [HttpGet("{id}")]
