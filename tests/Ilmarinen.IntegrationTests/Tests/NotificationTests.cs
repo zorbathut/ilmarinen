@@ -1,8 +1,11 @@
+using Ilmarinen.Database;
 using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.NotificationClient;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
 using System.Collections.Generic;
@@ -311,9 +314,12 @@ public class NotificationTests
         cts.Cancel();
         await run;
 
-        // Handled notifications were acked by the processor, so a fresh pull sees nothing.
-        var afterProcessor = await client.PullNotificationsAsync();
-        Assert.That(afterProcessor, Is.Empty);
+        // A fresh pull returning empty would be vacuous — the processor's own pull locks the row for 5 minutes regardless of ack. Assert the actual ack state in the database.
+        using var scope = _fixture.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        var rows = await db.Notifications.Where(n => n.SubscriberId == client.SubscriberId).ToListAsync();
+        Assert.That(rows, Is.Not.Empty);
+        Assert.That(rows.All(n => n.IsProcessed), Is.True, "the processor must ack handled notifications");
     }
 
     private static int CountHandled(List<JobNotification> handled)
