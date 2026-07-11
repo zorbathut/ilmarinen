@@ -489,6 +489,14 @@ public class PipelineTests
     }
 
     [Test]
+    public async Task MalformedGuidRouteParameter_Returns400()
+    {
+        var response = await _fixture.HttpClient.GetAsync("/api/jobs/not-a-guid");
+        Assert.That((int)response.StatusCode, Is.EqualTo(400),
+            "a malformed ID is invalid input, not a missing resource");
+    }
+
+    [Test]
     public async Task SubmitJob_UnknownPipelineId_Returns400()
     {
         var response = await _fixture.HttpClient.PostAsJsonAsync(

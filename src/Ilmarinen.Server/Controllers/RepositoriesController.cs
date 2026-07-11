@@ -24,7 +24,7 @@ public class RepositoriesController : ControllerBase
     public async Task<ActionResult<RepositoryInfo>> CreateRepository([FromBody] RepositorySubmission submission)
     {
         var repo = await _repositories.CreateAsync(submission);
-        return CreatedAtAction(nameof(GetRepository), new { id = repo.Id.ToString() }, repo);
+        return CreatedAtAction(nameof(GetRepository), new { id = repo.Id }, repo);
     }
 
     [HttpGet]
@@ -34,32 +34,23 @@ public class RepositoriesController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<RepositoryInfo>> GetRepository(string id)
+    public async Task<ActionResult<RepositoryInfo>> GetRepository(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid repository ID");
-
-        var repo = await _repositories.GetAsync(parsed);
+        var repo = await _repositories.GetAsync(id);
         return repo != null ? Ok(repo) : NotFound();
     }
 
     [HttpPut("{id}")]
-    public async Task<ActionResult<RepositoryInfo>> UpdateRepository(string id, [FromBody] RepositoryUpdate update)
+    public async Task<ActionResult<RepositoryInfo>> UpdateRepository(Guid id, [FromBody] RepositoryUpdate update)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid repository ID");
-
-        var repo = await _repositories.UpdateAsync(parsed, update);
+        var repo = await _repositories.UpdateAsync(id, update);
         return repo != null ? Ok(repo) : NotFound();
     }
 
     [HttpDelete("{id}")]
-    public async Task<ActionResult> DeleteRepository(string id)
+    public async Task<ActionResult> DeleteRepository(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid repository ID");
-
-        var result = await _repositories.DeleteAsync(parsed);
+        var result = await _repositories.DeleteAsync(id);
         return result switch
         {
             null => NotFound(),

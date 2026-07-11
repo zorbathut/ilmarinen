@@ -30,41 +30,29 @@ public class SubscribersController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<SubscriberInfo>> Get(string id)
+    public async Task<ActionResult<SubscriberInfo>> Get(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid subscriber ID");
-
-        var info = await _subscribers.GetAsync(parsed);
+        var info = await _subscribers.GetAsync(id);
         return info != null ? Ok(info) : NotFound();
     }
 
     [HttpPost("{id}/heartbeat")]
-    public async Task<ActionResult> Heartbeat(string id)
+    public async Task<ActionResult> Heartbeat(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid subscriber ID");
-
-        var success = await _subscribers.HeartbeatAsync(parsed);
+        var success = await _subscribers.HeartbeatAsync(id);
         return success ? Ok() : NotFound();
     }
 
     [HttpPost("{id}/notifications")]
-    public async Task<ActionResult<List<JobNotification>>> PullNotifications(string id, [FromQuery] int limit = 10)
+    public async Task<ActionResult<List<JobNotification>>> PullNotifications(Guid id, [FromQuery] int limit = 10)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid subscriber ID");
-
-        var notifications = await _notifications.PullAsync(parsed, limit);
+        var notifications = await _notifications.PullAsync(id, limit);
         return Ok(notifications);
     }
 
     [HttpPost("{id}/notifications/ack")]
-    public async Task<ActionResult> Acknowledge(string id, [FromBody] List<Guid> notificationIds)
+    public async Task<ActionResult> Acknowledge(Guid id, [FromBody] List<Guid> notificationIds)
     {
-        if (!Guid.TryParse(id, out _))
-            return BadRequest("Invalid subscriber ID");
-
         await _notifications.AcknowledgeAsync(notificationIds);
         return Ok();
     }

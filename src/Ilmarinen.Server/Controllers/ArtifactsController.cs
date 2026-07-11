@@ -26,12 +26,9 @@ public class ArtifactsController : ControllerBase
     /// List all artifacts for a job.
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<ArtifactInfo>>> List(string jobId)
+    public async Task<ActionResult<IReadOnlyList<ArtifactInfo>>> List(Guid jobId)
     {
-        if (!Guid.TryParse(jobId, out var jobGuid))
-            return BadRequest("Invalid job ID");
-
-        var artifacts = await _artifacts.GetByJobIdAsync(jobGuid);
+        var artifacts = await _artifacts.GetByJobIdAsync(jobId);
         return Ok(artifacts);
     }
 
@@ -39,12 +36,9 @@ public class ArtifactsController : ControllerBase
     /// Get artifact metadata.
     /// </summary>
     [HttpGet("{artifactId}")]
-    public async Task<ActionResult<ArtifactInfo>> GetInfo(string jobId, string artifactId)
+    public async Task<ActionResult<ArtifactInfo>> GetInfo(Guid jobId, Guid artifactId)
     {
-        if (!Guid.TryParse(artifactId, out var artifactGuid))
-            return BadRequest("Invalid artifact ID");
-
-        var artifact = await _artifacts.GetAsync(artifactGuid);
+        var artifact = await _artifacts.GetAsync(artifactId);
         return artifact != null ? Ok(artifact) : NotFound();
     }
 
@@ -52,12 +46,9 @@ public class ArtifactsController : ControllerBase
     /// Download an artifact.
     /// </summary>
     [HttpGet("{artifactId}/download")]
-    public async Task<IActionResult> Download(string jobId, string artifactId)
+    public async Task<IActionResult> Download(Guid jobId, Guid artifactId)
     {
-        if (!Guid.TryParse(artifactId, out var artifactGuid))
-            return BadRequest("Invalid artifact ID");
-
-        var (stream, fileName) = await _artifacts.GetContentAsync(artifactGuid);
+        var (stream, fileName) = await _artifacts.GetContentAsync(artifactId);
 
         if (stream == null)
             return NotFound();

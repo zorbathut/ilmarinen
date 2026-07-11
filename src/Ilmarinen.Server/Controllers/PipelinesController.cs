@@ -30,7 +30,7 @@ public class PipelinesController : ControllerBase
             return BadRequest("Invalid cron expression for schedule");
 
         var pipeline = await _pipelines.CreateAsync(submission);
-        return CreatedAtAction(nameof(GetPipeline), new { id = pipeline.Id.ToString() }, pipeline);
+        return CreatedAtAction(nameof(GetPipeline), new { id = pipeline.Id }, pipeline);
     }
 
     [HttpGet]
@@ -40,50 +40,38 @@ public class PipelinesController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<PipelineInfo>> GetPipeline(string id)
+    public async Task<ActionResult<PipelineInfo>> GetPipeline(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid pipeline ID");
-
-        var pipeline = await _pipelines.GetAsync(parsed);
+        var pipeline = await _pipelines.GetAsync(id);
         return pipeline != null ? Ok(pipeline) : NotFound();
     }
 
     [HttpPut("{id}")]
-    public async Task<ActionResult<PipelineInfo>> UpdatePipeline(string id, [FromBody] PipelineUpdate update)
+    public async Task<ActionResult<PipelineInfo>> UpdatePipeline(Guid id, [FromBody] PipelineUpdate update)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid pipeline ID");
-
         if (update.Schedule != null && !CronValidator.TryParse(update.Schedule, out _))
             return BadRequest("Invalid cron expression for schedule");
 
-        var pipeline = await _pipelines.UpdateAsync(parsed, update);
+        var pipeline = await _pipelines.UpdateAsync(id, update);
         return pipeline != null ? Ok(pipeline) : NotFound();
     }
 
     [HttpDelete("{id}")]
-    public async Task<ActionResult> DeletePipeline(string id)
+    public async Task<ActionResult> DeletePipeline(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid pipeline ID");
-
-        var deleted = await _pipelines.DeleteAsync(parsed);
+        var deleted = await _pipelines.DeleteAsync(id);
         return deleted ? NoContent() : NotFound();
     }
 
     [HttpPost("{id}/trigger")]
-    public async Task<ActionResult<JobSubmissionResult>> TriggerPipeline(string id, [FromBody] PipelineTrigger? trigger)
+    public async Task<ActionResult<JobSubmissionResult>> TriggerPipeline(Guid id, [FromBody] PipelineTrigger? trigger)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid pipeline ID");
-
-        if (!await _pipelines.ExistsAsync(parsed))
+        if (!await _pipelines.ExistsAsync(id))
             return NotFound();
 
         var submission = new JobSubmission
         {
-            PipelineId = parsed,
+            PipelineId = id,
             Ref = trigger?.Ref,
             GitTokenMode = GitTokenMode.Inherit
         };

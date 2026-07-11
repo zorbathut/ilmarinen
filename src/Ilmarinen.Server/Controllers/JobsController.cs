@@ -48,12 +48,9 @@ public class JobsController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<JobInfo>> GetJob(string id)
+    public async Task<ActionResult<JobInfo>> GetJob(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid job ID");
-
-        var job = await _jobs.GetAsync(parsed);
+        var job = await _jobs.GetAsync(id);
         return job != null ? Ok(job) : NotFound();
     }
 
@@ -64,15 +61,12 @@ public class JobsController : ControllerBase
     }
 
     [HttpPost("{id}/retry")]
-    public async Task<ActionResult<JobSubmissionResult>> RetryJob(string id)
+    public async Task<ActionResult<JobSubmissionResult>> RetryJob(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid job ID");
-
         JobSubmission? submission;
         try
         {
-            submission = await _jobs.BuildRetrySubmissionAsync(parsed);
+            submission = await _jobs.BuildRetrySubmissionAsync(id);
         }
         catch (InvalidOperationException ex)
         {
@@ -87,12 +81,9 @@ public class JobsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<ActionResult> CancelJob(string id)
+    public async Task<ActionResult> CancelJob(Guid id)
     {
-        if (!Guid.TryParse(id, out var parsed))
-            return BadRequest("Invalid job ID");
-
-        var cancelled = await _scheduler.CancelJobAsync(parsed);
+        var cancelled = await _scheduler.CancelJobAsync(id);
         return cancelled ? Ok() : NotFound();
     }
 }

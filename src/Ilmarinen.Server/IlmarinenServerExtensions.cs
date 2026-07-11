@@ -62,15 +62,12 @@ public static class IlmarinenServerExtensions
         endpoints.MapHub<WorkerHub>("/hub/workers");
 
         endpoints.MapPost("/hub/workers/jobs/{jobId}/artifacts", async (
-            string jobId,
+            Guid jobId,
             string name,
             HttpRequest request,
             ArtifactRepository artifacts,
             ILogger<ArtifactRepository> logger) =>
         {
-            if (!Guid.TryParse(jobId, out var jobGuid))
-                return Results.BadRequest("Invalid job ID");
-
             if (string.IsNullOrWhiteSpace(name))
                 return Results.BadRequest("Artifact name is required");
 
@@ -80,7 +77,7 @@ public static class IlmarinenServerExtensions
                 name, contentLength, jobId);
 
             var artifact = await artifacts.SaveAsync(
-                jobGuid,
+                jobId,
                 name,
                 contentLength,
                 request.Body);
