@@ -3,6 +3,7 @@ using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
+using System.Linq;
 using System.Threading.Tasks;
 using System;
 
@@ -191,6 +192,43 @@ public class JobDurabilityTests
         var job = await _fixture.GetJobAsync(jobId);
         Assert.That(job.Status, Is.EqualTo(JobStatus.Cancelled),
             "Job should be Cancelled immediately without waiting for worker");
+    }
+
+    [Test]
+    public async Task Cancel_WhileWorkerDisconnected_NotifiesSubscribers()
+    {
+        var subscriber = await _fixture.RegisterSubscriberAsync(
+            new SubscriberRegistration { Name = "cancel-signal-test" });
+
+        _repo.AddFile("pipeline.csx", """
+            Step("slow")
+                .Image("alpine:latest")
+                .Run(async ctx => {
+                    await ctx.Exec("sleep", "30");
+                });
+            """);
+        _repo.Commit("Add slow pipeline");
+
+        await _fixture.StartWorkerAsync();
+
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            RepoUrl = _repo.Url,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+        await _fixture.WaitForJobStatusAsync(jobId, JobStatus.Running);
+
+        await _fixture.StopWorkerAsync(preserveIdentity: true);
+        await Task.Delay(1000);
+
+        var cancelled = await _fixture.CancelJobAsync(jobId);
+        Assert.That(cancelled, Is.True);
+
+        // No worker restart: the cancel itself must produce the subscriber notification, because no worker will ever report this job.
+        var notifications = await _fixture.PullNotificationsAsync(subscriber.Id);
+        Assert.That(notifications.Select(n => n.JobId), Does.Contain(jobId),
+            "cancelling must notify subscribers even when no worker will ever report the job");
     }
 
     [Test]

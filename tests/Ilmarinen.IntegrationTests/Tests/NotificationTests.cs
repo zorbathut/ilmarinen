@@ -4,6 +4,7 @@ using Ilmarinen.NotificationClient;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
+using Ilmarinen.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -259,6 +260,66 @@ public class NotificationTests
 
         Assert.That(second, Has.Count.EqualTo(1));
         Assert.That(second[0].JobId, Is.EqualTo(job2));
+    }
+
+    [Test]
+    public async Task CancelledJob_NotifiesSubscribersExactlyOnce()
+    {
+        var subscriber = await _fixture.RegisterSubscriberAsync(
+            new SubscriberRegistration { Name = "cancel-once-test" });
+
+        _repo.AddFile("pipeline.csx", """
+            Step("slow")
+                .Image("alpine:latest")
+                .Run(async ctx => {
+                    await ctx.Exec("sleep", "30");
+                });
+            """);
+        _repo.Commit("Slow pipeline");
+
+        await _fixture.StartWorkerAsync();
+
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            RepoUrl = _repo.Url,
+            Ref = _repo.Branch,
+            ScriptPath = "pipeline.csx"
+        });
+        await _fixture.WaitForJobStatusAsync(jobId, JobStatus.Running);
+
+        var cancelled = await _fixture.CancelJobAsync(jobId);
+        Assert.That(cancelled, Is.True);
+
+        // Wait until the worker has aborted and its JobCompleted report has been processed — the worker only turns Ready again inside that handler. The report must not double-notify.
+        var workerRepo = _fixture.Services.GetRequiredService<WorkerRepository>();
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        var workerReported = false;
+        while (DateTime.UtcNow < deadline && !workerReported)
+        {
+            workerReported = (await workerRepo.GetAllAsync()).Any(w => w.IsReady);
+            if (!workerReported)
+            {
+                await Task.Delay(250);
+            }
+        }
+        Assert.That(workerReported, Is.True,
+            "the worker's post-abort JobCompleted report must arrive; without it this test would pass vacuously");
+
+        var job = await _fixture.GetJobAsync(jobId);
+        var notifications = await _fixture.PullNotificationsAsync(subscriber.Id);
+        var forJob = notifications.Where(n => n.JobId == jobId).ToList();
+
+        if (job.Status == JobStatus.Cancelled)
+        {
+            Assert.That(forJob, Has.Count.EqualTo(1),
+                "a cancelled job must notify subscribers exactly once");
+        }
+        else
+        {
+            // Rare: a non-cancellation exception during the worker's teardown makes it report Failed, which overrides Cancelled and must signal again — exactly two notifications.
+            Assert.That(job.Status, Is.EqualTo(JobStatus.Failed));
+            Assert.That(forJob, Has.Count.EqualTo(2));
+        }
     }
 
     [Test]

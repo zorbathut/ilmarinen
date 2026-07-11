@@ -172,32 +172,43 @@ public class JobRepository
         }
     }
 
-    public async Task UpdateStatusAsync(Guid id, JobStatus status, Guid? workerId = null)
+    /// <summary>
+    /// Applies the status transition, honoring finality rules. Returns false when the write was refused (job missing, already final, or Cancelled and not being overridden) — note a same-value non-terminal write (Running→Running) still counts as true.
+    /// </summary>
+    public async Task<bool> UpdateStatusAsync(Guid id, JobStatus status, Guid? workerId = null)
     {
-        var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
-        if (job == null) return;
+        var now = DateTime.UtcNow;
 
-        // Success and Failed are truly final — nothing overrides them.
-        if (job.Status is JobStatus.Success or JobStatus.Failed)
-            return;
+        // One conditional UPDATE so the finality check and the write are atomic — completion paths gate their side effects on the returned bool, and a check-then-write here would let a concurrent cancel be overwritten by Running or let two completion paths both claim the terminal transition. Same idiom as TryCancelAsync below.
+        var eligible = _db.Jobs
+            .Where(j => j.Id == id)
+            // Success and Failed are truly final — nothing overrides them.
+            .Where(j => j.Status != JobStatus.Success && j.Status != JobStatus.Failed)
+            // Cancelled can be overridden by Success or Failed: if the worker actually completed the job before the cancel reached it, the real outcome wins.
+            .Where(j => j.Status != JobStatus.Cancelled || status == JobStatus.Success || status == JobStatus.Failed);
 
-        // Cancelled can be overridden by Success or Failed: if the worker actually completed the job before the cancel reached it, the real outcome wins.
-        if (job.Status == JobStatus.Cancelled && status is not (JobStatus.Success or JobStatus.Failed))
-            return;
-
-        job.Status = status;
-        if (workerId != null) job.WorkerId = workerId;
-
+        int rows;
         if (status == JobStatus.Running)
-            job.StartedAt = DateTime.UtcNow;
-
-        if (status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled)
         {
-            job.CompletedAt = DateTime.UtcNow;
-            job.EncryptedGitToken = null; // Clear token after job completion
+            rows = await eligible.ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, status)
+                .SetProperty(j => j.WorkerId, j => workerId ?? j.WorkerId)
+                .SetProperty(j => j.StartedAt, now));
+        }
+        else if (status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled)
+        {
+            rows = await eligible.ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, status)
+                .SetProperty(j => j.CompletedAt, now)
+                .SetProperty(j => j.EncryptedGitToken, (string?)null)); // Clear token after job completion
+        }
+        else
+        {
+            rows = await eligible.ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, status));
         }
 
-        await _db.SaveChangesAsync();
+        return rows > 0;
     }
 
     public async Task SetCommitAsync(Guid id, string commitSha)

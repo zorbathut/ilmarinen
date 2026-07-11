@@ -108,31 +108,39 @@ public class JobScheduler
                 return false;
             }
 
-            if (!_pendingJobs.TryDequeue(out var jobId))
-                return false;
-
-            var submission = await jobs.GetSubmissionAsync(jobId);
-            if (submission == null)
+            while (_pendingJobs.TryDequeue(out var jobId))
             {
-                _logger.LogError("Dequeued job {JobId} has no submission record; dropping it", jobId);
-                return false;
+                var submission = await jobs.GetSubmissionAsync(jobId);
+                if (submission == null)
+                {
+                    _logger.LogError("Dequeued job {JobId} has no submission record; dropping it", jobId);
+                    continue;
+                }
+
+                // Gate the assignment on the status write: a refused write means the job went terminal (cancelled) while queued, so skip it. A cancel can still land between this write and the AssignJob send — the worker drops a CancelJob for a job it hasn't yet registered as running, and the override rule reconciles the eventual outcome.
+                if (!await jobs.UpdateStatusAsync(jobId, JobStatus.Running, worker.Id))
+                {
+                    _logger.LogInformation("Skipping dequeued job {JobId}: cancelled while queued", jobId);
+                    continue;
+                }
+
+                var assignment = new JobAssignment
+                {
+                    Id = jobId,
+                    RepoUrl = submission.RepoUrl!,
+                    Ref = submission.Ref!,
+                    ScriptPath = submission.ScriptPath!,
+                    GitToken = submission.GitToken
+                };
+
+                workers.SetReady(connectionId, false);
+                _uiEvents.NotifyJobsChanged();
+
+                await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
+                return true;
             }
 
-            var assignment = new JobAssignment
-            {
-                Id = jobId,
-                RepoUrl = submission.RepoUrl!,
-                Ref = submission.Ref!,
-                ScriptPath = submission.ScriptPath!,
-                GitToken = submission.GitToken
-            };
-
-            await jobs.UpdateStatusAsync(jobId, JobStatus.Running, worker.Id);
-            workers.SetReady(connectionId, false);
-            _uiEvents.NotifyJobsChanged();
-
-            await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
-            return true;
+            return false;
         }
         finally
         {
@@ -141,13 +149,23 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Single owner of job-completion side effects: persist the terminal status, flush and close the log stream, create subscriber notifications, refresh the UI. Every path that ends a job with a known outcome (worker-reported completion, orphaned-job failure on reconnect) goes through here.
+    /// Status-write-gated entry for reported completions (worker JobCompleted, orphaned-job failure on reconnect): persist the terminal status and, if the write actually changed it, emit the completion signal. If the write is refused (the job is already terminal — e.g. the worker's Cancelled report after CancelJobAsync already signalled), the signal is suppressed and only the log buffer is flushed, so chunks streamed after the cancel still persist. EmitCompletionAsync owns the side effects themselves; CancelJobAsync calls it directly because TryCancelAsync is its own atomic terminal transition.
     /// </summary>
     public async Task CompleteJobAsync(Guid jobId, JobStatus status)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        await jobs.UpdateStatusAsync(jobId, status);
+        if (!await jobs.UpdateStatusAsync(jobId, status))
+        {
+            await _logStream.FlushAsync(jobId);
+            return;
+        }
+
+        await EmitCompletionAsync(scope, jobId, status);
+    }
+
+    private async Task EmitCompletionAsync(IServiceScope scope, Guid jobId, JobStatus status)
+    {
         await _logStream.NotifyJobCompletedAsync(jobId, status);
 
         var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
@@ -169,7 +187,8 @@ public class JobScheduler
         if (!cancelled)
             return false;
 
-        _uiEvents.NotifyJobsChanged();
+        // TryCancelAsync just made the job terminal, so the completion signal fires here; any later JobCompleted report from the worker is suppressed by CompleteJobAsync's refused-write guard (unless it overrides with the real outcome).
+        await EmitCompletionAsync(scope, jobId, JobStatus.Cancelled);
 
         // If a worker is actively running this job, tell it to stop
         if (connectionId != null)

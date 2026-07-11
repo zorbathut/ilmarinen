@@ -174,6 +174,34 @@ public class JobSchedulingTests
     }
 
     [Test]
+    public async Task CancelledQueuedJob_IsNeverDispatched()
+    {
+        const string conn = "conn-cancelled-queued";
+        var workerId = await RegisterReadyWorkerAsync(conn);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+
+        var job1 = await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
+
+        var job2 = await scheduler.EnqueueJobAsync(Submission());
+        var job3 = await scheduler.EnqueueJobAsync(Submission());
+
+        // job2 is cancelled while it sits in the queue.
+        Assert.That(await scheduler.CancelJobAsync(job2), Is.True);
+
+        // The worker frees up; the dispatcher must skip the cancelled job2 and hand job3 to the worker.
+        await scheduler.CompleteJobAsync(job1, JobStatus.Success);
+        workers.SetReady(conn, true);
+        await scheduler.TryAssignJobAsync(conn);
+
+        Assert.That(await JobStatusAsync(job3), Is.EqualTo(JobStatus.Running),
+            "the dispatcher must skip cancelled queue entries and assign the next live job");
+        Assert.That(await JobStatusAsync(job2), Is.EqualTo(JobStatus.Cancelled));
+    }
+
+    [Test]
     public async Task Reconnect_WorkerLostItsJob_FailsJobAndRefreshesUI()
     {
         const string conn = "conn-reconnect-lost-job";
