@@ -483,9 +483,9 @@ public class PipelineRunner : IDisposable
                     Container = _workerContainerId
                 });
             }
-            catch
+            catch (Exception ex)
             {
-                // Best effort cleanup
+                WriteInfo($"Warning: failed to disconnect worker from network {name}: {ex.Message}");
             }
         }
 
@@ -493,9 +493,9 @@ public class PipelineRunner : IDisposable
         {
             await _client.Networks.DeleteNetworkAsync(name);
         }
-        catch
+        catch (Exception ex)
         {
-            // Best effort cleanup
+            WriteInfo($"Warning: failed to remove network {name}: {ex.Message}");
         }
     }
 
@@ -562,18 +562,24 @@ public class PipelineRunner : IDisposable
         }
         finally
         {
-            // Stop and remove container
+            // Stop and remove container. Best-effort: a failure here means a leaked container, so leave a breadcrumb.
             try
             {
                 await _client.Containers.StopContainerAsync(containerId, new ContainerStopParameters());
             }
-            catch { }
+            catch (Exception ex)
+            {
+                WriteInfo($"Warning: failed to stop container {containerId[..12]}: {ex.Message}");
+            }
 
             try
             {
                 await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true });
             }
-            catch { }
+            catch (Exception ex)
+            {
+                WriteInfo($"Warning: failed to remove container {containerId[..12]}: {ex.Message}");
+            }
         }
     }
 
