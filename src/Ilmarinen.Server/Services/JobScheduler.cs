@@ -18,6 +18,7 @@ public class JobScheduler
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
     private readonly UIEventService _uiEvents;
+    private readonly LogStreamService _logStream;
     private readonly ILogger<JobScheduler> _logger;
     private bool _initialized;
     private readonly object _initLock = new();
@@ -29,11 +30,13 @@ public class JobScheduler
         IServiceScopeFactory scopeFactory,
         IHubContext<WorkerHub, IWorkerClient> hubContext,
         UIEventService uiEvents,
+        LogStreamService logStream,
         ILogger<JobScheduler> logger)
     {
         _scopeFactory = scopeFactory;
         _hubContext = hubContext;
         _uiEvents = uiEvents;
+        _logStream = logStream;
         _logger = logger;
     }
 
@@ -137,15 +140,20 @@ public class JobScheduler
         }
     }
 
-    public async Task CompleteJobAsync(Guid jobId, JobResult result)
+    /// <summary>
+    /// Single owner of job-completion side effects: persist the terminal status, flush and close the log stream, create subscriber notifications, refresh the UI. Every path that ends a job with a known outcome (worker-reported completion, orphaned-job failure on reconnect) goes through here.
+    /// </summary>
+    public async Task CompleteJobAsync(Guid jobId, JobStatus status)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        await jobs.UpdateStatusAsync(jobId, result.Status);
-        _uiEvents.NotifyJobsChanged();
+        await jobs.UpdateStatusAsync(jobId, status);
+        await _logStream.NotifyJobCompletedAsync(jobId, status);
 
         var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
         await notifications.CreateForActiveSubscribersAsync(jobId, "JobCompleted");
+
+        _uiEvents.NotifyJobsChanged();
     }
 
     public async Task<bool> CancelJobAsync(Guid jobId)

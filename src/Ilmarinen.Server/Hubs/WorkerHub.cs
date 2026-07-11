@@ -138,7 +138,6 @@ public class WorkerHub : Hub<IWorkerClient>
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
 
         var worker = workers.GetByConnectionId(Context.ConnectionId);
         if (worker == null)
@@ -162,11 +161,8 @@ public class WorkerHub : Hub<IWorkerClient>
                 _logger.LogWarning(
                     "Worker {WorkerId} reconnected without job {JobId}, marking failed",
                     worker.Id, runningJob);
-                await jobs.UpdateStatusAsync(runningJob.Value, JobStatus.Failed);
-                await logService.NotifyJobCompletedAsync(runningJob.Value, JobStatus.Failed);
-
-                var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
-                await notifications.CreateForActiveSubscribersAsync(runningJob.Value, "JobCompleted");
+                var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
+                await scheduler.CompleteJobAsync(runningJob.Value, JobStatus.Failed);
             }
         }
         else if (request.RunningJobId != null)
@@ -216,7 +212,6 @@ public class WorkerHub : Hub<IWorkerClient>
         var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
 
         var worker = workers.GetByConnectionId(Context.ConnectionId);
         if (worker == null)
@@ -238,8 +233,7 @@ public class WorkerHub : Hub<IWorkerClient>
         }
 
         _logger.LogInformation("Job completed: {JobId} - {Status}", jobId, result.Status);
-        await scheduler.CompleteJobAsync(jobId, result);
-        await logService.NotifyJobCompletedAsync(jobId, result.Status);
+        await scheduler.CompleteJobAsync(jobId, result.Status);
         workers.SetReady(Context.ConnectionId, true);
 
         if (result.Workspaces != null)

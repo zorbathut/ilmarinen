@@ -107,7 +107,7 @@ public class JobSchedulingTests
         await scheduler.EnqueueJobAsync(Submission());
 
         // The worker finishes job1. WorkerHub.JobCompleted marks the worker ready and tries to assign; the worker then *also* sends an explicit Ready, which the hub handles the same way. Both signals must not result in two simultaneous jobs.
-        await scheduler.CompleteJobAsync(job1, new JobResult { Id = job1, Status = JobStatus.Success });
+        await scheduler.CompleteJobAsync(job1, JobStatus.Success);
 
         workers.SetReady(conn, true);
         await scheduler.TryAssignJobAsync(conn); // JobCompleted path
@@ -162,7 +162,7 @@ public class JobSchedulingTests
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
 
         // The worker finishes. Fire many assignment attempts at once — the overlap produced by JobCompleted, Ready, and EnqueueJob racing on one connection. Only one job may land on the worker.
-        await scheduler.CompleteJobAsync(jobIds[0], new JobResult { Id = jobIds[0], Status = JobStatus.Success });
+        await scheduler.CompleteJobAsync(jobIds[0], JobStatus.Success);
         workers.SetReady(conn, true);
 
         var attempts = Enumerable.Range(0, 8)
@@ -171,6 +171,38 @@ public class JobSchedulingTests
 
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1),
             "concurrent assignment attempts must not stack jobs on one worker");
+    }
+
+    [Test]
+    public async Task Reconnect_WorkerLostItsJob_FailsJobAndRefreshesUI()
+    {
+        const string conn = "conn-reconnect-lost-job";
+        var workerId = await RegisterReadyWorkerAsync(conn);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+
+        var jobId = await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
+
+        // Subscribe only now, immediately before Reconnect — the enqueue/assign calls above fire OnJobsChanged themselves, and subscribing earlier would let the test pass vacuously.
+        var uiEvents = _fixture.Services.GetRequiredService<UIEventService>();
+        var jobsChanged = 0;
+        Action handler = () => Interlocked.Increment(ref jobsChanged);
+        uiEvents.OnJobsChanged += handler;
+        try
+        {
+            // The worker reconnects as a fresh process with no job — the server must fail the orphaned job.
+            await MakeHub(conn).Reconnect(new WorkerReconnect { RunningJobId = null });
+        }
+        finally
+        {
+            uiEvents.OnJobsChanged -= handler;
+        }
+
+        Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Failed),
+            "a job the worker lost must be marked failed");
+        Assert.That(jobsChanged, Is.GreaterThan(0),
+            "failing a lost job must refresh the jobs UI like every other terminal transition");
     }
 
     [Test]
