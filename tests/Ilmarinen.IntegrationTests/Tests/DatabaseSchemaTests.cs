@@ -1,5 +1,6 @@
 using Ilmarinen.Database;
 using Ilmarinen.IntegrationTests.Fixtures;
+using Ilmarinen.Protocol;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -8,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using NUnit.Framework;
 using Npgsql;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 
@@ -85,5 +87,25 @@ public class DatabaseSchemaTests
         var pendingMigrations = await _dbContext.Database.GetPendingMigrationsAsync();
         Assert.That(pendingMigrations, Is.Empty,
             "All migrations should apply without error.");
+    }
+
+    [Test]
+    public async Task AddWorkerPriority_BackfillsExistingWorkersToMedium()
+    {
+        // Every other migration test runs against an empty database, so nothing exercises a backfill. This one does: EF's scaffolder defaults a new non-nullable enum column to 0, which here means Low — silently demoting an entire existing fleet.
+        var migrator = _dbContext.GetService<IMigrator>();
+        await migrator.MigrateAsync("AddWorkerLastIpAddress");
+
+        var workerId = Guid.NewGuid();
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "Workers" ("Id", "Name", "PublicKey", "RegisteredAt", "LastSeen")
+            VALUES ({workerId}, 'legacy-worker', '\x00'::bytea, now(), now())
+            """);
+
+        await migrator.MigrateAsync();
+
+        var worker = await _dbContext.Workers.AsNoTracking().SingleAsync(w => w.Id == workerId);
+        Assert.That(worker.Priority, Is.EqualTo(WorkerPriority.Medium),
+            "a worker that predates the Priority column must land on Medium, not Low");
     }
 }

@@ -69,82 +69,111 @@ public class JobScheduler
 
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         var info = await jobs.CreateAsync(submission);
         await jobs.UpdateStatusAsync(info.Id, JobStatus.Queued);
         _pendingJobs.Enqueue(info.Id);
         _uiEvents.NotifyJobsChanged();
 
-        // Try to dispatch immediately if there's an idle worker
-        var readyConnectionId = workers.FindReadyWorkerConnectionId();
-        if (readyConnectionId != null)
-        {
-            await TryAssignJobAsync(readyConnectionId);
-        }
+        await DispatchAsync();
 
         return info.Id;
     }
 
-    public async Task<bool> TryAssignJobAsync(string connectionId)
+    /// <summary>
+    /// Hands queued jobs to ready workers, highest-priority worker first. Called whenever the pool or the queue changes — a job is submitted, a worker signals Ready, a worker finishes a job — and keeps going until the queue drains or no ready worker will take another job, so a queued job can never sit behind an idle worker.
+    /// </summary>
+    public async Task DispatchAsync()
     {
         await EnsureInitializedAsync();
 
         await _assignLock.WaitAsync();
         try
         {
+            // Nothing to place. Bail before touching the database — every worker signalling Ready on an idle fleet comes through here.
+            if (_pendingJobs.IsEmpty)
+            {
+                return;
+            }
+
             using var scope = _scopeFactory.CreateScope();
             var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-            var worker = workers.GetByConnectionId(connectionId);
-            if (worker == null || !worker.IsReady)
-                return false;
-
-            // The in-memory ready flag can be set redundantly — the worker sends an explicit Ready after every JobCompleted, and the JobCompleted handler marks it ready too. The DB is the source of truth for "busy": a worker already running a job must never be handed another, and a stale Ready that put the flag up gets corrected here.
-            if (await jobs.GetRunningJobForWorkerAsync(worker.Id) != null)
+            // One pass is enough: each candidate takes at most one job, and after that it is busy. A worker that frees up meanwhile raises its own DispatchAsync, which is waiting on this lock.
+            foreach (var connectionId in await workers.GetReadyConnectionIdsByPriorityAsync())
             {
-                workers.SetReady(connectionId, false);
-                return false;
-            }
-
-            while (_pendingJobs.TryDequeue(out var jobId))
-            {
-                var submission = await jobs.GetSubmissionAsync(jobId);
-                if (submission == null)
+                if (_pendingJobs.IsEmpty)
                 {
-                    _logger.LogError("Dequeued job {JobId} has no submission record; dropping it", jobId);
+                    return;
+                }
+
+                var worker = workers.GetByConnectionId(connectionId);
+                if (worker == null || !worker.IsReady)
+                {
                     continue;
                 }
 
-                // Gate the assignment on the status write: a refused write means the job went terminal (cancelled) while queued, so skip it. A cancel can still land between this write and the AssignJob send — the worker drops a CancelJob for a job it hasn't yet registered as running, and the override rule reconciles the eventual outcome.
-                if (!await jobs.UpdateStatusAsync(jobId, JobStatus.Running, worker.Id))
+                // The in-memory ready flag can be set redundantly — the worker sends an explicit Ready after every JobCompleted, and the JobCompleted handler marks it ready too. The DB is the source of truth for "busy": a worker already running a job must never be handed another, and a stale Ready that put the flag up gets corrected here.
+                if (await jobs.GetRunningJobForWorkerAsync(worker.Id) != null)
                 {
-                    _logger.LogInformation("Skipping dequeued job {JobId}: cancelled while queued", jobId);
+                    workers.SetReady(connectionId, false);
                     continue;
                 }
 
-                var assignment = new JobAssignment
+                // One unreachable worker must not strand the jobs the rest of the fleet could still take. Its job is already marked Running against it, and is reconciled like any other undelivered job when the worker reconnects.
+                try
                 {
-                    Id = jobId,
-                    RepoUrl = submission.RepoUrl!,
-                    Ref = submission.Ref!,
-                    ScriptPath = submission.ScriptPath!,
-                    GitToken = submission.GitToken
-                };
-
-                workers.SetReady(connectionId, false);
-                _uiEvents.NotifyJobsChanged();
-
-                await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
-                return true;
+                    await AssignNextJobAsync(jobs, workers, connectionId, worker.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to dispatch to worker {WorkerId}; trying the next candidate", worker.Id);
+                    workers.SetReady(connectionId, false);
+                }
             }
-
-            return false;
         }
         finally
         {
             _assignLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Pops queued jobs until one is successfully handed to this worker. Caller holds _assignLock and has already confirmed the worker is idle.
+    /// </summary>
+    private async Task AssignNextJobAsync(JobRepository jobs, WorkerRepository workers, string connectionId, Guid workerId)
+    {
+        while (_pendingJobs.TryDequeue(out var jobId))
+        {
+            var submission = await jobs.GetSubmissionAsync(jobId);
+            if (submission == null)
+            {
+                _logger.LogError("Dequeued job {JobId} has no submission record; dropping it", jobId);
+                continue;
+            }
+
+            // Gate the assignment on the status write: a refused write means the job went terminal (cancelled) while queued, so skip it. A cancel can still land between this write and the AssignJob send — the worker drops a CancelJob for a job it hasn't yet registered as running, and the override rule reconciles the eventual outcome.
+            if (!await jobs.UpdateStatusAsync(jobId, JobStatus.Running, workerId))
+            {
+                _logger.LogInformation("Skipping dequeued job {JobId}: cancelled while queued", jobId);
+                continue;
+            }
+
+            var assignment = new JobAssignment
+            {
+                Id = jobId,
+                RepoUrl = submission.RepoUrl!,
+                Ref = submission.Ref!,
+                ScriptPath = submission.ScriptPath!,
+                GitToken = submission.GitToken
+            };
+
+            workers.SetReady(connectionId, false);
+            _uiEvents.NotifyJobsChanged();
+
+            await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
+            return;
         }
     }
 

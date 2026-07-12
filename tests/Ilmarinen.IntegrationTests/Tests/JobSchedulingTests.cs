@@ -53,13 +53,14 @@ public class JobSchedulingTests
         GitTokenMode = GitTokenMode.None
     };
 
-    private async Task<Guid> RegisterReadyWorkerAsync(string connectionId)
+    private async Task<Guid> RegisterReadyWorkerAsync(string connectionId, WorkerPriority priority = WorkerPriority.Medium)
     {
         using var scope = _fixture.Services.CreateScope();
         var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
         var result = await registration.RegisterWorkerAsync($"sched-test-{Guid.NewGuid():N}");
 
         var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        await workers.SetPriorityAsync(result.WorkerId, priority);
         await workers.ConnectAsync(connectionId, result.WorkerId, ipAddress: null);
         workers.SetReady(connectionId, true);
 
@@ -110,10 +111,10 @@ public class JobSchedulingTests
         await scheduler.CompleteJobAsync(job1, JobStatus.Success);
 
         workers.SetReady(conn, true);
-        await scheduler.TryAssignJobAsync(conn); // JobCompleted path
+        await scheduler.DispatchAsync(); // JobCompleted path
 
         workers.SetReady(conn, true);
-        await scheduler.TryAssignJobAsync(conn); // redundant Ready path
+        await scheduler.DispatchAsync(); // redundant Ready path
 
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1),
             "a worker must never have more than one job running at once");
@@ -131,12 +132,15 @@ public class JobSchedulingTests
         await scheduler.EnqueueJobAsync(Submission());
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
 
-        // A stray Ready arrives while the worker is still running its job.
+        // A second job queues up behind the busy worker, so the dispatcher has something to place and will actually consider it as a candidate.
+        var queuedJob = await scheduler.EnqueueJobAsync(Submission());
+
+        // A stray Ready arrives while the worker is still running its first job.
         workers.SetReady(conn, true);
-        await scheduler.TryAssignJobAsync(conn);
+        await scheduler.DispatchAsync();
 
         Assert.That(workers.GetByConnectionId(conn)!.IsReady, Is.False,
-            "a worker with a running job must not be marked ready");
+            "a worker with a running job must not be left marked ready");
 
         // The UI-facing readers must agree — a worker shown as Ready while a job runs is an impossible state.
         var view = await workers.GetByIdAsync(workerId);
@@ -144,6 +148,8 @@ public class JobSchedulingTests
         Assert.That(view.CurrentJobs, Has.Count.EqualTo(1));
 
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
+        Assert.That(await JobStatusAsync(queuedJob), Is.EqualTo(JobStatus.Queued),
+            "the busy worker must not be handed the queued job");
     }
 
     [Test]
@@ -166,7 +172,7 @@ public class JobSchedulingTests
         workers.SetReady(conn, true);
 
         var attempts = Enumerable.Range(0, 8)
-            .Select(_ => Task.Run(() => scheduler.TryAssignJobAsync(conn)));
+            .Select(_ => Task.Run(() => scheduler.DispatchAsync()));
         await Task.WhenAll(attempts);
 
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1),
@@ -194,7 +200,7 @@ public class JobSchedulingTests
         // The worker frees up; the dispatcher must skip the cancelled job2 and hand job3 to the worker.
         await scheduler.CompleteJobAsync(job1, JobStatus.Success);
         workers.SetReady(conn, true);
-        await scheduler.TryAssignJobAsync(conn);
+        await scheduler.DispatchAsync();
 
         Assert.That(await JobStatusAsync(job3), Is.EqualTo(JobStatus.Running),
             "the dispatcher must skip cancelled queue entries and assign the next live job");
@@ -252,6 +258,75 @@ public class JobSchedulingTests
         Assert.That(await JobStatusAsync(queuedJob), Is.EqualTo(JobStatus.Queued),
             "a JobCompleted for a job the worker isn't running must not change that job");
         Assert.That(await JobStatusAsync(realJob), Is.EqualTo(JobStatus.Running));
+    }
+
+    [TestCase(WorkerPriority.High, WorkerPriority.Low)]
+    [TestCase(WorkerPriority.Low, WorkerPriority.High)]
+    public async Task EnqueueJob_ReadyWorkersOfDifferentPriorities_AssignsToHighest(WorkerPriority priorityA, WorkerPriority priorityB)
+    {
+        // Both cases use the same two connection IDs and swap only the priorities, so the ready-set enumeration order is identical between them. Under first-match selection exactly one case must fail; neither can pass on enumeration luck.
+        const string connA = "conn-priority-a";
+        const string connB = "conn-priority-b";
+        var workerA = await RegisterReadyWorkerAsync(connA, priorityA);
+        var workerB = await RegisterReadyWorkerAsync(connB, priorityB);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        await scheduler.EnqueueJobAsync(Submission());
+
+        var (winner, loser) = priorityA > priorityB ? (workerA, workerB) : (workerB, workerA);
+
+        Assert.That(await RunningJobCountAsync(winner), Is.EqualTo(1),
+            "the job must go to the highest-priority ready worker");
+        Assert.That(await RunningJobCountAsync(loser), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Dispatch_QueuedJobWithReadyWorkers_AssignsToHighest()
+    {
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+
+        // The job is submitted with no workers connected, so it sits in the queue.
+        var jobId = await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Queued));
+
+        // Both workers are ready before anything is dispatched, registered lowest-first so a first-match scan would find the Low one.
+        var lowWorker = await RegisterReadyWorkerAsync("conn-queued-low", WorkerPriority.Low);
+        var highWorker = await RegisterReadyWorkerAsync("conn-queued-high", WorkerPriority.High);
+
+        await scheduler.DispatchAsync();
+
+        // Priority governs an already-queued job, not just one being submitted. (It does not hold a job back for a worker that has yet to become ready — a lone Low worker still takes the job.)
+        Assert.That(await RunningJobCountAsync(highWorker), Is.EqualTo(1),
+            "a queued job must go to the highest-priority ready worker");
+        Assert.That(await RunningJobCountAsync(lowWorker), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Dispatch_HighestPriorityWorkerIsBusy_FallsThroughToNext()
+    {
+        const string connHigh = "conn-fallthrough-high";
+        var highWorker = await RegisterReadyWorkerAsync(connHigh, WorkerPriority.High);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+
+        await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await RunningJobCountAsync(highWorker), Is.EqualTo(1));
+
+        // A stray Ready leaves the high-priority worker flagged ready while it is still running that job. It now sorts first in every scan, so a job that stops at the top candidate would stall forever.
+        workers.SetReady(connHigh, true);
+
+        var lowWorker = await RegisterReadyWorkerAsync("conn-fallthrough-low", WorkerPriority.Low);
+
+        var jobId = await scheduler.EnqueueJobAsync(Submission());
+
+        Assert.That(await RunningJobCountAsync(highWorker), Is.EqualTo(1),
+            "a worker already running a job must not be handed a second one");
+        Assert.That(await RunningJobCountAsync(lowWorker), Is.EqualTo(1),
+            "the job must fall through to the next-highest ready worker instead of stalling in the queue");
+        Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Running));
+        Assert.That(workers.GetByConnectionId(connHigh)!.IsReady, Is.False,
+            "the stale ready flag on the busy worker must be cleared");
     }
 
     private sealed class FakeHubCallerContext(string connectionId) : HubCallerContext

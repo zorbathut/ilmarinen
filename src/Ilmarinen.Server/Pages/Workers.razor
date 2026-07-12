@@ -49,6 +49,7 @@
                 <th>Status</th>
                 <th>Name</th>
                 <th>ID</th>
+                <th>Priority</th>
                 <th>Current Job</th>
                 <th>Workspaces</th>
                 <th>Registered</th>
@@ -61,13 +62,25 @@
             {
                 @foreach (var worker in workers)
                 {
-                    <tr>
+                    <tr @key="worker.Id">
                         <td>
                             <span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span>
                             @WorkerBadge.GetStatusLabel(worker)
                         </td>
                         <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
                         <td>@worker.Id.ToString()[..8]</td>
+                        <td>
+                            @* Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without this the diff is a no-op and the dropdown would keep showing the value the user picked instead of the one that is actually stored. *@
+                            <select @key="(worker.Priority, prioritySaves)"
+                                    value="@worker.Priority"
+                                    disabled="@IsSavingPriority(worker.Id)"
+                                    @onchange="e => SetPriority(worker.Id, e)">
+                                @foreach (var priority in PriorityOptions)
+                                {
+                                    <option value="@priority" selected="@(priority == worker.Priority)">@priority</option>
+                                }
+                            </select>
+                        </td>
                         <td><JobsLink JobIds="worker.CurrentJobs" /></td>
                         <td>
                             @if (worker.Workspaces.Count > 0)
@@ -104,18 +117,23 @@
     </table>
 </div>
 
-@if (deleteError != null)
+@if (actionError != null)
 {
     <div class="card" style="margin-top: 1rem; border-left: 3px solid var(--error);">
-        <span style="color: var(--error);">@deleteError</span>
+        <span style="color: var(--error);">@actionError</span>
     </div>
 }
 
 @code {
+    // Highest first — the dropdown should read the way the scheduler prefers.
+    private static readonly WorkerPriority[] PriorityOptions = [WorkerPriority.High, WorkerPriority.Medium, WorkerPriority.Low];
+
     private IReadOnlyList<WorkerView>? workers;
     private HashSet<string> deletingWorkspaces = new();
     private HashSet<string> revokingWorkers = new();
-    private string? deleteError;
+    private HashSet<Guid> savingPriority = new();
+    private int prioritySaves;
+    private string? actionError;
     private string newWorkerName = "";
     private bool isRegistering;
     private string? registrationError;
@@ -157,6 +175,44 @@
     private bool IsRevoking(Guid workerId) =>
         revokingWorkers.Contains(workerId.ToString());
 
+    private bool IsSavingPriority(Guid workerId) =>
+        savingPriority.Contains(workerId);
+
+    private async Task SetPriority(Guid workerId, ChangeEventArgs e)
+    {
+        var priority = Enum.Parse<WorkerPriority>((string)e.Value!);
+
+        savingPriority.Add(workerId);
+        actionError = null;
+        StateHasChanged();
+
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+            if (!await workerRepo.SetPriorityAsync(workerId, priority))
+            {
+                actionError = "Worker not found.";
+            }
+
+            workers = await FetchWorkersAsync();
+
+            // The dashboard writes through the repository rather than the controller, so nothing else tells other open browsers to refresh.
+            UIEvents.NotifyWorkersChanged();
+        }
+        catch (Exception ex)
+        {
+            actionError = $"Failed to set priority: {ex.Message}";
+        }
+        finally
+        {
+            savingPriority.Remove(workerId);
+            prioritySaves++;
+            StateHasChanged();
+        }
+    }
+
     private async Task RegisterWorker()
     {
         isRegistering = true;
@@ -194,7 +250,7 @@
     {
         var key = workerId.ToString();
         revokingWorkers.Add(key);
-        deleteError = null;
+        actionError = null;
         StateHasChanged();
 
         try
@@ -213,7 +269,7 @@
         }
         catch (Exception ex)
         {
-            deleteError = $"Failed to revoke worker: {ex.Message}";
+            actionError = $"Failed to revoke worker: {ex.Message}";
         }
         finally
         {
@@ -226,14 +282,14 @@
     {
         var deleteKey = $"{workerId}:{workspace}";
         deletingWorkspaces.Add(deleteKey);
-        deleteError = null;
+        actionError = null;
         StateHasChanged();
 
         try
         {
             if (!WorkspaceConfig.IsValidName(workspace, out var validationError))
             {
-                deleteError = validationError;
+                actionError = validationError;
                 return;
             }
 
@@ -243,7 +299,7 @@
             var connectionId = workerRepo.FindConnectionIdByWorkerId(workerId);
             if (connectionId == null)
             {
-                deleteError = "Worker not found or not connected.";
+                actionError = "Worker not found or not connected.";
                 return;
             }
 
@@ -257,7 +313,7 @@
             }
             else
             {
-                deleteError = result.Error ?? "Workspace deletion failed.";
+                actionError = result.Error ?? "Workspace deletion failed.";
             }
 
             workers = await FetchWorkersAsync();

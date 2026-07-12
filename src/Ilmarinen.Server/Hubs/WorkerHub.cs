@@ -154,7 +154,7 @@ public class WorkerHub : Hub<IWorkerClient>
         _uiEvents.NotifyWorkersChanged();
         _logger.LogInformation("Worker ready: {ConnectionId}", Context.ConnectionId);
 
-        await scheduler.TryAssignJobAsync(Context.ConnectionId);
+        await scheduler.DispatchAsync();
     }
 
     /// <summary>
@@ -268,7 +268,7 @@ public class WorkerHub : Hub<IWorkerClient>
         if (result.Workspaces != null)
             workers.SetWorkspaces(Context.ConnectionId, result.Workspaces);
 
-        await scheduler.TryAssignJobAsync(Context.ConnectionId);
+        await scheduler.DispatchAsync();
     }
 
     public Task WorkspaceDeleted(string name, DeleteWorkspaceResult result)

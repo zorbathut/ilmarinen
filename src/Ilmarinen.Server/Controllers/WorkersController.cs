@@ -18,17 +18,20 @@ public class WorkersController : ControllerBase
     private readonly WorkerRegistrationService _registration;
     private readonly WorkspaceDeletionService _deletionService;
     private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
+    private readonly UIEventService _uiEvents;
 
     public WorkersController(
         WorkerRepository workers,
         WorkerRegistrationService registration,
         WorkspaceDeletionService deletionService,
-        IHubContext<WorkerHub, IWorkerClient> hubContext)
+        IHubContext<WorkerHub, IWorkerClient> hubContext,
+        UIEventService uiEvents)
     {
         _workers = workers;
         _registration = registration;
         _deletionService = deletionService;
         _hubContext = hubContext;
+        _uiEvents = uiEvents;
     }
 
     [HttpGet]
@@ -52,6 +55,24 @@ public class WorkersController : ControllerBase
         {
             return BadRequest(new { error = ex.Message });
         }
+    }
+
+    [HttpPut("{workerId}")]
+    public async Task<ActionResult> UpdateWorker(Guid workerId, [FromBody] WorkerUpdate update)
+    {
+        // System.Text.Json does not range-check enums, so an out-of-range number deserializes cleanly and would sort above High.
+        if (!Enum.IsDefined(update.Priority))
+        {
+            return BadRequest(new { error = "Priority must be Low, Medium, or High." });
+        }
+
+        if (!await _workers.SetPriorityAsync(workerId, update.Priority))
+        {
+            return NotFound(new { error = "Worker not found." });
+        }
+
+        _uiEvents.NotifyWorkersChanged();
+        return NoContent();
     }
 
     [HttpDelete("{workerId}")]
@@ -105,4 +126,9 @@ public class WorkersController : ControllerBase
 public record RegisterWorkerRequest
 {
     public string Name { get; init; } = "";
+}
+
+public record WorkerUpdate
+{
+    public required WorkerPriority Priority { get; init; }
 }

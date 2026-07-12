@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using System;
 
 namespace Ilmarinen.Database.Entities;
@@ -14,4 +15,6 @@ public class Worker
 
     // Null until the worker's first successful authentication
     public string? LastIpAddress { get; set; }
+
+    public WorkerPriority Priority { get; set; } = WorkerPriority.Medium;
 }

@@ -121,14 +121,49 @@ public class WorkerRepository
         };
     }
 
-    public string? FindReadyWorkerConnectionId()
+    /// <summary>
+    /// The ready workers' connection IDs, highest priority first. Ties are ordered arbitrarily. Callers must still re-validate each candidate before assigning: the in-memory ready flag can lag the database, which is the source of truth for whether a worker is busy.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetReadyConnectionIdsByPriorityAsync()
     {
+        // A reconnecting worker can transiently hold two connection IDs, so index rather than Add — an arbitrary one of them wins, as before.
+        var candidates = new Dictionary<Guid, string>();
         foreach (var (connectionId, _) in _readyWorkers)
         {
-            if (_connectionToWorker.ContainsKey(connectionId))
-                return connectionId;
+            if (_connectionToWorker.TryGetValue(connectionId, out var workerId))
+            {
+                candidates[workerId] = connectionId;
+            }
         }
-        return null;
+
+        if (candidates.Count == 0)
+        {
+            return [];
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var workerIds = candidates.Keys.ToList();
+        var ordered = await db.Workers
+            .Where(w => workerIds.Contains(w.Id))
+            .OrderByDescending(w => w.Priority)
+            .Select(w => w.Id)
+            .ToListAsync();
+
+        return ordered.Select(id => candidates[id]).ToList();
+    }
+
+    public async Task<bool> SetPriorityAsync(Guid workerId, WorkerPriority priority)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var rows = await db.Workers
+            .Where(w => w.Id == workerId)
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.Priority, priority));
+
+        return rows > 0;
     }
 
     public void SetWorkspaces(string connectionId, IReadOnlyList<WorkspaceInfo>? workspaces)
@@ -224,6 +259,7 @@ public class WorkerRepository
             RegisteredAt = w.RegisteredAt,
             LastSeen = w.LastSeen,
             LastIpAddress = w.LastIpAddress,
+            Priority = w.Priority,
             Workspaces = workspaces ?? [],
             Diagnostic = diagnostic
         };
@@ -270,6 +306,7 @@ public class WorkerRepository
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 LastIpAddress = w.LastIpAddress,
+                Priority = w.Priority,
                 Workspaces = workspaces ?? [],
                 Diagnostic = diagnostic
             };
@@ -294,6 +331,7 @@ public class WorkerView
     public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
     public string? LastIpAddress { get; init; }
+    public WorkerPriority Priority { get; init; }
     public IReadOnlyList<WorkspaceInfo> Workspaces { get; init; } = [];
     public DiagnosticReport? Diagnostic { get; init; }
 }
