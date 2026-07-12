@@ -1,0 +1,34 @@
+# Standalone Ilmarinen worker, for a host that is not the server's host.
+# Run every command from this directory: cd deploy/worker && docker compose up -d --build
+# See README.md — in particular, the server must publish its worker port, which the stock docker-compose.yml does not do.
+
+name: ilmarinen-worker
+
+services:
+  worker:
+    build:
+      # The worker is built from source: nothing publishes an image, and the server rejects workers whose protocol hash doesn't match, so the worker must be built from a ref compatible with the server's.
+      context: ../..
+      dockerfile: src/Ilmarinen.Worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Must include the server's *worker* port (8081 by default), not the public one.
+      ILMARINEN_SERVER_URL: ${ILMARINEN_SERVER_URL:?set ILMARINEN_SERVER_URL in .env (see .env.example)}
+      ILMARINEN_WORKER_KEY: ${ILMARINEN_WORKER_KEY:?register a worker on the server, then set ILMARINEN_WORKER_KEY in .env (see .env.example)}
+      ILMARINEN_WORKSPACE_PATH: /data/workspaces
+    volumes:
+      # The worker inspects its own container to map the workspace to a host path, which it then bind-mounts into job containers. It also spawns every job container here.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The destination MUST equal ILMARINEN_WORKSPACE_PATH: that equality is how the worker finds this mount and learns its host-side path. The worker refuses to start if it doesn't match.
+      - workspaces:/data/workspaces
+    logging:
+      # Bounds this container's own logs only. Job containers are the daemon's business — see README.md on daemon-level log limits and pruning.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Do NOT set `hostname:` on the worker. Docker defaults it to the container ID, which the worker inspects to discover itself and which job containers resolve by DNS to reach the worker's agent API. Overriding it breaks both.
+
+volumes:
+  workspaces:

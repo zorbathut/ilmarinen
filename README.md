@@ -42,6 +42,8 @@ To permanently add the Discord bot, edit `.env`:
 COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml:docker-compose.discord.yml
 ```
 
+These compose files all run on one host. To add a worker on a *separate* machine, see [`deploy/worker/`](deploy/worker/) (Docker Compose, any OS) or [`nix/worker/`](nix/worker/) (NixOS).
+
 ```bash
 # Submit a job
 dotnet run --project src/Ilmarinen.Cli -- submit \
