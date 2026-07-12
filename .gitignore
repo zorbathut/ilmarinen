@@ -213,6 +213,12 @@ postgresql-data/
 .env.*.local
 .env.production.local
 
+# Deployment secrets — these hold real server and worker keys. Covers the per-worker variants the
+# multi-worker recipe produces (.env.worker2, ...), but not the committed .env.example templates.
+deploy/*/.env
+deploy/*/.env.*
+!deploy/*/.env.example
+
 ################################################################################
 # IDEs & Editors
 ################################################################################

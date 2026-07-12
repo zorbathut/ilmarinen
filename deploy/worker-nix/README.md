@@ -5,10 +5,12 @@ NixOS configuration for running an Ilmarinen CI/CD worker. Follows the same patt
 ## Prerequisites
 
 - A NixOS system (WSL2, VM, or bare metal)
-- .NET 10 SDK on the build machine (for `dotnet publish --self-contained`)
-- The Ilmarinen server running and accessible
+- .NET 9 SDK on the build machine (for `dotnet publish --self-contained`) — `deploy.sh` gets it from `shell.nix` in this directory
+- The Ilmarinen server running and accessible ([`../server-docker/`](../server-docker/) is one way to run it)
 
 The worker is published as a self-contained executable — no .NET runtime is needed on the NixOS target. Run `deploy.sh` from any machine with the .NET SDK (e.g. your dev machine), then apply the NixOS config on the target.
+
+For a non-NixOS host, use [`../worker-docker/`](../worker-docker/) instead.
 
 ## Quick Start
 

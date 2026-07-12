@@ -1,6 +1,6 @@
 # Standalone Ilmarinen worker, for a host that is not the server's host.
-# Run every command from this directory: cd deploy/worker && docker compose up -d --build
-# See README.md — in particular, the server must publish its worker port, which the stock docker-compose.yml does not do.
+# Run every command from this directory: cd deploy/worker-docker && docker compose up -d --build
+# See README.md — in particular, the server's worker port must be reachable from this host.
 
 name: ilmarinen-worker
 

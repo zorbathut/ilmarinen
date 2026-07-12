@@ -11,3 +11,6 @@ tests/
 .git/
 .dockerignore
 docker-compose*.yml
+# The deployment dirs hold .env files with real server/worker keys. The Dockerfiles only COPY src/,
+# but keeping secrets out of the build context entirely means a stray `COPY . .` can never ship them.
+deploy/

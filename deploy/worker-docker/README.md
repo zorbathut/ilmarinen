@@ -1,6 +1,6 @@
 # Ilmarinen Worker — Docker Compose Deployment
 
-Runs an Ilmarinen worker on any host with Docker. This is the non-NixOS counterpart to `nix/worker/`; use that one for a NixOS target.
+Runs an Ilmarinen worker on any host with Docker. This is the non-NixOS counterpart to [`../worker-nix/`](../worker-nix/); use that one for a NixOS target.
 
 The worker is a *client* — it makes outbound connections to the server and needs no inbound ports of its own.
 
@@ -12,25 +12,35 @@ The worker is a *client* — it makes outbound connections to the server and nee
 
 ## The server must publish its worker port
 
-The worker connects to the server's worker port (8081 by default), **not** the public port. The stock `docker-compose.yml` deliberately does not publish 8081 — it is documented as internal-only, on the assumption that workers share the server's Compose network. So a worker on a *separate* host only works once the server operator exposes it. Connection refused in `docker compose logs` here is almost always this.
+The worker connects to the server's worker port (8081 by default), **not** the public port. Connection refused in `docker compose logs` here almost always means that port isn't reachable from this host.
 
-On the **server** host, publish it from a `docker-compose.override.yml` (that file is gitignored, so the stock compose files stay untouched):
+**If the worker is on the same host as the server** (running [`../server-docker/`](../server-docker/)), don't publish anything. Put `ILMARINEN_SERVER_URL=http://server:8081` in `.env` and add the same-host overlay, which joins the server's Compose network:
 
-```yaml
-services:
-  server:
-    ports:
-      - "8081:8081"
+```bash
+docker compose -f docker-compose.yml -f docker-compose.same-host.yml up -d --build
 ```
 
-Publishing 8081 exposes less than it looks like: `PortFilteringMiddleware` serves only `/hub/workers` on that port and 404s everything else, and workers authenticate with an ECDSA challenge-response. It is still an unencrypted channel — see Security — so prefer a private network (VPN, Tailscale, WireGuard) or a TLS-terminating reverse proxy over the open internet.
+The server's ports stay bound to loopback, so its unauthenticated API and hub never touch the host's interfaces. This is the safest arrangement, and it's the one to prefer.
+
+**If the worker is on a different host**, the server has to publish 8081 somewhere this host can reach:
+- Running `../server-docker/`: set `WORKER_BIND_ADDR` there to a **private** address (VPN/Tailscale/WireGuard). It binds loopback by default precisely so this is a conscious choice.
+- Running the repo-root **dev stack**: it publishes only the public port. Add 8081 in the server host's gitignored `docker-compose.override.yml`:
+
+  ```yaml
+  services:
+    server:
+      ports:
+        - "8081:8081"
+  ```
+
+The channel is unencrypted and carries a Git token — see Security — so a private network or a TLS-terminating proxy, never the open internet.
 
 ## Quick start
 
 Register a worker on the server first (via the UI or `POST /api/workers`) and save the key it gives you.
 
 ```bash
-git clone <repo> && cd ilmarinen/deploy/worker
+git clone <repo> && cd ilmarinen/deploy/worker-docker
 cp .env.example .env      # add ILMARINEN_SERVER_URL and ILMARINEN_WORKER_KEY
 docker compose up -d --build
 docker compose logs -f

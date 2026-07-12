@@ -42,7 +42,15 @@ To permanently add the Discord bot, edit `.env`:
 COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml:docker-compose.discord.yml
 ```
 
-These compose files all run on one host. To add a worker on a *separate* machine, see [`deploy/worker/`](deploy/worker/) (Docker Compose, any OS) or [`nix/worker/`](nix/worker/) (NixOS).
+The compose files above are the **dev stack**: one host, built from source, keys in a gitignored override. They are not a deployment. The official deployments each live in their own directory and are configured with a `.env`:
+
+| | |
+|---|---|
+| [`deploy/server-docker/`](deploy/server-docker/) | Server + PostgreSQL, on any Docker host. **Read its security section — Ilmarinen has no authentication**, so it binds to loopback by default. |
+| [`deploy/worker-docker/`](deploy/worker-docker/) | Worker on any Docker host. |
+| [`deploy/worker-nix/`](deploy/worker-nix/) | Worker on NixOS, via systemd. |
+
+The Discord bot has no deployment of its own yet — `docker-compose.discord.yml` is a dev-stack overlay, since it reaches the server over the stack's internal network.
 
 ```bash
 # Submit a job
@@ -279,7 +287,7 @@ DEBUG=1 dotnet run --project src/Ilmarinen.Cli -- examples/hello.ilmarinen.csx
 
 ## Requirements
 
-- .NET 10.0 SDK
+- .NET 9.0 SDK
 - Docker (with API access for the CLI/worker)
 - PostgreSQL (for server mode, included in docker-compose)
 

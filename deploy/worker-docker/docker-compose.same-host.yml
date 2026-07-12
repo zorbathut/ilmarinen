@@ -1,0 +1,19 @@
+# Overlay for a worker running on the SAME host as deploy/server-docker/.
+#
+#   ILMARINEN_SERVER_URL=http://server:8081   # in .env
+#   docker compose -f docker-compose.yml -f docker-compose.same-host.yml up -d --build
+#
+# Joining the server's Compose network lets the worker reach it by service name, so the server needs
+# to publish NOTHING — leave BIND_ADDR and WORKER_BIND_ADDR at their loopback defaults. That is the
+# safest topology available: the unauthenticated API and worker hub stay off the host's interfaces
+# entirely.
+services:
+  worker:
+    networks:
+      - ilmarinen-server
+
+networks:
+  ilmarinen-server:
+    external: true
+    # The default network of the `ilmarinen-server` Compose project (deploy/server-docker/).
+    name: ilmarinen-server_default

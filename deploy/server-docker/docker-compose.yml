@@ -1,0 +1,64 @@
+# Standalone Ilmarinen server (server + PostgreSQL).
+# Run every command from this directory: cd deploy/server-docker && docker compose up -d --build
+#
+# READ THE README BEFORE EXPOSING THIS. Ilmarinen has no authentication: anyone who can reach the
+# public port can run arbitrary code as root on every worker. Hence the loopback default below.
+
+name: ilmarinen-server
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ilmarinen
+      POSTGRES_DB: ilmarinen
+      # Only applied when the volume is empty, on the very first boot. Changing it later locks the server out — see README.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see .env.example)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ilmarinen"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  server:
+    build:
+      context: ../..
+      dockerfile: src/Ilmarinen.Server/Dockerfile
+    restart: unless-stopped
+    ports:
+      # Both default to loopback: the API is unauthenticated, and parts of the worker hub are too.
+      # A worker on THIS host does not need either of these published — it joins this Compose network and reaches the server as `server:8081`. See ../worker-docker/ (same-host overlay).
+      # A REMOTE worker needs WORKER_BIND_ADDR set to an address it can reach — a VPN/private-network address, not 0.0.0.0 on a public interface.
+      - "${BIND_ADDR:-127.0.0.1}:8080:8080"          # public API + dashboard
+      - "${WORKER_BIND_ADDR:-127.0.0.1}:8081:8081"   # worker hub
+    environment:
+      ConnectionStrings__DefaultConnection: Host=postgres;Database=ilmarinen;Username=ilmarinen;Password=${POSTGRES_PASSWORD}
+      # Backup this key with the database: it decrypts stored Git credentials and is baked into every worker key. See README.
+      ILMARINEN_SERVER_KEY: ${ILMARINEN_SERVER_KEY:?generate one with `openssl rand -base64 32` and set it in .env (see .env.example)}
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
+  artifacts:

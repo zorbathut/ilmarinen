@@ -8,7 +8,7 @@ INSTALL_DIR="/opt/ilmarinen-worker"
 # Re-exec inside nix-shell so the .NET SDK is available without the operator
 # having to enter one manually. Single-step deploy is the contract.
 if [ -z "${IN_NIX_SHELL:-}" ]; then
-    exec nix-shell "$REPO_ROOT/nix/shell.nix" --run "bash $(printf '%q' "$0")"
+    exec nix-shell "$SCRIPT_DIR/shell.nix" --run "bash $(printf '%q' "$0")"
 fi
 
 if [ ! -f "$SCRIPT_DIR/ilmarinen-secrets.nix" ]; then

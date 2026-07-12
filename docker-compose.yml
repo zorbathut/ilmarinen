@@ -1,3 +1,6 @@
+# The local DEV STACK: builds from source, keys come from the gitignored docker-compose.override.yml,
+# and the layered overlays (worker, discord) are chained via COMPOSE_FILE in .env.
+# This is not a deployment — for a real server, see deploy/server-docker/.
 services:
   postgres:
     image: postgres:16
