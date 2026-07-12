@@ -27,9 +27,24 @@ services:
       ConnectionStrings__DefaultConnection: Host=postgres;Database=ilmarinen;Username=ilmarinen;Password=ilmarinen
       Server__PublicPort: 8080
       Server__WorkerPort: 8081
-      # IMPORTANT: Replace with a real 32-byte base64 key before production use
-      # Generate with: openssl rand -base64 32
-      # Used for worker authentication (ECDSA) and credential encryption (AES via HKDF)
+      # ==========================================================================
+      #
+      #   >>>  CHANGE THIS KEY.  <<<
+      #
+      #        openssl rand -base64 32
+      #
+      #   Put the result in docker-compose.override.yml (gitignored), not here.
+      #
+      #   Left as the placeholder, the server still starts — but it refuses to
+      #   register workers or store repository credentials, because this key is
+      #   what signs worker authentication challenges and derives the AES key
+      #   that encrypts those credentials.
+      #
+      #   Once real, it is not a rotatable secret: its public half is baked into
+      #   every worker key you issue, and it is the only thing that can decrypt
+      #   stored credentials. Back it up. Losing it loses them.
+      #
+      # ==========================================================================
       ILMARINEN_SERVER_KEY: "REPLACE-ME-WITH-REAL-KEY-GENERATED-VIA-openssl-rand-base64-32"
     volumes:
       - artifacts:/data/artifacts
