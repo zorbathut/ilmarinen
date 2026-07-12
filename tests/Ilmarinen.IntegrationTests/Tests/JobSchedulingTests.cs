@@ -60,7 +60,7 @@ public class JobSchedulingTests
         var result = await registration.RegisterWorkerAsync($"sched-test-{Guid.NewGuid():N}");
 
         var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
-        await workers.ConnectAsync(connectionId, result.WorkerId);
+        await workers.ConnectAsync(connectionId, result.WorkerId, ipAddress: null);
         workers.SetReady(connectionId, true);
 
         return result.WorkerId;

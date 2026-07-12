@@ -34,7 +34,7 @@ public class WorkerRepository
         _scopeFactory = scopeFactory;
     }
 
-    public async Task ConnectAsync(string connectionId, Guid workerId)
+    public async Task ConnectAsync(string connectionId, Guid workerId, string? ipAddress)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
@@ -43,6 +43,13 @@ public class WorkerRepository
             ?? throw new InvalidOperationException($"Worker {workerId} not found in database.");
 
         worker.LastSeen = DateTime.UtcNow;
+
+        // Keep the previously recorded address if this connection has none — blanking the field for a worker that is connected right now is worse than showing a slightly older address.
+        if (ipAddress != null)
+        {
+            worker.LastIpAddress = ipAddress;
+        }
+
         await db.SaveChangesAsync();
 
         _connectionToWorker[connectionId] = workerId;
@@ -216,6 +223,7 @@ public class WorkerRepository
             CurrentJobs = currentJobIds,
             RegisteredAt = w.RegisteredAt,
             LastSeen = w.LastSeen,
+            LastIpAddress = w.LastIpAddress,
             Workspaces = workspaces ?? [],
             Diagnostic = diagnostic
         };
@@ -261,6 +269,7 @@ public class WorkerRepository
                 CurrentJobs = workerToJobs[w.Id].ToList(),
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
+                LastIpAddress = w.LastIpAddress,
                 Workspaces = workspaces ?? [],
                 Diagnostic = diagnostic
             };
@@ -284,6 +293,7 @@ public class WorkerView
     public IReadOnlyList<Guid> CurrentJobs { get; init; } = [];
     public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
+    public string? LastIpAddress { get; init; }
     public IReadOnlyList<WorkspaceInfo> Workspaces { get; init; } = [];
     public DiagnosticReport? Diagnostic { get; init; }
 }

@@ -11,4 +11,7 @@ public class Worker
     public DateTime RegisteredAt { get; set; }
 
     public DateTime LastSeen { get; set; }
+
+    // Null until the worker's first successful authentication
+    public string? LastIpAddress { get; set; }
 }

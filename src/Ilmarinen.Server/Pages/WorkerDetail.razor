@@ -41,6 +41,9 @@
 
             <span class="detail-label">Last Seen</span>
             <span class="detail-value">@worker.LastSeen.ToString("yyyy-MM-dd HH:mm:ss")</span>
+
+            <span class="detail-label">Last IP</span>
+            <span class="detail-value">@(worker.LastIpAddress ?? "-")</span>
         </div>
     </div>
 

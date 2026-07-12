@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
+using System.Net;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using System;
@@ -109,10 +110,38 @@ public class WorkerHub : Hub<IWorkerClient>
             throw new HubException("Invalid signature. Check that the worker key is correct.");
         }
 
-        await workers.ConnectAsync(Context.ConnectionId, pending.WorkerId);
+        // Recorded only after the signature checks out, so an unauthenticated caller can't overwrite a worker's address by claiming its ID.
+
+        // Every reconnect re-runs Connect/Authenticate on a fresh connection ID, so this is the sole point at which the address needs refreshing.
+        var remoteAddress = Context.GetHttpContext()?.Connection.RemoteIpAddress;
+        if (remoteAddress == null)
+        {
+            _logger.LogWarning("Worker {WorkerId} authenticated but no peer address was available", pending.WorkerId);
+        }
+
+        await workers.ConnectAsync(Context.ConnectionId, pending.WorkerId, AddressFormat(remoteAddress));
         workers.SetWorkspaces(Context.ConnectionId, info.Workspaces);
         _uiEvents.NotifyWorkersChanged();
         _logger.LogInformation("Worker authenticated: {WorkerId}", pending.WorkerId);
+    }
+
+    /// <summary>
+    /// Renders a peer address for storage. The server listens dual-stack, so IPv4 workers arrive as IPv4-mapped IPv6 (::ffff:10.0.0.5); unmap them so an operator sees the address they'd recognize.
+    /// </summary>
+    // Must stay static: SignalR registers public *instance* methods on a hub as client-invocable RPCs, and this hub's endpoint takes callers before they authenticate.
+    public static string? AddressFormat(IPAddress? address)
+    {
+        if (address == null)
+        {
+            return null;
+        }
+
+        if (address.IsIPv4MappedToIPv6)
+        {
+            return address.MapToIPv4().ToString();
+        }
+
+        return address.ToString();
     }
 
     public async Task Ready()

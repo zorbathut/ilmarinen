@@ -105,6 +105,25 @@ public class IntegrationTestFixture : IAsyncDisposable
     }
 
     /// <summary>
+    /// Waits until the server has observed the worker going away.
+    /// </summary>
+    public async Task WaitForWorkerDisconnectAsync(Guid workerId, int timeoutMs = 30000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var scope = _factory.Services.CreateScope();
+            var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+            if (workers.FindConnectionIdByWorkerId(workerId) == null)
+            {
+                return;
+            }
+            await Task.Delay(100);
+        }
+        throw new TimeoutException($"Worker {workerId} did not disconnect within {timeoutMs}ms");
+    }
+
+    /// <summary>
     /// Waits until the worker is connected, has run its startup diagnostic, and is Ready.
     /// Default timeout includes time for the diagnostic to pull alpine and run a container.
     /// </summary>
