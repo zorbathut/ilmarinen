@@ -579,37 +579,27 @@ public class WorkerService : BackgroundService
     /// </summary>
     private async Task<(string hostPath, string? containerId)> DiscoverDockerEnvironmentAsync()
     {
-        try
+        // Docker creates /.dockerenv in every container it starts. Probe the file rather than inferring containerization from a failed inspect: the two cases need opposite handling, and a failed inspect cannot tell "not a container" apart from "a container whose socket is unreachable" — treating the latter as the former is what silently mounts an empty workspace.
+        if (!File.Exists("/.dockerenv"))
         {
-            using var client = DockerClientFactory.Create();
-
-            // Container ID is typically the hostname when running in Docker
-            var containerId = System.Net.Dns.GetHostName();
-
-            var inspect = await client.Containers.InspectContainerAsync(containerId);
-            var mount = inspect.Mounts?.FirstOrDefault(m =>
-                m.Destination == _config.WorkspacePath);
-
-            if (mount?.Source != null)
-            {
-                _logger.LogInformation(
-                    "Discovered host workspace path: {HostPath} -> {ContainerPath}",
-                    mount.Source, mount.Destination);
-                _logger.LogInformation(
-                    "Running in Docker container: {ContainerId}",
-                    containerId);
-                return (mount.Source, containerId);
-            }
-
-            _logger.LogDebug("No matching mount found for {WorkspacePath}", _config.WorkspacePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not discover host path (not running in Docker?)");
+            return (_config.WorkspacePath, null);
         }
 
-        // Fallback: assume we're not in Docker, paths are the same
-        return (_config.WorkspacePath, null);
+        using var client = DockerClientFactory.Create();
+
+        // Docker sets the hostname to the container ID unless it is overridden — which is why the deployment must not set `hostname:`.
+        var containerId = System.Net.Dns.GetHostName();
+        var inspect = await client.Containers.InspectContainerAsync(containerId);
+
+        var hostPath = inspect.Mounts?.FirstOrDefault(m => m.Destination == _config.WorkspacePath)?.Source;
+        if (string.IsNullOrEmpty(hostPath))
+        {
+            throw new InvalidOperationException($"Running in a container, but no Docker mount backs the workspace path '{_config.WorkspacePath}'. Mount a volume whose destination matches ILMARINEN_WORKSPACE_PATH exactly. Without it, jobs would bind-mount a host path that does not exist and every pipeline would run against an empty /workspace.");
+        }
+
+        _logger.LogInformation("Running in Docker container: {ContainerId}", containerId);
+        _logger.LogInformation("Discovered host workspace path: {HostPath} -> {ContainerPath}", hostPath, _config.WorkspacePath);
+        return (hostPath, containerId);
     }
 }
 

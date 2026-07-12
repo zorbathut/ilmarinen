@@ -41,9 +41,6 @@ public class WorkerConfig
     /// </summary>
     public string? WorkerContainerId { get; set; }
 
-    public string GetHostWorkspacePath() =>
-        string.IsNullOrEmpty(HostWorkspacePath) ? WorkspacePath : HostWorkspacePath;
-
     public Guid GetWorkerId()
     {
         var parts = GetKeyParts();

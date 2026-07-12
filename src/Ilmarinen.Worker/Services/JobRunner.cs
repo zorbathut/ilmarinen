@@ -148,7 +148,7 @@ public class JobRunner
             _logger.LogInformation("Running {StepCount} step(s)...", scriptResult.Steps.Count);
 
             // Compute host path for Docker bind mounts (may differ when running in Docker)
-            var hostWorkDir = Path.Combine(_config.GetHostWorkspacePath(), Path.GetFileName(workDir)!);
+            var hostWorkDir = Path.Combine(_config.HostWorkspacePath, Path.GetFileName(workDir)!);
             var artifactSaver = CreateArtifactSaver(cancellationToken);
             using var runner = new PipelineRunner(
                 workDir,
