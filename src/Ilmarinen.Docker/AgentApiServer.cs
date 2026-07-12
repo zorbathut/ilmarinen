@@ -23,6 +23,7 @@ public class AgentApiServer : IAsyncDisposable
     private readonly string _token;
     private Task? _listenerTask;
     private DockerJobContext? _currentContext;
+    private int _disposed;
 
     public int Port { get; private set; }
     public string Token => _token;
@@ -294,13 +295,26 @@ public class AgentApiServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _cts.Cancel();
-        _listener.Stop();
+
+        // Close() alone tears the listener down — do NOT also call Stop(). On Unix both go through
+        // HttpEndPointManager.RemoveListener: the first drops the (address, port) entry and frees the socket,
+        // and the second, finding no entry, *re-binds the port* just to unregister the prefix. Any port picked
+        // up in between — routinely, by a sibling server's FindAvailablePort — makes that re-bind throw
+        // "Address already in use" out of teardown.
+        _listener.Close();
+
         if (_listenerTask != null)
         {
+            // Close() makes the pending GetContextAsync throw ObjectDisposedException, which ListenAsync treats as its stop signal.
             await _listenerTask;
         }
-        _listener.Close();
+
         _cts.Dispose();
     }
 
