@@ -63,8 +63,8 @@
                 {
                     <tr>
                         <td>
-                            <span class="connection-badge @GetBadgeClass(worker)"></span>
-                            @GetStatusLabel(worker)
+                            <span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span>
+                            @WorkerBadge.GetStatusLabel(worker)
                         </td>
                         <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
                         <td>@worker.Id.ToString()[..8]</td>
@@ -112,20 +112,6 @@
 }
 
 @code {
-    private static string GetBadgeClass(WorkerView w)
-    {
-        if (!w.IsConnected) return "disconnected";
-        if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy) return "unhealthy";
-        return "connected";
-    }
-
-    private static string GetStatusLabel(WorkerView w)
-    {
-        if (!w.IsConnected) return "Offline";
-        if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy) return "Unhealthy";
-        return w.IsReady ? "Ready" : "Busy";
-    }
-
     private IReadOnlyList<WorkerView>? workers;
     private HashSet<string> deletingWorkspaces = new();
     private HashSet<string> revokingWorkers = new();

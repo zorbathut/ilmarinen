@@ -307,14 +307,27 @@ public class WorkerService : BackgroundService
 
         await _connection!.SendAsync("ReportDiagnostic", _lastDiagnostic);
 
-        if (_lastDiagnostic.Status == DiagnosticStatus.Healthy)
+        if (CanAcceptJobs(_lastDiagnostic.Status))
         {
+            if (_lastDiagnostic.Status == DiagnosticStatus.Degraded)
+            {
+                _logger.LogWarning("Worker is functional but degraded: {Summary}", _lastDiagnostic.Summary);
+            }
             await _connection!.SendAsync("Ready");
         }
         else
         {
             _logger.LogWarning("Worker is online but not functional: {Summary}", _lastDiagnostic.Summary);
         }
+    }
+
+    /// <summary>
+    /// Degraded means the capability checks passed but the diagnostic left something behind, so the worker can
+    /// still run jobs. Stated as an allowlist so the transient Running placeholder is never mistaken for readiness.
+    /// </summary>
+    private static bool CanAcceptJobs(DiagnosticStatus status)
+    {
+        return status == DiagnosticStatus.Healthy || status == DiagnosticStatus.Degraded;
     }
 
     private Task OnRunDiagnostic()
@@ -333,7 +346,7 @@ public class WorkerService : BackgroundService
             if (_lastDiagnostic != null)
             {
                 await SendReliableAsync("ReportDiagnostic", _lastDiagnostic);
-                if (_lastDiagnostic.Status == DiagnosticStatus.Healthy)
+                if (CanAcceptJobs(_lastDiagnostic.Status))
                     await SendReliableAsync("Ready");
             }
             return;
@@ -380,8 +393,8 @@ public class WorkerService : BackgroundService
             _lastDiagnostic = report;
             await SendReliableAsync("ReportDiagnostic", report);
 
-            // Server flipped us not-ready before invoking the diagnostic. If we're healthy, ask to be marked ready again. If we're unhealthy, stay not-ready.
-            if (report.Status == DiagnosticStatus.Healthy)
+            // Server flipped us not-ready before invoking the diagnostic. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready.
+            if (CanAcceptJobs(report.Status))
                 await SendReliableAsync("Ready");
         }
         finally

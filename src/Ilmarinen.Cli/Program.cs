@@ -107,6 +107,14 @@ public class Commands
             return 0;
         }
 
+        // Degraded means the worker can run jobs but the diagnostic couldn't tidy up after itself. That's worth
+        // saying out loud, but failing the command would be wrong: nothing about the worker's capability is broken.
+        if (report.Status == DiagnosticStatus.Degraded)
+        {
+            Console.WriteLine($"Degraded: {report.Summary}");
+            return 0;
+        }
+
         Console.WriteLine($"Unhealthy: {report.Summary}");
         return 1;
     }

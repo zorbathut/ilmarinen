@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Ilmarinen.Core.Tests" />
     <InternalsVisibleTo Include="Ilmarinen.IntegrationTests" />
   </ItemGroup>
 

@@ -69,6 +69,24 @@ public class WorkerDiagnosticGatingTests
         Assert.That(stub.CallCount, Is.EqualTo(1));
     }
 
+    // A worker whose capability checks all passed but whose teardown failed can still run jobs, so it must
+    // take work rather than quarantine itself out of the fleet over leftover scratch resources.
+    [Test]
+    public async Task DegradedDiagnostic_MakesWorkerReady()
+    {
+        var stub = new StubDiagnostic(DiagnosticStatus.Degraded, "All checks passed, but cleanup failed: stub");
+
+        var workerId = await _fixture.StartWorkerAsync(stub, waitForReady: true);
+
+        using var scope = _fixture.Services.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        var view = await workers.GetByIdAsync(workerId);
+
+        Assert.That(view, Is.Not.Null);
+        Assert.That(view!.IsReady, Is.True, "a degraded worker is still functional and must accept jobs");
+        Assert.That(view.Diagnostic?.Status, Is.EqualTo(DiagnosticStatus.Degraded));
+    }
+
     [Test]
     public async Task DiagnosticNotReRunOnReconnect()
     {

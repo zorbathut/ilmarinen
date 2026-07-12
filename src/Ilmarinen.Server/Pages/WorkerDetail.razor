@@ -29,8 +29,8 @@
 
             <span class="detail-label">Status</span>
             <span class="detail-value">
-                <span class="connection-badge @GetBadgeClass(worker)"></span>
-                @GetStatusLabel(worker)
+                <span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span>
+                @WorkerBadge.GetStatusLabel(worker)
             </span>
 
             <span class="detail-label">Current Jobs</span>
@@ -220,20 +220,6 @@ else
     private string? deleteError;
     private string? diagnosticError;
     private Timer? _timer;
-
-    private static string GetBadgeClass(WorkerView w)
-    {
-        if (!w.IsConnected) return "disconnected";
-        if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy) return "unhealthy";
-        return "connected";
-    }
-
-    private static string GetStatusLabel(WorkerView w)
-    {
-        if (!w.IsConnected) return "Offline";
-        if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy) return "Unhealthy";
-        return w.IsReady ? "Ready" : "Busy";
-    }
 
     private bool IsDiagnosticRunning() =>
         worker?.Diagnostic?.Status == DiagnosticStatus.Running;
