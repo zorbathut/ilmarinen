@@ -44,10 +44,25 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 // Resolve the key eagerly: a malformed ILMARINEN_SERVER_KEY should stop the server here, with the reason, rather than lying dormant in a lazily-constructed singleton until the first request that needs a key.
-var serverKey = app.Services.GetRequiredService<ServerKeyService>();
-if (!serverKey.IsEnabled)
+ServerKeyService serverKey;
+try
 {
-    Log.Warning("ILMARINEN_SERVER_KEY is not configured. The server will start, but worker registration and credential storage stay disabled until it is set. Generate a key with: openssl rand -base64 32");
+    serverKey = app.Services.GetRequiredService<ServerKeyService>();
+}
+catch (ConfigurationException ex)
+{
+    Log.Fatal("{Message}", ex.Message);
+    await Log.CloseAndFlushAsync();
+    return 1;
+}
+
+if (serverKey.IsPlaceholder)
+{
+    Log.Warning("ILMARINEN_SERVER_KEY is still the placeholder value. The server will start, but worker registration and credential storage stay disabled until it is set to a real key. Generate one with: openssl rand -base64 32");
+}
+else if (!serverKey.IsEnabled)
+{
+    Log.Warning("ILMARINEN_SERVER_KEY is not set. The server will start, but worker registration and credential storage stay disabled until it is. Generate a key with: openssl rand -base64 32");
 }
 
 using (var scope = app.Services.CreateScope())
@@ -78,5 +93,7 @@ Log.Information(
 Log.Debug("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
 
 app.Run();
+
+return 0;
 
 public partial class Program { }

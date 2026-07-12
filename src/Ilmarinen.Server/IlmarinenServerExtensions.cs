@@ -18,7 +18,7 @@ public static class IlmarinenServerExtensions
         services.AddSignalR();
 
         services.AddSingleton<CredentialEncryptionService>();
-        services.AddSingleton<ServerKeyService>();
+        services.AddSingleton(_ => new ServerKeyService(Environment.GetEnvironmentVariable("ILMARINEN_SERVER_KEY")));
         services.AddScoped<WorkerRegistrationService>();
         services.AddScoped<JobRepository>();
         services.AddScoped<JobLogRepository>();

@@ -33,7 +33,7 @@ docker compose logs -f
 
 Database migrations run automatically at boot — there is no separate migration step. The dashboard is then on `http://127.0.0.1:8080`.
 
-A malformed `ILMARINEN_SERVER_KEY` (not base64, or not 32 bytes) stops the server at startup and says so in the logs, rather than failing later on the first request that needs it. Omitting the key entirely is a different, gentler case: the server starts and logs a warning, but worker registration and credential storage stay disabled until you set one.
+If you skip the `openssl` steps above and leave `ILMARINEN_SERVER_KEY` as the `REPLACE_WITH_GENERATED_KEY` template value, the server exits immediately with `ILMARINEN_SERVER_KEY must be valid base64` and — under `restart: unless-stopped` — restarts into the same error. That is deliberate: a key that isn't a real key fails at boot with a one-line reason, rather than booting a healthy-looking server that errors on the first worker that tries to register. The same applies to a key that is valid base64 but the wrong length, or that isn't a usable P-256 scalar.
 
 ## Registering a worker
 
