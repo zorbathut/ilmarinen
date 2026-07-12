@@ -162,14 +162,14 @@ public class DockerJobContext : IJobContext
     /// <summary>
     /// Builds the docker run command with user/group and workspace settings.
     /// </summary>
-    private string BuildDockerRunCommand(ImageRef image, string[] command)
+    internal string BuildDockerRunCommand(ImageRef image, string[] command)
     {
-        var cmdStr = string.Join(" ", command.Select(c => c.Contains(' ') ? $"\"{c}\"" : c));
+        var cmdStr = string.Join(" ", command.Select(EscapeShellArg));
         var userArg = _userSpec != null ? $"--user {_userSpec} " : "";
         var groupArg = _dockerSocketGid.HasValue ? $"--group-add {_dockerSocketGid.Value} " : "";
         // Set HOME and common cache dirs to /tmp when running as non-root (no passwd entry for the UID)
         var envArg = _userSpec != null ? "-e HOME=/tmp -e DOCKER_CONFIG=/tmp/.docker " : "";
-        return $"docker run --rm {userArg}{groupArg}{envArg}-v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {image.Reference} {cmdStr}";
+        return $"docker run --rm {userArg}{groupArg}{envArg}-v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {EscapeShellArg(image.Reference)} {cmdStr}";
     }
 
     /// <summary>
@@ -240,13 +240,9 @@ public class DockerJobContext : IJobContext
     /// <summary>
     /// Escapes a string for safe use as a shell argument.
     /// </summary>
-    private static string EscapeShellArg(string arg)
+    internal static string EscapeShellArg(string arg)
     {
-        // If no special characters, return as-is
-        if (!arg.Any(c => char.IsWhiteSpace(c) || c == '\'' || c == '"' || c == '\\' || c == '$' || c == '`'))
-            return arg;
-
-        // Use single quotes and escape any single quotes within
+        // Always single-quote — the string is evaluated by /bin/sh -c, and any unquoted arg is one metacharacter (;, *, ~, $?, ...) away from being split or expanded by that outer shell; an empty arg would vanish from argv entirely. Don't reintroduce a "no special characters" fast path: enumerating the safe set is exactly how this went wrong before.
         return "'" + arg.Replace("'", "'\\''") + "'";
     }
 
