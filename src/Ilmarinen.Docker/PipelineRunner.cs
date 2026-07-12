@@ -133,7 +133,7 @@ public class PipelineRunner : IDisposable
         }
     }
 
-    private const string ShellScript = """
+    internal const string ShellScript = """
         #!/bin/sh
         set -e
         API="${ILMARINEN_API}"
@@ -174,6 +174,11 @@ public class PipelineRunner : IDisposable
         json_num() { echo "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\([0-9-]*\).*/\1/p' | head -1; }
         # Check if JSON has a field
         json_has() { echo "$1" | grep -q "\"$2\""; }
+
+        # Escape a value for embedding in a JSON string literal: backslash, quote, newline, CR, tab. Other control characters are not escaped and will be rejected by the server's JSON parser — a loud 4xx over silent corruption. awk reads line-by-line, so a trailing newline on the value is dropped — fine for command arguments. The &-based gsub replacement is deliberate: it means the same thing in POSIX awks (busybox, mawk) and gawk, whereas backslash-only replacements differ between them.
+        json_escape() {
+            printf '%s' "$1" | awk 'BEGIN{ORS=""} NR>1{printf "\\n"} {gsub(/[\\"]/,"\\\\&"); gsub(/\r/,"\\r"); gsub(/\t/,"\\t"); print}'
+        }
 
         # Unescape JSON string (handles \n, \t, \", \\)
         json_unescape() {
@@ -298,12 +303,11 @@ public class PipelineRunner : IDisposable
                 cmd="["; first=1
                 for arg in "$@"; do
                     [ $first -eq 1 ] && first=0 || cmd="$cmd,"
-                    escaped=$(printf '%s' "$arg" | sed 's/"/\\"/g')
-                    cmd="$cmd\"$escaped\""
+                    cmd="$cmd\"$(json_escape "$arg")\""
                 done
                 cmd="$cmd]"
                 # Use streaming for real-time output
-                http_stream "${API}/api/run" "{\"image\":\"$image\",\"command\":$cmd}"
+                http_stream "${API}/api/run" "{\"image\":\"$(json_escape "$image")\",\"command\":$cmd}"
                 exit $?
                 ;;
             build)
@@ -330,8 +334,8 @@ public class PipelineRunner : IDisposable
                             # Parse KEY=VALUE
                             arg_key="${2%%=*}"
                             arg_value="${2#*=}"
-                            escaped_key=$(printf '%s' "$arg_key" | sed 's/"/\\"/g')
-                            escaped_value=$(printf '%s' "$arg_value" | sed 's/"/\\"/g')
+                            escaped_key=$(json_escape "$arg_key")
+                            escaped_value=$(json_escape "$arg_value")
                             [ -n "$build_args" ] && build_args="$build_args,"
                             build_args="$build_args\"$escaped_key\":\"$escaped_value\""
                             shift 2
@@ -352,11 +356,11 @@ public class PipelineRunner : IDisposable
                 [ -z "$dockerfile" ] && dockerfile="Dockerfile"
                 [ -z "$context" ] && context="."
 
-                json_dockerfile=$(printf '%s' "$dockerfile" | sed 's/"/\\"/g')
-                json_context=$(printf '%s' "$context" | sed 's/"/\\"/g')
+                json_dockerfile=$(json_escape "$dockerfile")
+                json_context=$(json_escape "$context")
 
                 payload="{\"dockerfile\":\"$json_dockerfile\",\"context\":\"$json_context\""
-                [ -n "$tag" ] && payload="$payload,\"tag\":\"$(printf '%s' "$tag" | sed 's/"/\\"/g')\""
+                [ -n "$tag" ] && payload="$payload,\"tag\":\"$(json_escape "$tag")\""
                 [ -n "$build_args" ] && payload="$payload,\"buildArgs\":{$build_args}"
                 payload="$payload}"
 
