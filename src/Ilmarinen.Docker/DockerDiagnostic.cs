@@ -393,6 +393,9 @@ public class DockerDiagnostic : IAsyncDisposable
 
     private async Task<DiagnosticStepResult> CleanupAsync(CancellationToken ct)
     {
+        // Keep the stack, not just the message: teardown failures here are racy and surface only under a loaded
+        // parallel run, so a single occurrence has to be enough to place the throw. Bounded because the report
+        // travels over SignalR, which drops messages above 32 KB.
         var errors = new List<string>();
 
         if (_testContainerId != null)
@@ -404,7 +407,7 @@ public class DockerDiagnostic : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                errors.Add($"container: {ex.Message}");
+                errors.Add($"container: {Truncate(ex.ToString(), 1000)}");
             }
             _testContainerId = null;
         }
@@ -423,7 +426,7 @@ public class DockerDiagnostic : IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
-                    errors.Add($"detach worker: {ex.Message}");
+                    errors.Add($"detach worker: {Truncate(ex.ToString(), 1000)}");
                 }
             }
 
@@ -433,7 +436,7 @@ public class DockerDiagnostic : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                errors.Add($"network: {ex.Message}");
+                errors.Add($"network: {Truncate(ex.ToString(), 1000)}");
             }
             _testNetworkName = null;
         }
@@ -446,7 +449,7 @@ public class DockerDiagnostic : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                errors.Add($"api server: {ex.Message}");
+                errors.Add($"api server: {Truncate(ex.ToString(), 1000)}");
             }
             _apiServer = null;
         }
@@ -514,8 +517,9 @@ public class DockerDiagnostic : IAsyncDisposable
         if (_disposed) return;
         _disposed = true;
 
-        // Best-effort cleanup if RunAsync didn't run / threw before cleanup step.
-        try { await CleanupAsync(default); } catch { }
+        // Safety net for the paths where RunAsync never reached its cleanup step — it threw, or was never called.
+        // CleanupAsync catches each resource's failure internally and reports them in its result, so it cannot throw here.
+        await CleanupAsync(default);
         _client.Dispose();
     }
 }
