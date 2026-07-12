@@ -33,6 +33,8 @@ docker compose logs -f
 
 Database migrations run automatically at boot — there is no separate migration step. The dashboard is then on `http://127.0.0.1:8080`.
 
+A malformed `ILMARINEN_SERVER_KEY` (not base64, or not 32 bytes) stops the server at startup and says so in the logs, rather than failing later on the first request that needs it. Omitting the key entirely is a different, gentler case: the server starts and logs a warning, but worker registration and credential storage stay disabled until you set one.
+
 ## Registering a worker
 
 Workers need a key minted by the server. From the server host:

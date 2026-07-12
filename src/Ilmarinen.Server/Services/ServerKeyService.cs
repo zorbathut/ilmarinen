@@ -36,36 +36,48 @@ public class ServerKeyService
             return;
         }
 
+        var keyBytes = ParseKeyBytes(keyBase64);
+
+        _key = ECDsa.Create(new ECParameters
+        {
+            Curve = ECCurve.NamedCurves.nistP256,
+            D = keyBytes
+        });
+        _publicKeyBytes = _key.ExportSubjectPublicKeyInfo();
+
+        // Derive a separate AES-256 key for credential encryption via HKDF
+        _encryptionKey = HKDF.DeriveKey(
+            HashAlgorithmName.SHA256,
+            keyBytes,
+            outputLength: 32,
+            info: Encoding.UTF8.GetBytes("ilmarinen-credential-encryption"));
+
+        _isPlaceholder = false;
+    }
+
+    /// <summary>
+    /// Decodes and validates a configured key. A malformed key is an operator mistake rather than a bug, so it raises ConfigurationException (503) — not the InvalidOperationException that would surface as a 500.
+    /// </summary>
+    public static byte[] ParseKeyBytes(string keyBase64)
+    {
+        byte[] keyBytes;
         try
         {
-            var keyBytes = Convert.FromBase64String(keyBase64);
-            if (keyBytes.Length != 32)
-            {
-                throw new InvalidOperationException(
-                    "ILMARINEN_SERVER_KEY must be a 32-byte key encoded as base64.");
-            }
-
-            _key = ECDsa.Create(new ECParameters
-            {
-                Curve = ECCurve.NamedCurves.nistP256,
-                D = keyBytes
-            });
-            _publicKeyBytes = _key.ExportSubjectPublicKeyInfo();
-
-            // Derive a separate AES-256 key for credential encryption via HKDF
-            _encryptionKey = HKDF.DeriveKey(
-                HashAlgorithmName.SHA256,
-                keyBytes,
-                outputLength: 32,
-                info: Encoding.UTF8.GetBytes("ilmarinen-credential-encryption"));
-
-            _isPlaceholder = false;
+            keyBytes = Convert.FromBase64String(keyBase64);
         }
         catch (FormatException)
         {
-            throw new InvalidOperationException(
+            throw new ConfigurationException(
                 "ILMARINEN_SERVER_KEY must be valid base64. Generate one with: openssl rand -base64 32");
         }
+
+        if (keyBytes.Length != 32)
+        {
+            throw new ConfigurationException(
+                "ILMARINEN_SERVER_KEY must be a 32-byte key encoded as base64. Generate one with: openssl rand -base64 32");
+        }
+
+        return keyBytes;
     }
 
     public bool IsEnabled => _key != null;

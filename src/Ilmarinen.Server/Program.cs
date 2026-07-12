@@ -1,5 +1,6 @@
 using Ilmarinen.Database;
 using Ilmarinen.Protocol;
+using Ilmarinen.Server.Services;
 using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -41,6 +42,13 @@ builder.Services.AddHealthChecks()
     .AddDbContextCheck<IlmarinenDbContext>();
 
 var app = builder.Build();
+
+// Resolve the key eagerly: a malformed ILMARINEN_SERVER_KEY should stop the server here, with the reason, rather than lying dormant in a lazily-constructed singleton until the first request that needs a key.
+var serverKey = app.Services.GetRequiredService<ServerKeyService>();
+if (!serverKey.IsEnabled)
+{
+    Log.Warning("ILMARINEN_SERVER_KEY is not configured. The server will start, but worker registration and credential storage stay disabled until it is set. Generate a key with: openssl rand -base64 32");
+}
 
 using (var scope = app.Services.CreateScope())
 {
