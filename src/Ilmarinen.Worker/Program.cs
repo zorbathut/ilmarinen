@@ -38,6 +38,7 @@ builder.Services.AddSerilog();
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<WorkspaceManager>();
 builder.Services.AddSingleton<IWorkerDiagnostic, DockerWorkerDiagnostic>();
+builder.Services.AddSingleton<SleepInhibitor>();
 builder.Services.AddHostedService<WorkerService>();
 
 Log.Information("Starting worker {WorkerId}, Protocol: {ProtocolHash}", config.GetWorkerId(), ProtocolVersion.Hash);

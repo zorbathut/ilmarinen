@@ -25,6 +25,7 @@ public class WorkerService : BackgroundService
     private readonly Guid _workerId;
     private readonly WorkspaceManager _workspaceManager;
     private readonly IWorkerDiagnostic _diagnostic;
+    private readonly SleepInhibitor _sleepInhibitor;
     private readonly ILogger<WorkerService> _logger;
     private readonly MessageBuffer _messageBuffer = new();
     private HubConnection? _connection;
@@ -67,12 +68,14 @@ public class WorkerService : BackgroundService
         WorkerConfig config,
         WorkspaceManager workspaceManager,
         IWorkerDiagnostic diagnostic,
+        SleepInhibitor sleepInhibitor,
         ILogger<WorkerService> logger)
     {
         _config = config;
         _workerId = config.GetWorkerId();
         _workspaceManager = workspaceManager;
         _diagnostic = diagnostic;
+        _sleepInhibitor = sleepInhibitor;
         _logger = logger;
     }
 
@@ -441,6 +444,9 @@ public class WorkerService : BackgroundService
         {
             try
             {
+                // Keep the host from auto-suspending out from under us for as long as the job runs.
+                using var inhibitor = await _sleepInhibitor.AcquireAsync($"Ilmarinen job {job.Id}");
+
                 await SendReliableAsync("JobStarted", job.Id);
 
                 var runner = new JobRunner(_config, _workspaceManager, job, _connection!, _logger, logCollector);

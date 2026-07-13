@@ -1,0 +1,35 @@
+# Overlay for a worker on a Linux host that suspends when idle.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.inhibit-sleep.yml up -d --build
+#
+# Gives the worker the host's D-Bus system bus, which is how it asks logind to hold an inhibitor
+# while a job runs — otherwise the host can suspend mid-job, dropping the worker's connection and
+# orphaning the job. Without this mount the worker logs one warning and runs jobs normally, so
+# leave it off on any host that never sleeps.
+#
+# Lid close: on a headless host the lid still wins and the job dies with it (logind ignores sleep
+# blockers for the lid switch by default). On a *desktop* the power manager routes lid-close through
+# logind's Suspend(), which this does block — so a job will keep a lid-shut laptop awake and hot.
+# Don't use this overlay on a laptop that travels with jobs running.
+#
+# Linux hosts only. On Docker Desktop (macOS/Windows) the worker runs inside a VM with no view of
+# host power management, so this cannot work there.
+#
+# On a Linux host with no D-Bus, Docker will *create a directory* at the source path, which then
+# prevents dbus from ever creating its socket there. Only add this overlay on a host that actually
+# runs D-Bus.
+#
+# On SELinux-enforcing hosts (Fedora/RHEL) the container is denied access to the socket and the
+# worker degrades to the warning above. Do NOT "fix" that with a :z/:Z flag here: relabelling the
+# host's system bus socket to container_file_t breaks D-Bus for the entire host.
+#
+# Note this hands the container the host's system bus as uid 0, which is root-equivalent on the
+# host. That is not a new exposure — the worker already mounts the Docker socket, which is equally
+# root-equivalent — but it is not the narrow capability it looks like.
+services:
+  worker:
+    environment:
+      # Pin the socket path rather than relying on the base image symlinking /var/run to /run.
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro

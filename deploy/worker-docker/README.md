@@ -87,6 +87,14 @@ docker compose -p ilmarinen-worker-2 --env-file .env.worker2 up -d
 
 **Architecture.** The server does not schedule by architecture. An arm64 worker in an otherwise amd64 fleet will intermittently fail pipelines that pin amd64 images.
 
+**Hosts that sleep.** A host that suspends when idle will do so mid-job, dropping the worker's connection and orphaning the job. Add the `docker-compose.inhibit-sleep.yml` overlay to have the worker hold a logind inhibitor for the duration of each job:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.inhibit-sleep.yml up -d --build
+```
+
+On a headless host, closing the lid still suspends and still kills the job — logind ignores sleep blockers for the lid switch by default. On a *desktop*, the power manager routes lid-close through the same call this blocks, so a running job will keep a lid-shut laptop awake; don't use the overlay on a laptop that travels with jobs running. Linux hosts only, and only where D-Bus is actually running — see the overlay's comments for that and for the Docker Desktop and SELinux caveats. Without the overlay the worker logs one warning on its first job and otherwise behaves normally.
+
 **File ownership.** Job containers run as the worker process's uid, which is root in this image (the NixOS worker runs as the unprivileged `ilmarinen` user). In a mixed fleet the same pipeline can leave differently-owned files in `/workspace` depending on which worker picked up the job.
 
 ## Troubleshooting

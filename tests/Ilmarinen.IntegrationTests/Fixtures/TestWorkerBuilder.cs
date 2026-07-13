@@ -55,6 +55,10 @@ public class TestWorkerBuilder
             builder.Services.AddSingleton(_diagnosticOverride);
         else
             builder.Services.AddSingleton<IWorkerDiagnostic, DockerWorkerDiagnostic>();
+        // Point the inhibitor at a dead bus: tests have no business registering inhibitors with the developer's logind, and the worker treats an unreachable bus as a no-op.
+        builder.Services.AddSingleton(sp => new SleepInhibitor(
+            sp.GetRequiredService<ILogger<SleepInhibitor>>(),
+            busAddress: "unix:path=/nonexistent/ilmarinen-test-no-bus"));
         builder.Services.AddHostedService<WorkerService>();
 
         return builder.Build();
