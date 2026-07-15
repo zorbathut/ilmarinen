@@ -30,6 +30,7 @@ public class DockerDiagnostic : IAsyncDisposable
     private readonly string? _workerContainerId;
     private readonly string? _userSpec;
     private readonly uint? _dockerSocketGid;
+    private readonly IReadOnlyList<DiagnosticStep> _extraSteps;
 
     private readonly string _expectedToken = $"ilmarinen-diagnostic-{Guid.NewGuid():N}";
     private string? _testContainerId;
@@ -37,26 +38,27 @@ public class DockerDiagnostic : IAsyncDisposable
     private AgentApiServer? _apiServer;
     private bool _disposed;
 
-    public DockerDiagnostic(string? workerContainerId)
-        : this(DockerClientFactory.Create(), workerContainerId) { }
+    public DockerDiagnostic(string? workerContainerId, IReadOnlyList<DiagnosticStep> extraSteps)
+        : this(DockerClientFactory.Create(), workerContainerId, extraSteps) { }
 
     /// <summary>For tests that need to point at a specific Docker URI without mutating DOCKER_HOST.</summary>
-    internal DockerDiagnostic(string dockerHostUri, string? workerContainerId)
-        : this(new DockerClientConfiguration(new Uri(dockerHostUri)).CreateClient(), workerContainerId) { }
+    internal DockerDiagnostic(string dockerHostUri, string? workerContainerId, IReadOnlyList<DiagnosticStep> extraSteps)
+        : this(new DockerClientConfiguration(new Uri(dockerHostUri)).CreateClient(), workerContainerId, extraSteps) { }
 
-    private DockerDiagnostic(DockerClient client, string? workerContainerId)
+    private DockerDiagnostic(DockerClient client, string? workerContainerId, IReadOnlyList<DiagnosticStep> extraSteps)
     {
         _client = client;
         _workerContainerId = workerContainerId;
+        _extraSteps = extraSteps;
         _userSpec = LinuxInterop.GetUserSpec();
         _dockerSocketGid = LinuxInterop.GetDockerSocketGid();
     }
 
-    /// <summary>A step and whether failing it means the worker cannot do its job.</summary>
-    internal sealed record DiagnosticStep(string Name, bool IsFatal, Func<CancellationToken, Task<DiagnosticStepResult>> Run);
-
-    /// <summary>A step's outcome, paired with the fatality that decides how the outcome is read.</summary>
-    internal sealed record DiagnosticStepOutcome(DiagnosticStepResult Result, bool IsFatal);
+    /// <summary>
+    /// A step, and how to read its outcome. Callers outside this assembly supply extra steps for capabilities this
+    /// class has no business knowing about — it gets a name, a kind, and a delegate, and runs them like its own.
+    /// </summary>
+    public sealed record DiagnosticStep(string Name, DiagnosticStepKind Kind, Func<CancellationToken, Task<DiagnosticStepResult>> Run);
 
     public async Task<DiagnosticReport> RunAsync(IProgress<DiagnosticStepResult>? progress, CancellationToken ct)
     {
@@ -64,31 +66,33 @@ public class DockerDiagnostic : IAsyncDisposable
 
         var executed = await ExecuteStepsAsync(
         [
-            new DiagnosticStep("docker_daemon", true, CheckDaemonAsync),
-            new DiagnosticStep("dns_worker", true, CheckWorkerDnsAsync),
-            new DiagnosticStep("image_pull", true, CheckImagePullAsync),
-            new DiagnosticStep("container_run", true, CheckContainerRunAsync),
-            new DiagnosticStep("output_capture", true, CheckOutputCaptureAsync),
-            new DiagnosticStep("dns_container", true, CheckContainerDnsAsync),
-            new DiagnosticStep("agent_api_reachability", true, CheckAgentApiReachabilityAsync),
-            new DiagnosticStep("cleanup", false, CleanupAsync),
+            new DiagnosticStep("docker_daemon", DiagnosticStepKind.Capability, CheckDaemonAsync),
+            new DiagnosticStep("dns_worker", DiagnosticStepKind.Capability, CheckWorkerDnsAsync),
+            new DiagnosticStep("image_pull", DiagnosticStepKind.Capability, CheckImagePullAsync),
+            new DiagnosticStep("container_run", DiagnosticStepKind.Capability, CheckContainerRunAsync),
+            new DiagnosticStep("output_capture", DiagnosticStepKind.Capability, CheckOutputCaptureAsync),
+            new DiagnosticStep("dns_container", DiagnosticStepKind.Capability, CheckContainerDnsAsync),
+            new DiagnosticStep("agent_api_reachability", DiagnosticStepKind.Capability, CheckAgentApiReachabilityAsync),
+            // Ahead of cleanup, which tears down the scratch container, network and agent API that the steps above build — an injected step must be able to lean on those too.
+            .. _extraSteps,
+            new DiagnosticStep("cleanup", DiagnosticStepKind.Hygiene, CleanupAsync),
         ], progress, ct);
 
         return BuildReport(executed, checkedAt);
     }
 
-    internal static async Task<IReadOnlyList<DiagnosticStepOutcome>> ExecuteStepsAsync(
+    internal static async Task<IReadOnlyList<DiagnosticStepResult>> ExecuteStepsAsync(
         IReadOnlyList<DiagnosticStep> steps, IProgress<DiagnosticStepResult>? progress, CancellationToken ct)
     {
-        var executed = new List<DiagnosticStepOutcome>();
+        var executed = new List<DiagnosticStepResult>();
         var capabilityFailed = false;
 
         foreach (var step in steps)
         {
-            // Once a capability check fails the rest tell us nothing, so skip them — but keep running the
-            // non-fatal steps, or a failed run would never clean up after itself. The guard keys off fatal
-            // failures alone: a non-fatal step must never suppress the capability checks that follow it.
-            if (capabilityFailed && step.IsFatal)
+            // Once a capability check fails the rest tell us nothing, so skip them — but keep running the other
+            // kinds, or a failed run would never clean up after itself. The guard keys off capability failures
+            // alone: no other kind of step may suppress the capability checks that follow it.
+            if (capabilityFailed && step.Kind == DiagnosticStepKind.Capability)
             {
                 continue;
             }
@@ -109,11 +113,11 @@ public class DockerDiagnostic : IAsyncDisposable
                 result = Fail(ex.Message, FailureKind.Unknown, null);
             }
 
-            result = result with { Name = step.Name, Duration = sw.Elapsed };
-            executed.Add(new DiagnosticStepOutcome(result, step.IsFatal));
+            result = result with { Name = step.Name, Kind = step.Kind, Duration = sw.Elapsed };
+            executed.Add(result);
             progress?.Report(result);
 
-            if (!result.Success && step.IsFatal)
+            if (!result.Success && step.Kind == DiagnosticStepKind.Capability)
             {
                 capabilityFailed = true;
             }
@@ -125,11 +129,12 @@ public class DockerDiagnostic : IAsyncDisposable
     /// <summary>
     /// Capability decides health; cleanup only decides hygiene. A worker whose checks all passed can run jobs
     /// even if the diagnostic failed to tear its scratch resources down, so that is Degraded, not Unhealthy.
+    /// Advisory steps report optional capabilities and are never consulted at all.
     /// </summary>
-    internal static DiagnosticReport BuildReport(IReadOnlyList<DiagnosticStepOutcome> executed, DateTime checkedAt)
+    internal static DiagnosticReport BuildReport(IReadOnlyList<DiagnosticStepResult> executed, DateTime checkedAt)
     {
-        var capabilityFailure = executed.FirstOrDefault(s => !s.Result.Success && s.IsFatal);
-        var hygieneFailure = executed.FirstOrDefault(s => !s.Result.Success && !s.IsFatal);
+        var capabilityFailure = executed.FirstOrDefault(s => !s.Success && s.Kind == DiagnosticStepKind.Capability);
+        var hygieneFailure = executed.FirstOrDefault(s => !s.Success && s.Kind == DiagnosticStepKind.Hygiene);
 
         DiagnosticStatus status;
         string summary;
@@ -137,12 +142,12 @@ public class DockerDiagnostic : IAsyncDisposable
         if (capabilityFailure != null)
         {
             status = DiagnosticStatus.Unhealthy;
-            summary = $"{capabilityFailure.Result.Name} failed: {capabilityFailure.Result.Message ?? "unknown error"}";
+            summary = $"{capabilityFailure.Name} failed: {capabilityFailure.Message ?? "unknown error"}";
         }
         else if (hygieneFailure != null)
         {
             status = DiagnosticStatus.Degraded;
-            summary = $"All checks passed, but {hygieneFailure.Result.Name} failed: {hygieneFailure.Result.Message ?? "unknown error"}";
+            summary = $"All checks passed, but {hygieneFailure.Name} failed: {hygieneFailure.Message ?? "unknown error"}";
         }
         else
         {
@@ -154,7 +159,7 @@ public class DockerDiagnostic : IAsyncDisposable
         {
             Status = status,
             Summary = summary,
-            Steps = executed.Select(s => s.Result).ToList(),
+            Steps = executed,
             CheckedAt = checkedAt
         };
     }

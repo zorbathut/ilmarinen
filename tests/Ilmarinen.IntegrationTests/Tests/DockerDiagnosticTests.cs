@@ -16,7 +16,7 @@ public class DockerDiagnosticTests
     [Test]
     public async Task Diagnostic_OnHealthyHost_ReturnsHealthy()
     {
-        await using var diagnostic = new DockerDiagnostic(workerContainerId: null);
+        await using var diagnostic = new DockerDiagnostic(workerContainerId: null, extraSteps: []);
 
         var report = await diagnostic.RunAsync(progress: null, ct: CancellationToken.None);
 
@@ -39,7 +39,7 @@ public class DockerDiagnosticTests
     {
         // Point at a TCP port nothing is listening on. Using the internal ctor avoids mutating DOCKER_HOST, which would race with parallel tests in this assembly.
         await using var diagnostic = new DockerDiagnostic(
-            dockerHostUri: "tcp://127.0.0.1:1", workerContainerId: null);
+            dockerHostUri: "tcp://127.0.0.1:1", workerContainerId: null, extraSteps: []);
 
         var report = await diagnostic.RunAsync(progress: null, ct: CancellationToken.None);
 
@@ -57,7 +57,7 @@ public class DockerDiagnosticTests
     [Test]
     public async Task Diagnostic_StreamsProgress_ToReporter()
     {
-        await using var diagnostic = new DockerDiagnostic(workerContainerId: null);
+        await using var diagnostic = new DockerDiagnostic(workerContainerId: null, extraSteps: []);
         var observed = new List<string>();
         var progress = new Progress<DiagnosticStepResult>(r =>
         {

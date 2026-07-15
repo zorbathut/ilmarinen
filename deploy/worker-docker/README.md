@@ -93,7 +93,7 @@ docker compose -p ilmarinen-worker-2 --env-file .env.worker2 up -d
 docker compose -f docker-compose.yml -f docker-compose.inhibit-sleep.yml up -d --build
 ```
 
-On a headless host, closing the lid still suspends and still kills the job — logind ignores sleep blockers for the lid switch by default. On a *desktop*, the power manager routes lid-close through the same call this blocks, so a running job will keep a lid-shut laptop awake; don't use the overlay on a laptop that travels with jobs running. Linux hosts only, and only where D-Bus is actually running — see the overlay's comments for that and for the Docker Desktop and SELinux caveats. Without the overlay the worker logs one warning on its first job and otherwise behaves normally.
+On a headless host, closing the lid still suspends and still kills the job — logind ignores sleep blockers for the lid switch by default. On a *desktop*, the power manager routes lid-close through the same call this blocks, so a running job will keep a lid-shut laptop awake; don't use the overlay on a laptop that travels with jobs running. Linux hosts only, and only where D-Bus is actually running — see the overlay's comments for that and for the Docker Desktop and SELinux caveats. Without the overlay the worker behaves normally; its `host_sleep_inhibit` diagnostic step reports the capability as unavailable, which does not affect worker health.
 
 **File ownership.** Job containers run as the worker process's uid, which is root in this image (the NixOS worker runs as the unprivileged `ilmarinen` user). In a mixed fleet the same pipeline can leave differently-owned files in `/workspace` depending on which worker picked up the job.
 

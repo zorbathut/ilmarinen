@@ -4,8 +4,8 @@
 #
 # Gives the worker the host's D-Bus system bus, which is how it asks logind to hold an inhibitor
 # while a job runs — otherwise the host can suspend mid-job, dropping the worker's connection and
-# orphaning the job. Without this mount the worker logs one warning and runs jobs normally, so
-# leave it off on any host that never sleeps.
+# orphaning the job. Without this mount the worker runs jobs normally and simply reports the capability as
+# unavailable in its host_sleep_inhibit diagnostic step, so leave it off on any host that never sleeps.
 #
 # Lid close: on a headless host the lid still wins and the job dies with it (logind ignores sleep
 # blockers for the lid switch by default). On a *desktop* the power manager routes lid-close through
@@ -20,7 +20,7 @@
 # runs D-Bus.
 #
 # On SELinux-enforcing hosts (Fedora/RHEL) the container is denied access to the socket and the
-# worker degrades to the warning above. Do NOT "fix" that with a :z/:Z flag here: relabelling the
+# worker reports the capability as unavailable. Do NOT "fix" that with a :z/:Z flag here: relabelling the
 # host's system bus socket to container_file_t breaks D-Bus for the entire host.
 #
 # Note this hands the container the host's system bus as uid 0, which is root-equivalent on the

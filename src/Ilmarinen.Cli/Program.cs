@@ -62,7 +62,8 @@ public class Commands
     [Command("check")]
     public async Task<int> Check()
     {
-        await using var diagnostic = new DockerDiagnostic(workerContainerId: null);
+        // No extra steps: this checks the local Docker environment, not a worker. Anything a worker adds on top (host sleep inhibition, say) depends on how the worker is deployed and would answer differently here anyway.
+        await using var diagnostic = new DockerDiagnostic(workerContainerId: null, extraSteps: []);
 
         // Cancel on Ctrl-C so the diagnostic's cleanup step still runs (otherwise the process gets killed mid-pull and we leak the diagnostic container/network).
         using var cts = new CancellationTokenSource();

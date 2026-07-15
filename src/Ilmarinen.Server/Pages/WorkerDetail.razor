@@ -126,8 +126,8 @@
                         @foreach (var step in worker.Diagnostic.Steps)
                         {
                             <tr>
-                                <td class="@(step.Success ? "diagnostic-step-ok" : "diagnostic-step-fail")">
-                                    @(step.Success ? "ok" : "FAIL")
+                                <td class="@StepClass(step)">
+                                    @StepLabel(step)
                                 </td>
                                 <td><code>@step.Name</code></td>
                                 <td>@FormatDuration(step.Duration)</td>
@@ -229,6 +229,32 @@ else
 
     private bool CanRunDiagnostic() =>
         worker != null && worker.IsConnected && worker.CurrentJobs.Count == 0 && !IsDiagnosticRunning();
+
+    // An advisory step reports an optional capability, so its absence is not a failure and must not read as one.
+    private static bool IsUnavailableAdvisory(DiagnosticStepResult step)
+    {
+        return !step.Success && step.Kind == DiagnosticStepKind.Advisory;
+    }
+
+    private static string StepClass(DiagnosticStepResult step)
+    {
+        if (IsUnavailableAdvisory(step))
+        {
+            return "diagnostic-step-advisory";
+        }
+
+        return step.Success ? "diagnostic-step-ok" : "diagnostic-step-fail";
+    }
+
+    private static string StepLabel(DiagnosticStepResult step)
+    {
+        if (IsUnavailableAdvisory(step))
+        {
+            return "n/a";
+        }
+
+        return step.Success ? "ok" : "FAIL";
+    }
 
     private static string FormatDuration(TimeSpan d)
     {

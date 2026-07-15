@@ -5,6 +5,7 @@ using Ilmarinen.Server.Services;
 using Ilmarinen.Worker.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Threading;
 using System;
@@ -85,6 +86,33 @@ public class WorkerDiagnosticGatingTests
         Assert.That(view, Is.Not.Null);
         Assert.That(view!.IsReady, Is.True, "a degraded worker is still functional and must accept jobs");
         Assert.That(view.Diagnostic?.Status, Is.EqualTo(DiagnosticStatus.Degraded));
+    }
+
+    // Host sleep inhibition is a nice-to-have that most hosts can't do at all. The real diagnostic must report it
+    // without letting it colour the worker's health — a worker that quarantined itself for lacking an optional
+    // capability would take the whole fleet out on any host with no D-Bus.
+    [Test]
+    public async Task SleepInhibitionUnavailable_IsReportedButWorkerStillTakesWork()
+    {
+        // TestWorkerBuilder points SleepInhibitor at a dead bus, so this is the unavailable branch, deterministically.
+        var workerId = await _fixture.StartWorkerAsync();
+
+        using var scope = _fixture.Services.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        var view = await workers.GetByIdAsync(workerId);
+
+        Assert.That(view, Is.Not.Null);
+        Assert.That(view!.IsReady, Is.True, "a worker that cannot inhibit host sleep is still perfectly able to run jobs");
+        Assert.That(view.Diagnostic?.Status, Is.EqualTo(DiagnosticStatus.Healthy));
+
+        var step = view.Diagnostic!.Steps.SingleOrDefault(s => s.Name == "host_sleep_inhibit");
+        Assert.That(step, Is.Not.Null, "the capability should be reported even when absent");
+        Assert.That(step!.Kind, Is.EqualTo(DiagnosticStepKind.Advisory));
+        Assert.That(step.Success, Is.False);
+        Assert.That(step.Suggestion, Is.Not.Null.And.Not.Empty, "an absent capability should say how to get it");
+
+        // Cleanup tears down the scratch container, network and agent API that the other steps build, so it has to stay last — an injected step that ran after it would be looking at a torn-down harness.
+        Assert.That(view.Diagnostic.Steps.Last().Name, Is.EqualTo("cleanup"));
     }
 
     [Test]

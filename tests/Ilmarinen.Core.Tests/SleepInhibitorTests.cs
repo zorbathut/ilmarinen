@@ -6,7 +6,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
 using System;
+using Tmds.DBus.Protocol;
 
 namespace Ilmarinen.Core.Tests;
 
@@ -23,23 +25,24 @@ public class SleepInhibitorTests
         _logger = new ListLogger<SleepInhibitor>();
     }
 
+    // Sleep inhibition is a nice-to-have, so an absent bus is not a warning — nothing is broken, and plenty of good hosts have no D-Bus. The worker's host_sleep_inhibit diagnostic step is where this is actually reported.
     [Test]
-    public async Task AcquireAsync_BusUnreachable_DoesNotThrowAndWarnsImmediately()
+    public async Task AcquireAsync_BusUnreachable_DoesNotThrowAndReportsWithoutWarning()
     {
         var inhibitor = new SleepInhibitor(_logger, UnreachableBus);
 
         using var handle = await inhibitor.AcquireAsync("job-1");
 
         Assert.That(handle, Is.Not.Null);
+        Assert.That(_logger.Records.Any(r => r.Level >= LogLevel.Warning), Is.False, "an optional capability being absent must not read as a problem");
 
-        // The warning must land at acquire time. If it only landed at release, a host that suspends mid-job would freeze the worker and the warning would never be printed at all — which is precisely the case this feature exists to cover.
-        var warnings = _logger.Records.Where(r => r.Level == LogLevel.Warning).ToList();
-        Assert.That(warnings, Has.Count.EqualTo(1));
-        Assert.That(warnings[0].Message, Does.Contain("system_bus_socket"), "the warning should tell the user how to fix it");
+        var reported = _logger.Records.Where(r => r.Level == LogLevel.Information).ToList();
+        Assert.That(reported, Has.Count.EqualTo(1));
+        Assert.That(reported[0].Message, Does.Contain("host_sleep_inhibit"), "the log should point at the diagnostic step that explains it");
     }
 
     [Test]
-    public async Task AcquireAsync_BusUnreachable_WarnsOnceThenLogsQuietly()
+    public async Task AcquireAsync_BusUnreachable_ReportsOnceThenLogsQuietly()
     {
         var inhibitor = new SleepInhibitor(_logger, UnreachableBus);
 
@@ -47,11 +50,73 @@ public class SleepInhibitorTests
         using (await inhibitor.AcquireAsync("job-2")) { }
         using (await inhibitor.AcquireAsync("job-3")) { }
 
-        // A worker on a host with no D-Bus fails this way on every job it ever runs, so only the first is worth a warning...
-        Assert.That(_logger.Records.Count(r => r.Level == LogLevel.Warning), Is.EqualTo(1));
+        // A worker on a host with no D-Bus fails this way on every job it ever runs, so only the first is worth printing...
+        Assert.That(_logger.Records.Count(r => r.Level == LogLevel.Information), Is.EqualTo(1));
 
-        // ...but the rest are still reported, in case a later one is a different failure than the one already warned about.
+        // ...but the rest are still reported, in case a later one is a different failure than the one already reported.
         Assert.That(_logger.Records.Count(r => r.Level == LogLevel.Debug), Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task ProbeAsync_BusUnreachable_ReportsUnavailableAndDoesNotThrow()
+    {
+        var inhibitor = new SleepInhibitor(_logger, UnreachableBus);
+
+        var step = await inhibitor.ProbeAsync(CancellationToken.None);
+
+        Assert.That(step.Success, Is.False);
+        Assert.That(step.Message, Does.Contain("not inhibited"));
+        Assert.That(step.Suggestion, Does.Contain("Bind-mount"));
+
+        // The probe reports; it does not log. The step it returns is the report.
+        Assert.That(_logger.Records, Is.Empty);
+    }
+
+    [Test]
+    public async Task ProbeAsync_RealLogind_ReportsAvailable()
+    {
+        if (!HasSystemBus() || !HasSystemdInhibitCli())
+        {
+            Assert.Ignore("No logind system bus (or no systemd-inhibit CLI) on this host.");
+        }
+
+        var step = await new SleepInhibitor(_logger, busAddress: null).ProbeAsync(CancellationToken.None);
+
+        if (step.Suggestion != null && step.Suggestion.Contains("root"))
+        {
+            Assert.Ignore("This host refuses a block-sleep inhibitor to a sessionless non-root caller. Workers run as root, so this path is only testable where the test process may hold one.");
+        }
+
+        Assert.That(step.Success, Is.True, $"probe failed: {step.Message}");
+        Assert.That(step.Suggestion, Is.Null, "there is nothing to suggest when the capability is present");
+    }
+
+    // Cancellation is a shutdown, not a failure to report. The diagnostic harness deliberately lets it propagate, so
+    // turning it into a failed step would have the worker announce a bogus diagnostic on its way out the door.
+    [Test]
+    public void ProbeAsync_Cancelled_PropagatesRatherThanReportingAFailure()
+    {
+        var inhibitor = new SleepInhibitor(_logger, UnreachableBus);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.CatchAsync<OperationCanceledException>(async () => await inhibitor.ProbeAsync(cts.Token));
+    }
+
+    // The advice differs entirely by cause: telling a non-root worker to bind-mount a socket it already has is useless.
+    [Test]
+    public void Suggestion_DependsOnWhyItFailed()
+    {
+        var refused = new DBusErrorReplyException("org.freedesktop.DBus.Error.InteractiveAuthorizationRequired", "Access denied");
+        Assert.That(SleepInhibitor.SuggestionFor(refused), Does.Contain("root"));
+        Assert.That(SleepInhibitor.SuggestionFor(refused), Does.Not.Contain("Bind-mount"));
+
+        var unreachable = new DBusConnectFailedException("Cannot assign requested address");
+        Assert.That(SleepInhibitor.SuggestionFor(unreachable), Does.Contain("Bind-mount"));
+        Assert.That(SleepInhibitor.SuggestionFor(unreachable), Does.Contain("system_bus_socket"));
+
+        // Nothing useful to say beats a hint that isn't one.
+        Assert.That(SleepInhibitor.SuggestionFor(new InvalidOperationException("something else")), Is.Null);
     }
 
     [Test]
@@ -79,6 +144,8 @@ public class SleepInhibitorTests
         var handle = await inhibitor.AcquireAsync(reason);
         try
         {
+            IgnoreIfBlockSleepIsNotPermittedHere();
+
             var held = ListInhibitors();
             Assert.That(held, Does.Contain(reason), "the inhibitor should be registered with logind while held");
 
@@ -94,7 +161,26 @@ public class SleepInhibitorTests
         }
 
         Assert.That(ListInhibitors(), Does.Not.Contain(reason), "disposing the handle should close the fd and release the inhibitor");
-        Assert.That(_logger.Records.Any(r => r.Level == LogLevel.Warning), Is.False);
+        Assert.That(_logger.Records, Is.Empty, "a successful acquire has nothing to report");
+    }
+
+    /// <summary>
+    /// logind puts block-sleep behind polkit's auth_admin_keep for any caller with no logind session, so a sessionless non-root process — a CI runner, a systemd service — is refused one outright, and asking for idle+sleep together is refused as a whole rather than partially granted. Real workers run as root in a container and are unaffected, so on such a host there is nothing here to test. Any *other* failure is a genuine bug and must not be swallowed.
+    /// </summary>
+    private void IgnoreIfBlockSleepIsNotPermittedHere()
+    {
+        var failure = _logger.Records.Select(r => r.Exception).FirstOrDefault(e => e != null);
+        if (failure == null)
+        {
+            return;
+        }
+
+        if (failure is DBusErrorReplyException reply && reply.ErrorName == "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired")
+        {
+            Assert.Ignore("This host refuses a block-sleep inhibitor to a sessionless non-root caller. Workers run as root, so this path is only testable where the test process may hold one.");
+        }
+
+        Assert.Fail($"Acquiring the inhibitor failed for an unexpected reason: {failure}");
     }
 
     private static bool HasSystemBus()
@@ -133,7 +219,7 @@ public class SleepInhibitorTests
 
     private sealed class ListLogger<T> : ILogger<T>
     {
-        public List<(LogLevel Level, string Message)> Records { get; } = new();
+        public List<(LogLevel Level, string Message, Exception? Exception)> Records { get; } = new();
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull
         {
@@ -147,7 +233,7 @@ public class SleepInhibitorTests
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            Records.Add((logLevel, formatter(state, exception)));
+            Records.Add((logLevel, formatter(state, exception), exception));
         }
     }
 }
