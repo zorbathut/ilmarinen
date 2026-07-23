@@ -18,7 +18,8 @@ public class DockerJobContext : IJobContext
 {
     private readonly DockerClient _client;
     private readonly string _containerId;
-    private readonly string _workDir;
+    private readonly string _containerWorkDir;
+    private readonly string _localWorkDir;
     private readonly string _hostWorkDir;
     private readonly string _networkName;
     private readonly Func<string, string?> _secretProvider;
@@ -31,10 +32,17 @@ public class DockerJobContext : IJobContext
     public string Branch { get; }
     public string Commit { get; }
 
+    /// <summary>
+    /// Creates a job context. The three workdir parameters are three path perspectives on the same workspace; localWorkDir and hostWorkDir differ when this process itself runs in a container.
+    /// </summary>
+    /// <param name="containerWorkDir">Workspace path inside the job container (used as the exec working directory)</param>
+    /// <param name="localWorkDir">Workspace path on this process's own filesystem (used for direct file access like artifact reads)</param>
+    /// <param name="hostWorkDir">Workspace path as seen by the Docker daemon's host (used for -v bind mount arguments)</param>
     public DockerJobContext(
         DockerClient client,
         string containerId,
-        string workDir,
+        string containerWorkDir,
+        string localWorkDir,
         string hostWorkDir,
         string networkName,
         string branch,
@@ -47,7 +55,8 @@ public class DockerJobContext : IJobContext
     {
         _client = client;
         _containerId = containerId;
-        _workDir = workDir;
+        _containerWorkDir = containerWorkDir;
+        _localWorkDir = localWorkDir;
         _hostWorkDir = hostWorkDir;
         _networkName = networkName;
         Branch = branch;
@@ -67,7 +76,7 @@ public class DockerJobContext : IJobContext
         var stdoutBuilder = new StringBuilder();
         var stderrBuilder = new StringBuilder();
 
-        var exitCode = await DockerExec.RunAsync(_client, _containerId, cmd, _workDir, _userSpec, (isStdout, chunk) =>
+        var exitCode = await DockerExec.RunAsync(_client, _containerId, cmd, _containerWorkDir, _userSpec, (isStdout, chunk) =>
         {
             if (isStdout)
             {
@@ -121,7 +130,7 @@ public class DockerJobContext : IJobContext
         var stderrBuilder = new StringBuilder();
         var writer = new StreamWriter(outputStream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
 
-        var exitCode = await DockerExec.RunAsync(_client, _containerId, cmd, _workDir, _userSpec, async (isStdout, chunk) =>
+        var exitCode = await DockerExec.RunAsync(_client, _containerId, cmd, _containerWorkDir, _userSpec, async (isStdout, chunk) =>
         {
             // Write NDJSON line to stream
             var json = JsonSerializer.Serialize(new { t = isStdout ? "o" : "e", d = chunk });
@@ -335,11 +344,11 @@ public class DockerJobContext : IJobContext
             throw new InvalidOperationException("Artifact saving is not configured for this context");
         }
 
-        // Resolve path - relative paths are relative to /workspace (which is _hostWorkDir on host)
-        string hostPath;
+        // Resolve path - relative paths are relative to /workspace. The file is read by this process, so resolve against _localWorkDir, not _hostWorkDir (which is only meaningful to the Docker daemon and may not exist on our filesystem when we run in a container).
+        string localPath;
         if (path.StartsWith("/workspace/"))
         {
-            hostPath = Path.Combine(_hostWorkDir, path["/workspace/".Length..]);
+            localPath = Path.Combine(_localWorkDir, path["/workspace/".Length..]);
         }
         else if (path.StartsWith("/"))
         {
@@ -349,15 +358,15 @@ public class DockerJobContext : IJobContext
         else
         {
             // Relative path
-            hostPath = Path.Combine(_hostWorkDir, path);
+            localPath = Path.Combine(_localWorkDir, path);
         }
 
-        if (!File.Exists(hostPath))
+        if (!File.Exists(localPath))
         {
-            throw new FileNotFoundException($"Artifact file not found: {path}", hostPath);
+            throw new FileNotFoundException($"Artifact file not found: {path}", localPath);
         }
 
-        return await _artifactSaver(hostPath, name);
+        return await _artifactSaver(localPath, name);
     }
 
     internal async Task StopServiceAsync(string containerId)

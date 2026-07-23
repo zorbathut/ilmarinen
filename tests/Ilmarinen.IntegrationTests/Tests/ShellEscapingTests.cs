@@ -55,7 +55,7 @@ public class ShellEscapingTests
     [Test]
     public async Task BuildDockerRunCommand_PreservesTheNestedCommandVerbatim()
     {
-        var context = new DockerJobContext(null!, "container", "/workspace", "/hostwork", "testnet", "main", "abc123", _ => null);
+        var context = new DockerJobContext(null!, "container", "/workspace", "/localwork", "/hostwork", "testnet", "main", "abc123", _ => null);
         const string innerScript = "false; ec=$?; true; exit $ec";
         var cmdStr = context.BuildDockerRunCommand(ImageRef.From("test-image"), ["sh", "-c", innerScript]);
 
@@ -74,6 +74,8 @@ public class ShellEscapingTests
             Assert.That(exitCode, Is.EqualTo(0), stderr);
             var argv = SplitNulTerminated(stdout);
             Assert.That(argv[0], Is.EqualTo("run"));
+            Assert.That(argv, Does.Contain("/hostwork:/workspace"),
+                "the bind mount must use the daemon-side host path, not the process-local path");
             Assert.That(argv[^3..], Is.EqualTo(new[] { "sh", "-c", innerScript }),
                 "the nested command must reach docker exactly as written — no outer-shell expansion");
         }

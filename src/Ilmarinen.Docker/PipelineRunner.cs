@@ -419,17 +419,17 @@ public class PipelineRunner : IDisposable
     {
         var artifactDir = Path.Combine(_workDir, ".ilmarinen", "artifacts", runId.ToString());
 
-        return async (hostPath, name) =>
+        return async (localPath, name) =>
         {
             var artifactId = Guid.CreateVersion7();
-            var fileName = name ?? Path.GetFileName(hostPath);
+            var fileName = name ?? Path.GetFileName(localPath);
             var safeFileName = SanitizeFileName(fileName);
             var destFileName = $"{artifactId}-{safeFileName}";
             var destPath = Path.Combine(artifactDir, destFileName);
 
             Directory.CreateDirectory(artifactDir);
 
-            await using var source = File.OpenRead(hostPath);
+            await using var source = File.OpenRead(localPath);
             await using var dest = File.Create(destPath);
             await source.CopyToAsync(dest);
 
@@ -530,8 +530,9 @@ public class PipelineRunner : IDisposable
             var context = new DockerJobContext(
                 _client,
                 containerId,
-                "/workspace",
-                _hostWorkDir,
+                containerWorkDir: "/workspace",
+                localWorkDir: _workDir,
+                hostWorkDir: _hostWorkDir,
                 networkName,
                 branch,
                 commit,

@@ -259,10 +259,10 @@ public class JobRunner
     {
         var baseUrl = _config.ServerUrl;
 
-        return async (hostPath, name) =>
+        return async (localPath, name) =>
         {
-            var artifactName = name ?? Path.GetFileName(hostPath);
-            var fileInfo = new FileInfo(hostPath);
+            var artifactName = name ?? Path.GetFileName(localPath);
+            var fileInfo = new FileInfo(localPath);
             var url = $"{baseUrl}/hub/workers/jobs/{_job.Id}/artifacts?name={Uri.EscapeDataString(artifactName)}";
 
             var jsonOptions = new JsonSerializerOptions
@@ -277,7 +277,7 @@ public class JobRunner
             {
                 try
                 {
-                    await using var fileStream = File.OpenRead(hostPath);
+                    await using var fileStream = File.OpenRead(localPath);
                     var content = new StreamContent(fileStream);
                     content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
                     content.Headers.ContentLength = fileInfo.Length;
