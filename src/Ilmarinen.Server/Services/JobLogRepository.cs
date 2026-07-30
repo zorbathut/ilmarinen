@@ -42,6 +42,7 @@ public class JobLogRepository
         int limit = 100)
     {
         var chunks = await _db.JobLogChunks
+            .AsNoTracking()
             .Where(c => c.JobId == jobId && c.SequenceNumber >= fromSequence)
             .OrderBy(c => c.SequenceNumber)
             .Take(limit)

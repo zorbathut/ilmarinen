@@ -4,6 +4,7 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Controllers;
 using Ilmarinen.Server.Services;
+using Ilmarinen.Server;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -213,6 +214,11 @@ public class IntegrationTestFixture : IAsyncDisposable
         await EnsureSuccessAsync(response);
 
         return (await response.Content.ReadFromJsonAsync<List<ArtifactInfo>>(JsonOptions))!;
+    }
+
+    public async Task<HttpResponseMessage> DownloadJobLogAsync(Guid jobId)
+    {
+        return await _httpClient.GetAsync($"/api/jobs/{jobId}/logs/download");
     }
 
     public async Task<byte[]> DownloadArtifactAsync(Guid jobId, Guid artifactId)
@@ -433,7 +439,11 @@ public class IntegrationTestFixture : IAsyncDisposable
             .OrderBy(c => c.SequenceNumber)
             .Select(c => c.Content)
             .ToListAsync();
-        return string.Join("", chunks);
+
+        // Decode the stored NDJSON so a failed job's dump reads like the build output, keeping a marker on stderr since that distinction is usually the point.
+        return string.Concat(chunks
+            .SelectMany(LogChunkParser.ParseEntries)
+            .Select(e => e.Type == "e" ? $"[stderr] {e.Data}" : e.Data));
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response)

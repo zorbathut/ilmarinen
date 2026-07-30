@@ -99,6 +99,7 @@ public class LogCollector
         string? chunk = null;
         int seq = 0;
 
+        // Taking the whole buffer keeps every chunk a whole number of NDJSON lines; don't trim it to a byte budget, since readers parse chunks independently and a split line is unrecoverable.
         lock (_lock)
         {
             var elapsed = (DateTime.UtcNow - _lastFlush).TotalMilliseconds;

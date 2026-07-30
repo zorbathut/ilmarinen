@@ -1,4 +1,3 @@
-@using System.Text.Json
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @implements IDisposable
@@ -14,6 +13,8 @@
             <input type="checkbox" @bind="showStderr" /> Show stderr
         </label>
         <span class="log-stats">@logLines.Count lines | @FormatBytes(totalBytes)</span>
+        @* The download attribute stops Blazor from intercepting the click: otherwise the router takes the /api path first, matches no page, and only then force-loads it — a needless round trip through the circuit, and one that needs the circuit to be alive. *@
+        <a href="/api/jobs/@JobId/logs/download" class="btn-download" download>Download</a>
         @if (IsStreaming)
         {
             <span class="log-status streaming">Streaming...</span>
@@ -66,6 +67,11 @@
     .log-stats {
         margin-left: auto;
         color: var(--text-secondary);
+    }
+    /* The shared .btn-download background matches the toolbar's, so it needs its own contrast here. */
+    .log-toolbar .btn-download {
+        background-color: var(--bg-secondary);
+        border: 1px solid var(--text-secondary);
     }
     .log-status {
         padding: 0.25rem 0.5rem;
@@ -151,43 +157,22 @@
 
     private void ParseAndAddContent(string content)
     {
-        // Parse NDJSON content
-        foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var entry in LogChunkParser.ParseEntries(content))
         {
-            try
+            totalBytes += entry.Data.Length;
+
+            // Split by newlines to create individual log lines
+            foreach (var logLine in entry.Data.Split('\n'))
             {
-                using var doc = JsonDocument.Parse(line);
-                var root = doc.RootElement;
-
-                if (!root.TryGetProperty("t", out var typeEl)) continue;
-                var type = typeEl.GetString();
-
-                if (type == "o" || type == "e" || type == "m")
+                if (!string.IsNullOrEmpty(logLine))
                 {
-                    if (root.TryGetProperty("d", out var dataEl))
+                    logLines.Add(new LogLine
                     {
-                        var data = dataEl.GetString() ?? "";
-                        totalBytes += data.Length;
-
-                        // Split by newlines to create individual log lines
-                        foreach (var logLine in data.Split('\n'))
-                        {
-                            if (!string.IsNullOrEmpty(logLine))
-                            {
-                                logLines.Add(new LogLine
-                                {
-                                    Content = logLine,
-                                    IsStderr = type == "e",
-                                    IsMetadata = type == "m"
-                                });
-                            }
-                        }
-                    }
+                        Content = logLine,
+                        IsStderr = entry.Type == "e",
+                        IsMetadata = entry.Type == "m"
+                    });
                 }
-            }
-            catch
-            {
-                // Skip malformed JSON
             }
         }
     }
