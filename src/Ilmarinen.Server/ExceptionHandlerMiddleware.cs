@@ -48,9 +48,21 @@ public class ExceptionHandlerMiddleware
             _logger.LogWarning(ex, "Configuration error: {Message}", ex.Message);
             await WriteProblemDetailsAsync(context, 503, "Service Unavailable", ex.Message);
         }
+        // Keyed on the client going away rather than on an exception type: a hang-up mid-response surfaces as a cancellation, a reset connection or a disposed pipe depending on where the write was, and none of them are a server fault.
+        catch (Exception ex) when (context.RequestAborted.IsCancellationRequested)
+        {
+            _logger.LogInformation("Client aborted {Method} {Path}: {Message}", context.Request.Method, context.Request.Path, ex.Message);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception");
+
+            if (context.Response.HasStarted)
+            {
+                // Part of the response is already on the wire, so a ProblemDetails body would only corrupt it. Resetting the connection is the only way left to tell the client the payload is incomplete.
+                context.Abort();
+                return;
+            }
 
             var detail = _environment.IsDevelopment()
                 ? ex.ToString()
