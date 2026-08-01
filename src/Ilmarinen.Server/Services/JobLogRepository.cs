@@ -56,4 +56,29 @@ public class JobLogRepository
         }).ToList();
     }
 
+    /// <summary>
+    /// The chunks immediately below <paramref name="beforeSequence"/>, ascending. Pass int.MaxValue
+    /// for the tail of the log.
+    /// </summary>
+    public async Task<IReadOnlyList<LogChunkInfo>> GetChunksBeforeAsync(
+        Guid jobId,
+        int beforeSequence,
+        int limit)
+    {
+        var chunks = await _db.JobLogChunks
+            .AsNoTracking()
+            .Where(c => c.JobId == jobId && c.SequenceNumber < beforeSequence)
+            .OrderByDescending(c => c.SequenceNumber)
+            .Take(limit)
+            .ToListAsync();
+
+        chunks.Reverse();
+
+        return chunks.Select(c => new LogChunkInfo
+        {
+            SequenceNumber = c.SequenceNumber,
+            Content = c.Content,
+            Timestamp = c.Timestamp
+        }).ToList();
+    }
 }

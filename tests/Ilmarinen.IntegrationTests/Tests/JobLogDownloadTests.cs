@@ -1,15 +1,11 @@
-using Ilmarinen.Database.Entities;
-using Ilmarinen.Database;
 using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol.Requests;
-using Ilmarinen.Protocol;
 using Ilmarinen.Server.Controllers;
 using Ilmarinen.Server.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 using System.Linq;
 using System.Net;
-using System.Text.Json;
 using System.Text;
 using System.Threading.Tasks;
 using System;
@@ -42,10 +38,10 @@ public class JobLogDownloadTests
     [Test]
     public async Task DownloadLog_ReturnsWholeLogAsPlainTextAttachment()
     {
-        var jobId = await SubmitQueuedJobAsync();
-        await InsertChunksAsync(jobId,
-            (1, NdjsonLine("m", "=== step build ===\n") + NdjsonLine("o", "building\nlinking\n")),
-            (2, NdjsonLine("e", "warning: ünused variable\n") + NdjsonLine("o", "done\n")));
+        var jobId = await JobLogSeed.CreateJobAsync(_fixture);
+        await JobLogSeed.InsertChunksAsync(_fixture, jobId,
+            (1, JobLogSeed.NdjsonLine("m", "=== step build ===\n") + JobLogSeed.NdjsonLine("o", "building\nlinking\n")),
+            (2, JobLogSeed.NdjsonLine("e", "warning: ünused variable\n") + JobLogSeed.NdjsonLine("o", "done\n")));
 
         var response = await _fixture.DownloadJobLogAsync(jobId);
 
@@ -66,10 +62,10 @@ public class JobLogDownloadTests
     [Test]
     public async Task DownloadLog_OutOfOrderAndDuplicateChunks_AreOrderedAndDeduplicated()
     {
-        var jobId = await SubmitQueuedJobAsync();
-        await InsertChunksAsync(jobId, (3, NdjsonLine("o", "three\n")));
-        await InsertChunksAsync(jobId, (1, NdjsonLine("o", "one\n")), (2, NdjsonLine("o", "two\n")));
-        await InsertChunksAsync(jobId, (2, NdjsonLine("o", "two\n")));
+        var jobId = await JobLogSeed.CreateJobAsync(_fixture);
+        await JobLogSeed.InsertChunksAsync(_fixture, jobId, (3, JobLogSeed.NdjsonLine("o", "three\n")));
+        await JobLogSeed.InsertChunksAsync(_fixture, jobId, (1, JobLogSeed.NdjsonLine("o", "one\n")), (2, JobLogSeed.NdjsonLine("o", "two\n")));
+        await JobLogSeed.InsertChunksAsync(_fixture, jobId, (2, JobLogSeed.NdjsonLine("o", "two\n")));
 
         var response = await _fixture.DownloadJobLogAsync(jobId);
 
@@ -83,7 +79,7 @@ public class JobLogDownloadTests
     [Test]
     public async Task DownloadLog_ChunksStillBufferedForPersistence_AreIncluded()
     {
-        var jobId = await SubmitQueuedJobAsync();
+        var jobId = await JobLogSeed.CreateJobAsync(_fixture);
 
         // Well under LogStreamService's flush thresholds, so it stays buffered until the download asks for it.
         var logStream = _fixture.Services.GetRequiredService<LogStreamService>();
@@ -91,7 +87,7 @@ public class JobLogDownloadTests
         {
             JobId = jobId,
             SequenceNumber = 1,
-            Content = NdjsonLine("o", "still buffered\n"),
+            Content = JobLogSeed.NdjsonLine("o", "still buffered\n"),
             Timestamp = DateTime.UtcNow
         });
 
@@ -105,11 +101,11 @@ public class JobLogDownloadTests
     {
         const int chunkCount = JobsController.DownloadPageSize + 50;
 
-        var jobId = await SubmitQueuedJobAsync();
+        var jobId = await JobLogSeed.CreateJobAsync(_fixture);
         var chunks = Enumerable.Range(1, chunkCount)
-            .Select(i => (i, NdjsonLine("o", $"line {i}\n")))
+            .Select(i => (i, JobLogSeed.NdjsonLine("o", $"line {i}\n")))
             .ToArray();
-        await InsertChunksAsync(jobId, chunks);
+        await JobLogSeed.InsertChunksAsync(_fixture, jobId, chunks);
 
         var response = await _fixture.DownloadJobLogAsync(jobId);
         var body = await response.Content.ReadAsStringAsync();
@@ -121,12 +117,38 @@ public class JobLogDownloadTests
     [Test]
     public async Task DownloadLog_JobWithoutLogs_ReturnsEmptyBody()
     {
-        var jobId = await SubmitQueuedJobAsync();
+        var jobId = await JobLogSeed.CreateJobAsync(_fixture);
 
         var response = await _fixture.DownloadJobLogAsync(jobId);
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(await response.Content.ReadAsStringAsync(), Is.Empty);
+    }
+
+    /// <summary>
+    /// The raw view is the same bytes as the download, but shown in the browser rather than saved,
+    /// which is how you search a log too big for the viewer's window.
+    /// </summary>
+    [Test]
+    public async Task RawLog_ServesTheSameTextInline()
+    {
+        var jobId = await JobLogSeed.CreateJobAsync(_fixture);
+        await JobLogSeed.InsertChunksAsync(_fixture, jobId, (1, JobLogSeed.NdjsonLine("o", "hello\n")));
+
+        var response = await _fixture.HttpClient.GetAsync($"/api/jobs/{jobId}/logs/raw");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(response.Content.Headers.ContentType?.ToString(), Is.EqualTo("text/plain; charset=utf-8"));
+        Assert.That(response.Content.Headers.ContentDisposition?.DispositionType, Is.EqualTo("inline"));
+        Assert.That(await response.Content.ReadAsStringAsync(), Is.EqualTo(await (await _fixture.DownloadJobLogAsync(jobId)).Content.ReadAsStringAsync()));
+    }
+
+    [Test]
+    public async Task RawLog_UnknownJob_Returns404()
+    {
+        var response = await _fixture.HttpClient.GetAsync($"/api/jobs/{Guid.CreateVersion7()}/logs/raw");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
 
     [Test]
@@ -135,42 +157,5 @@ public class JobLogDownloadTests
         var response = await _fixture.DownloadJobLogAsync(Guid.CreateVersion7());
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
-    }
-
-    private async Task<Guid> SubmitQueuedJobAsync()
-    {
-        // No worker is running, so the job just sits in the queue — nothing needs to execute for its logs to be readable.
-        return await _fixture.SubmitJobAsync(new JobSubmission
-        {
-            RepoUrl = "https://example.invalid/repo.git",
-            Ref = "master",
-            ScriptPath = "pipeline.csx",
-            GitTokenMode = GitTokenMode.None
-        });
-    }
-
-    private async Task InsertChunksAsync(Guid jobId, params (int Sequence, string Content)[] chunks)
-    {
-        using var scope = _fixture.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-
-        foreach (var (sequence, content) in chunks)
-        {
-            db.JobLogChunks.Add(new JobLogChunk
-            {
-                Id = Guid.CreateVersion7(),
-                JobId = jobId,
-                SequenceNumber = sequence,
-                Content = content,
-                Timestamp = DateTime.UtcNow
-            });
-        }
-
-        await db.SaveChangesAsync();
-    }
-
-    private static string NdjsonLine(string type, string data)
-    {
-        return JsonSerializer.Serialize(new { t = type, d = data, ts = 0 }) + "\n";
     }
 }
