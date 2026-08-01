@@ -1,0 +1,15 @@
+@inherits LayoutComponentBase
+
+@* No sidebar: this layout exists so a page can have the whole viewport, with its own scrolling region inside. *@
+<div class="layout-fullscreen">
+    @Body
+</div>
+
+<style>
+    .layout-fullscreen {
+        height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+</style>

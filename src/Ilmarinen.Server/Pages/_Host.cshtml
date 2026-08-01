@@ -178,9 +178,105 @@
             max-height: 500px;
             overflow-y: auto;
         }
-        .log-line {
+        .log-line, .log-block {
             white-space: pre-wrap;
             word-break: break-all;
+        }
+        /* Shared by the inline viewer and the full-screen one, whose toolbar is built by log-viewer.js. */
+        .log-toolbar {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            background-color: var(--bg-tertiary);
+            font-size: 0.875rem;
+        }
+        .log-option {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            cursor: pointer;
+            color: var(--text-secondary);
+        }
+        .log-option input {
+            cursor: pointer;
+        }
+        .log-stats {
+            margin-left: auto;
+            color: var(--text-secondary);
+        }
+        .log-status {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+        }
+        .log-status.streaming {
+            background-color: #164e63;
+            color: #22d3ee;
+            animation: pulse 2s infinite;
+        }
+        .log-status.complete {
+            background-color: #14532d;
+            color: #4ade80;
+        }
+        @@keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .log-meta {
+            color: #22d3ee;
+        }
+        .log-toolbar .btn-download, .log-tail-button {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--text-secondary);
+            color: var(--text-primary);
+            border-radius: 0.25rem;
+            padding: 0.25rem 0.75rem;
+            font-size: 0.75rem;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        /* The full-screen viewer at /jobs/{id}/logs, whose DOM is built by log-viewer.js. */
+        .logfull-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 1rem;
+            background-color: var(--bg-secondary);
+            border-bottom: 1px solid var(--bg-tertiary);
+        }
+        .logfull-title {
+            margin-right: auto;
+            color: var(--text-secondary);
+        }
+        .logfull {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+            min-width: 0;
+        }
+        .logfull-pane {
+            flex: 1;
+            min-height: 0;
+            min-width: 0;
+            overflow: auto;
+            padding: 0.5rem 1rem;
+            background-color: var(--log-bg);
+            font-family: monospace;
+            font-size: 0.875rem;
+        }
+        .log-block {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .hide-stderr .log-stderr {
+            display: none;
+        }
+        .log-error {
+            color: var(--error);
+            font-style: italic;
+            padding-top: 0.5rem;
         }
         .log-stdout { color: var(--text-primary); }
         .log-stderr { color: var(--error); }

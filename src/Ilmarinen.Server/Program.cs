@@ -73,7 +73,17 @@ using (var scope = app.Services.CreateScope())
 
 app.UseMiddleware<ExceptionHandlerMiddleware>();
 app.UseSerilogRequestLogging();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = file =>
+    {
+        // The log viewer is the one script we ship ourselves, and a heuristically cached copy would outlive a redeploy. Everything else keeps the default policy. The ETag still turns the check into a 304.
+        if (file.File.Name == "log-viewer.js")
+        {
+            file.Context.Response.Headers.CacheControl = "no-cache";
+        }
+    }
+});
 app.UseRouting();
 
 // Port filtering middleware - blocks endpoints based on connection's local port

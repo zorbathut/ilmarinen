@@ -1,0 +1,126 @@
+@page "/jobs/{Id}/logs"
+@layout LayoutFullscreen
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
+@implements IAsyncDisposable
+@inject IServiceScopeFactory ScopeFactory
+@inject IJSRuntime JS
+@inject ILogger<JobLogs> Logger
+
+@if (job != null)
+{
+    <div class="logfull-header">
+        <a href="/jobs/@job.Id">&larr; Job @ShortId</a>
+        <span class="logfull-title">@job.PipelineName @job.Ref</span>
+        <a href="/api/jobs/@job.Id/logs/raw" class="btn-download" target="_blank">Raw</a>
+        <a href="/api/jobs/@job.Id/logs/download" class="btn-download" download>Download</a>
+    </div>
+
+    @* Everything below is built and owned by log-viewer.js — Blazor holds no part of the log, which is the point of this page. *@
+    <div class="logfull" @ref="viewer"></div>
+}
+else if (loading)
+{
+    <div class="logfull-header">Loading...</div>
+}
+else
+{
+    <div class="logfull-header"><a href="/jobs">&larr; Jobs</a> <span class="logfull-title">Job not found</span></div>
+}
+
+@code {
+    [Parameter]
+    public string Id { get; set; } = "";
+
+    private JobInfo? job;
+    private string? loadedId;
+    private bool loading = true;
+    private ElementReference viewer;
+    private IJSObjectReference? module;
+    private int handle;
+
+    private string ShortId
+    {
+        get { return Id.Length >= 8 ? Id[..8] : Id; }
+    }
+
+    // The router reuses this component across /jobs/{a}/logs → /jobs/{b}/logs, so the lookup belongs here rather than in OnInitializedAsync, which would keep showing the first job under the second job's URL.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id == loadedId)
+        {
+            return;
+        }
+
+        await DetachViewerAsync();
+        loadedId = Id;
+        job = null;
+        loading = true;
+
+        if (Guid.TryParse(Id, out var jobId))
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+            job = await jobs.GetAsync(jobId);
+        }
+
+        loading = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Attach on whichever render first has the element: the job lookup completes after the first render, so on that one the pane doesn't exist yet.
+        if (module != null || job == null)
+        {
+            return;
+        }
+
+        try
+        {
+            module = await JS.InvokeAsync<IJSObjectReference>("import", "./log-viewer.js");
+            handle = await module.InvokeAsync<int>("attach", viewer, job.Id, job.Status.ToString());
+        }
+        catch (Exception ex) when (IsCircuitGone(ex))
+        {
+            Logger.LogDebug(ex, "Circuit went away while attaching the log viewer for job {JobId}", Id);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await DetachViewerAsync();
+    }
+
+    /// <summary>
+    /// Navigating away is a route change, not a page load, so without this the viewer's poll timer
+    /// and scroll listener would outlive the page that owns them.
+    /// </summary>
+    private async Task DetachViewerAsync()
+    {
+        if (module == null)
+        {
+            return;
+        }
+
+        var leaving = module;
+        module = null;
+
+        try
+        {
+            await leaving.InvokeVoidAsync("detach", handle);
+            await leaving.DisposeAsync();
+        }
+        catch (Exception ex) when (IsCircuitGone(ex))
+        {
+            // The circuit can go first, in which case the browser has dropped the page and its timers along with it.
+            Logger.LogDebug(ex, "Log viewer for job {JobId} was already gone at teardown", Id);
+        }
+    }
+
+    private static bool IsCircuitGone(Exception ex)
+    {
+        return ex is JSDisconnectedException or ObjectDisposedException or TaskCanceledException;
+    }
+}

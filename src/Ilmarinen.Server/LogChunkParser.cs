@@ -18,6 +18,9 @@ public record LogEntry
 /// Decodes the NDJSON stored in a job's log chunks — one {"t":type,"d":data,"ts":millis} object per
 /// line — into the output entries it carries. Lines of any other type are not output and are
 /// dropped.
+///
+/// wwwroot/log-viewer.js decodes the same format in the browser, for chunks the feed serves
+/// verbatim; the two have to agree on which types count as output.
 /// </summary>
 public static class LogChunkParser
 {
