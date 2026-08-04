@@ -14,7 +14,7 @@
     {
         <div class="error-message">@error</div>
     }
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+    <div class="form-grid">
         <div>
             <label>Name</label>
             <input type="text" @bind="newName" placeholder="my-pipeline" />
@@ -51,34 +51,36 @@
 </div>
 
 <div class="card">
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Repository</th>
-                <th>Default Ref</th>
-                <th>Script</th>
-                <th>Schedule</th>
-                <th>Created</th>
-            </tr>
-        </thead>
-        <tbody>
-            @if (pipelines != null)
-            {
-                @foreach (var pipeline in pipelines)
+    <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Repository</th>
+                    <th>Default Ref</th>
+                    <th>Script</th>
+                    <th>Schedule</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (pipelines != null)
                 {
-                    <tr>
-                        <td><PipelineLink PipelineId="pipeline.Id" PipelineName="@pipeline.Name" /></td>
-                        <td>@pipeline.RepositoryName</td>
-                        <td>@pipeline.DefaultRef</td>
-                        <td>@pipeline.ScriptPath</td>
-                        <td>@FormatLocalCron(pipeline.Schedule)</td>
-                        <td>@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                    </tr>
+                    @foreach (var pipeline in pipelines)
+                    {
+                        <tr>
+                            <td><PipelineLink PipelineId="pipeline.Id" PipelineName="@pipeline.Name" /></td>
+                            <td>@pipeline.RepositoryName</td>
+                            <td>@pipeline.DefaultRef</td>
+                            <td>@pipeline.ScriptPath</td>
+                            <td>@FormatLocalCron(pipeline.Schedule)</td>
+                            <td>@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
                 }
-            }
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 @code {

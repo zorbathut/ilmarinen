@@ -54,32 +54,34 @@
         <h2 class="card-title">Workspaces</h2>
         @if (worker.Workspaces.Count > 0)
         {
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Path</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var ws in worker.Workspaces)
-                    {
+            <div class="table-scroll">
+                <table>
+                    <thead>
                         <tr>
-                            <td>@ws.Name</td>
-                            <td><code>@ws.Path</code></td>
-                            <td>
-                                @if (worker.IsConnected)
-                                {
-                                    <button class="btn-danger"
-                                            disabled="@IsDeleting(ws.Name)"
-                                            @onclick="() => DeleteWorkspace(ws.Name)">Delete</button>
-                                }
-                            </td>
+                            <th>Name</th>
+                            <th>Path</th>
+                            <th></th>
                         </tr>
-                    }
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        @foreach (var ws in worker.Workspaces)
+                        {
+                            <tr>
+                                <td>@ws.Name</td>
+                                <td><code>@ws.Path</code></td>
+                                <td>
+                                    @if (worker.IsConnected)
+                                    {
+                                        <button class="btn btn-danger"
+                                                disabled="@IsDeleting(ws.Name)"
+                                                @onclick="() => DeleteWorkspace(ws.Name)">Delete</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
         }
         else
         {
@@ -113,38 +115,40 @@
 
             @if (worker.Diagnostic.Steps.Count > 0)
             {
-                <table class="diagnostic-step-table" style="margin-top: 1rem;">
-                    <thead>
-                        <tr>
-                            <th></th>
-                            <th>Step</th>
-                            <th>Duration</th>
-                            <th>Detail</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var step in worker.Diagnostic.Steps)
-                        {
+                <div class="table-scroll" style="margin-top: 1rem;">
+                    <table class="diagnostic-step-table">
+                        <thead>
                             <tr>
-                                <td class="@StepClass(step)">
-                                    @StepLabel(step)
-                                </td>
-                                <td><code>@step.Name</code></td>
-                                <td>@FormatDuration(step.Duration)</td>
-                                <td>
-                                    @if (step.Message != null)
-                                    {
-                                        <div class="diagnostic-step-message">@step.Message</div>
-                                    }
-                                    @if (step.Suggestion != null)
-                                    {
-                                        <div class="diagnostic-step-suggestion">Hint: @step.Suggestion</div>
-                                    }
-                                </td>
+                                <th></th>
+                                <th>Step</th>
+                                <th>Duration</th>
+                                <th>Detail</th>
                             </tr>
-                        }
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            @foreach (var step in worker.Diagnostic.Steps)
+                            {
+                                <tr>
+                                    <td class="@StepClass(step)">
+                                        @StepLabel(step)
+                                    </td>
+                                    <td><code>@step.Name</code></td>
+                                    <td>@FormatDuration(step.Duration)</td>
+                                    <td>
+                                        @if (step.Message != null)
+                                        {
+                                            <div class="diagnostic-step-message">@step.Message</div>
+                                        }
+                                        @if (step.Suggestion != null)
+                                        {
+                                            <div class="diagnostic-step-suggestion">Hint: @step.Suggestion</div>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
             }
         }
         else
@@ -153,7 +157,7 @@
         }
 
         <div style="margin-top: 1rem;">
-            <button @onclick="RunDiagnostic"
+            <button class="btn" @onclick="RunDiagnostic"
                     disabled="@(!CanRunDiagnostic())"
                     title="@(CanRunDiagnostic() ? "" : "Worker is busy or offline")">
                 @(IsDiagnosticRunning() ? "Running..." : "Run diagnostic")
@@ -167,40 +171,42 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Job History</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Status</th>
-                    <th>Repository</th>
-                    <th>Ref</th>
-                    <th>Script</th>
-                    <th>Duration</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (jobs != null && jobs.Count > 0)
-                {
-                    @foreach (var job in jobs)
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Status</th>
+                        <th>Repository</th>
+                        <th>Ref</th>
+                        <th class="hide-mobile">Script</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (jobs != null && jobs.Count > 0)
+                    {
+                        @foreach (var job in jobs)
+                        {
+                            <tr>
+                                <td><JobLink JobId="job.Id" /></td>
+                                <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
+                                <td>@GetShortRepoUrl(job.RepoUrl)</td>
+                                <td>@job.Ref</td>
+                                <td class="hide-mobile">@job.ScriptPath</td>
+                                <td>@FormatDuration(job)</td>
+                            </tr>
+                        }
+                    }
+                    else
                     {
                         <tr>
-                            <td><JobLink JobId="job.Id" /></td>
-                            <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
-                            <td>@GetShortRepoUrl(job.RepoUrl)</td>
-                            <td>@job.Ref</td>
-                            <td>@job.ScriptPath</td>
-                            <td>@FormatDuration(job)</td>
+                            <td colspan="6" style="text-align: center; color: var(--text-secondary);">No jobs</td>
                         </tr>
                     }
-                }
-                else
-                {
-                    <tr>
-                        <td colspan="6" style="text-align: center; color: var(--text-secondary);">No jobs</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
     </div>
 }
 else if (loading)

@@ -12,7 +12,7 @@
     {
         <div class="error-message">@error</div>
     }
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+    <div class="form-grid">
         <div>
             <label>Name</label>
             <input type="text" @bind="newName" placeholder="my-repo" />
@@ -32,30 +32,32 @@
 </div>
 
 <div class="card">
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>URL</th>
-                <th>Token</th>
-                <th>Created</th>
-            </tr>
-        </thead>
-        <tbody>
-            @if (repositories != null)
-            {
-                @foreach (var repo in repositories)
+    <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>URL</th>
+                    <th>Token</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (repositories != null)
                 {
-                    <tr>
-                        <td><a href="/repositories/@repo.Id">@repo.Name</a></td>
-                        <td>@GetShortRepoUrl(repo.RepoUrl)</td>
-                        <td>@(repo.HasGitToken ? "Configured" : "-")</td>
-                        <td>@repo.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                    </tr>
+                    @foreach (var repo in repositories)
+                    {
+                        <tr>
+                            <td><a href="/repositories/@repo.Id">@repo.Name</a></td>
+                            <td>@GetShortRepoUrl(repo.RepoUrl)</td>
+                            <td>@(repo.HasGitToken ? "Configured" : "-")</td>
+                            <td>@repo.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        </tr>
+                    }
                 }
-            }
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 @code {

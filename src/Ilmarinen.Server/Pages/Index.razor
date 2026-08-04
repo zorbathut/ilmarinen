@@ -43,36 +43,38 @@
 
 <div class="card">
     <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Recent Jobs</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Status</th>
-                <th>Repository</th>
-                <th>Ref</th>
-                <th>Script</th>
-                <th>Created</th>
-                <th>Worker</th>
-            </tr>
-        </thead>
-        <tbody>
-            @if (recentJobs != null)
-            {
-                @foreach (var job in recentJobs)
+    <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Repository</th>
+                    <th>Ref</th>
+                    <th class="hide-mobile">Script</th>
+                    <th>Created</th>
+                    <th class="hide-mobile">Worker</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (recentJobs != null)
                 {
-                    <tr>
-                        <td><JobLink JobId="job.Id" /></td>
-                        <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
-                        <td>@GetShortRepoUrl(job.RepoUrl)</td>
-                        <td>@job.Ref</td>
-                        <td>@job.ScriptPath</td>
-                        <td>@job.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                        <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
-                    </tr>
+                    @foreach (var job in recentJobs)
+                    {
+                        <tr>
+                            <td><JobLink JobId="job.Id" /></td>
+                            <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
+                            <td>@GetShortRepoUrl(job.RepoUrl)</td>
+                            <td>@job.Ref</td>
+                            <td class="hide-mobile">@job.ScriptPath</td>
+                            <td>@job.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td class="hide-mobile"><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
+                        </tr>
+                    }
                 }
-            }
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 @code {

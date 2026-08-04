@@ -14,7 +14,7 @@
 @if (job != null)
 {
     <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div class="card-split">
             <div class="detail-grid">
                 <span class="detail-label">ID</span>
                 <span class="detail-value">@job.Id</span>
@@ -50,7 +50,7 @@
                 <span class="detail-value">@(job.CompletedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</span>
             </div>
 
-            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <div class="card-actions">
                 @if (job.Status is JobStatus.Pending or JobStatus.Queued or JobStatus.Running)
                 {
                     <button class="btn btn-danger" @onclick="CancelJob">Cancel Job</button>
@@ -77,34 +77,36 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Artifacts</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Size</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (job.Artifacts?.Count > 0)
-                {
-                    @foreach (var artifact in job.Artifacts)
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (job.Artifacts?.Count > 0)
+                    {
+                        @foreach (var artifact in job.Artifacts)
+                        {
+                            <tr>
+                                <td>@artifact.Name</td>
+                                <td>@FormatSize(artifact.Size)</td>
+                                <td><a href="/api/jobs/@job.Id/artifacts/@artifact.Id/download" class="btn-download" download>Download</a></td>
+                            </tr>
+                        }
+                    }
+                    else
                     {
                         <tr>
-                            <td>@artifact.Name</td>
-                            <td>@FormatSize(artifact.Size)</td>
-                            <td><a href="/api/jobs/@job.Id/artifacts/@artifact.Id/download" class="btn-download" download>Download</a></td>
+                            <td colspan="3" style="text-align: center; color: var(--text-secondary);">No artifacts</td>
                         </tr>
                     }
-                }
-                else
-                {
-                    <tr>
-                        <td colspan="3" style="text-align: center; color: var(--text-secondary);">No artifacts</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
     </div>
 }
 else if (loading)

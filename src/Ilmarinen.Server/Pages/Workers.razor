@@ -16,12 +16,12 @@
 
 <div class="card" style="margin-bottom: 1rem;">
     <h3>Register Worker</h3>
-    <form @onsubmit="RegisterWorker" style="display: flex; gap: 0.5rem; align-items: flex-end;">
+    <form @onsubmit="RegisterWorker" class="form-row">
         <div>
             <label for="workerName">Name</label>
             <input id="workerName" type="text" @bind="newWorkerName" placeholder="e.g. build-worker-1" />
         </div>
-        <button type="submit" disabled="@isRegistering">Register</button>
+        <button type="submit" class="btn" disabled="@isRegistering">Register</button>
     </form>
     @if (registrationError != null)
     {
@@ -38,83 +38,85 @@
         <code style="display: block; padding: 0.5rem; background: var(--bg-secondary, #1a1a1a); word-break: break-all; font-size: 0.85em;">@registrationResult.WorkerKey</code>
         <p style="margin-top: 0.5rem;">Set as <code>ILMARINEN_WORKER_KEY</code> environment variable on the worker.</p>
         <p style="color: var(--warning, orange);"><strong>Save this key now. It cannot be retrieved again.</strong></p>
-        <button @onclick="DismissRegistration">Dismiss</button>
+        <button class="btn" @onclick="DismissRegistration">Dismiss</button>
     </div>
 }
 
 <div class="card">
-    <table>
-        <thead>
-            <tr>
-                <th>Status</th>
-                <th>Name</th>
-                <th>ID</th>
-                <th>Priority</th>
-                <th>Current Job</th>
-                <th>Workspaces</th>
-                <th>Registered</th>
-                <th>Last Seen</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            @if (workers != null)
-            {
-                @foreach (var worker in workers)
+    <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Name</th>
+                    <th class="hide-mobile">ID</th>
+                    <th>Priority</th>
+                    <th>Current Job</th>
+                    <th>Workspaces</th>
+                    <th class="hide-mobile">Registered</th>
+                    <th class="hide-mobile">Last Seen</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (workers != null)
                 {
-                    <tr @key="worker.Id">
-                        <td>
-                            <span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span>
-                            @WorkerBadge.GetStatusLabel(worker)
-                        </td>
-                        <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
-                        <td>@worker.Id.ToString()[..8]</td>
-                        <td>
-                            @* Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without this the diff is a no-op and the dropdown would keep showing the value the user picked instead of the one that is actually stored. *@
-                            <select @key="(worker.Priority, prioritySaves)"
-                                    value="@worker.Priority"
-                                    disabled="@IsSavingPriority(worker.Id)"
-                                    @onchange="e => SetPriority(worker.Id, e)">
-                                @foreach (var priority in PriorityOptions)
+                    @foreach (var worker in workers)
+                    {
+                        <tr @key="worker.Id">
+                            <td>
+                                <span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span>
+                                @WorkerBadge.GetStatusLabel(worker)
+                            </td>
+                            <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
+                            <td class="hide-mobile">@worker.Id.ToString()[..8]</td>
+                            <td>
+                                @* Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without this the diff is a no-op and the dropdown would keep showing the value the user picked instead of the one that is actually stored. *@
+                                <select @key="(worker.Priority, prioritySaves)"
+                                        value="@worker.Priority"
+                                        disabled="@IsSavingPriority(worker.Id)"
+                                        @onchange="e => SetPriority(worker.Id, e)">
+                                    @foreach (var priority in PriorityOptions)
+                                    {
+                                        <option value="@priority" selected="@(priority == worker.Priority)">@priority</option>
+                                    }
+                                </select>
+                            </td>
+                            <td><JobsLink JobIds="worker.CurrentJobs" /></td>
+                            <td>
+                                @if (worker.Workspaces.Count > 0)
                                 {
-                                    <option value="@priority" selected="@(priority == worker.Priority)">@priority</option>
+                                    @foreach (var ws in worker.Workspaces)
+                                    {
+                                        <span class="workspace-tag">
+                                            @ws.Name
+                                            @if (worker.IsConnected)
+                                            {
+                                                <button class="workspace-delete"
+                                                        disabled="@IsDeleting(worker.Id, ws.Name)"
+                                                        @onclick="() => DeleteWorkspace(worker.Id, ws.Name)">x</button>
+                                            }
+                                        </span>
+                                    }
                                 }
-                            </select>
-                        </td>
-                        <td><JobsLink JobIds="worker.CurrentJobs" /></td>
-                        <td>
-                            @if (worker.Workspaces.Count > 0)
-                            {
-                                @foreach (var ws in worker.Workspaces)
+                                else
                                 {
-                                    <span class="workspace-tag">
-                                        @ws.Name
-                                        @if (worker.IsConnected)
-                                        {
-                                            <button class="workspace-delete"
-                                                    disabled="@IsDeleting(worker.Id, ws.Name)"
-                                                    @onclick="() => DeleteWorkspace(worker.Id, ws.Name)">x</button>
-                                        }
-                                    </span>
+                                    <span>-</span>
                                 }
-                            }
-                            else
-                            {
-                                <span>-</span>
-                            }
-                        </td>
-                        <td>@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm")</td>
-                        <td>@worker.LastSeen.ToString("HH:mm:ss")</td>
-                        <td>
-                            <button class="btn-danger"
-                                    disabled="@IsRevoking(worker.Id)"
-                                    @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
-                        </td>
-                    </tr>
+                            </td>
+                            <td class="hide-mobile">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td class="hide-mobile">@worker.LastSeen.ToString("HH:mm:ss")</td>
+                            <td>
+                                <button class="btn btn-danger"
+                                        disabled="@IsRevoking(worker.Id)"
+                                        @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
+                            </td>
+                        </tr>
+                    }
                 }
-            }
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 @if (actionError != null)

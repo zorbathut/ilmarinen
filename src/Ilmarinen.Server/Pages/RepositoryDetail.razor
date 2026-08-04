@@ -21,18 +21,18 @@
                 <span class="detail-value"><input type="text" @bind="editRepoUrl" /></span>
 
                 <span class="detail-label">Git Token</span>
-                <span class="detail-value">
+                <span class="detail-value input-row">
                     @if (removingToken)
                     {
                         <span style="opacity: 0.5;">Will be removed</span>
-                        <button class="btn" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = false">Undo</button>
+                        <button class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = false">Undo</button>
                     }
                     else
                     {
                         <input type="password" @bind="editGitToken" placeholder="@(repository.HasGitToken ? "Leave blank to keep current" : "Optional")" />
                         @if (repository.HasGitToken)
                         {
-                            <button class="btn btn-danger" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = true">Remove</button>
+                            <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => removingToken = true">Remove</button>
                         }
                     }
                 </span>
@@ -46,12 +46,12 @@
             </div>
             @if (editError != null)
             {
-                <div style="color: var(--danger); margin-top: 0.5rem;">@editError</div>
+                <div style="color: var(--error); margin-top: 0.5rem;">@editError</div>
             }
         }
         else
         {
-            <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div class="card-split">
                 <div class="detail-grid">
                     <span class="detail-label">Name</span>
                     <span class="detail-value">@repository.Name</span>
@@ -66,12 +66,12 @@
                     <span class="detail-value">@repository.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
                 </div>
 
-                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <div class="card-actions">
                     <button class="btn" @onclick="StartEdit">Edit</button>
                     <button class="btn btn-danger" @onclick="DeleteRepository">Delete</button>
                     @if (deleteError != null)
                     {
-                        <div style="color: var(--danger); font-size: 0.85rem; max-width: 200px;">@deleteError</div>
+                        <div style="color: var(--error); font-size: 0.85rem; max-width: 200px;">@deleteError</div>
                     }
                 </div>
             </div>
@@ -80,30 +80,32 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Pipelines</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Default Ref</th>
-                    <th>Script</th>
-                    <th>Schedule</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (pipelines != null)
-                {
-                    @foreach (var p in pipelines)
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Default Ref</th>
+                        <th>Script</th>
+                        <th>Schedule</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (pipelines != null)
                     {
-                        <tr>
-                            <td><PipelineLink PipelineId="p.Id" PipelineName="@p.Name" /></td>
-                            <td>@p.DefaultRef</td>
-                            <td>@p.ScriptPath</td>
-                            <td>@(p.Schedule ?? "-")</td>
-                        </tr>
+                        @foreach (var p in pipelines)
+                        {
+                            <tr>
+                                <td><PipelineLink PipelineId="p.Id" PipelineName="@p.Name" /></td>
+                                <td>@p.DefaultRef</td>
+                                <td>@p.ScriptPath</td>
+                                <td>@(p.Schedule ?? "-")</td>
+                            </tr>
+                        }
                     }
-                }
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
     </div>
 }
 else if (loading)

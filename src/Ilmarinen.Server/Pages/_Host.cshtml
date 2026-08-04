@@ -57,10 +57,12 @@
             background-color: var(--bg-primary);
             color: var(--text-primary);
             min-height: 100vh;
+            min-height: 100dvh;
         }
         .layout {
             display: flex;
             min-height: 100vh;
+            min-height: 100dvh;
         }
         .sidebar {
             width: 220px;
@@ -68,10 +70,25 @@
             padding: 1rem;
             border-right: 1px solid var(--bg-tertiary);
         }
+        .sidebar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
         .sidebar h1 {
             font-size: 1.25rem;
-            margin-bottom: 1.5rem;
             color: var(--accent);
+        }
+        .nav-toggle {
+            display: none;
+            background: none;
+            border: 1px solid var(--bg-tertiary);
+            border-radius: 0.25rem;
+            color: var(--text-primary);
+            font-size: 1.25rem;
+            padding: 0.25rem 0.6rem;
+            cursor: pointer;
         }
         .sidebar nav a {
             display: block;
@@ -87,6 +104,7 @@
         }
         .main-content {
             flex: 1;
+            min-width: 0;
             padding: 2rem;
             overflow-x: auto;
         }
@@ -94,6 +112,52 @@
             font-size: 1.5rem;
             margin-bottom: 1.5rem;
             color: var(--text-primary);
+            overflow-wrap: anywhere;
+        }
+        input[type="text"], input[type="password"], select {
+            font-size: 1rem;
+            padding: 0.5rem;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--bg-tertiary);
+            border-radius: 0.25rem;
+            max-width: 100%;
+            min-width: 0;
+        }
+        .form-grid input, .form-grid select, .form-row input, .form-row select { width: 100%; }
+        .table-scroll { overflow-x: auto; }
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        .form-row {
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+        .input-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+        .input-row input { flex: 1; }
+        .card-split {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+        .card-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .error-message {
+            color: var(--error);
+            margin-bottom: 0.75rem;
         }
         .card {
             background-color: var(--bg-secondary);
@@ -185,7 +249,9 @@
         /* Shared by the inline viewer and the full-screen one, whose toolbar is built by log-viewer.js. */
         .log-toolbar {
             display: flex;
+            flex-wrap: wrap;
             gap: 1rem;
+            row-gap: 0.25rem;
             align-items: center;
             padding: 0.5rem 1rem;
             background-color: var(--bg-tertiary);
@@ -239,6 +305,7 @@
         /* The full-screen viewer at /jobs/{id}/logs, whose DOM is built by log-viewer.js. */
         .logfull-header {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 1rem;
             padding: 0.75rem 1rem;
@@ -247,6 +314,8 @@
         }
         .logfull-title {
             margin-right: auto;
+            min-width: 0;
+            overflow-wrap: anywhere;
             color: var(--text-secondary);
         }
         .logfull {
@@ -291,6 +360,7 @@
         }
         .detail-value {
             font-size: 0.875rem;
+            overflow-wrap: anywhere;
         }
         .btn {
             display: inline-block;
@@ -346,6 +416,42 @@
         }
         .workspace-delete:hover { color: var(--error); }
         .workspace-delete:disabled { opacity: 0.3; cursor: not-allowed; }
+        @@media (max-width: 768px) {
+            .layout { flex-direction: column; }
+            .sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid var(--bg-tertiary);
+                padding: 0.5rem 1rem;
+            }
+            .sidebar-header { margin-bottom: 0; }
+            .nav-toggle { display: block; }
+            .sidebar nav { display: none; padding-top: 0.5rem; }
+            .sidebar.nav-open nav { display: block; }
+            .main-content { padding: 1rem; }
+            .hide-mobile { display: none; }
+            .detail-grid { grid-template-columns: 1fr; gap: 0.125rem; }
+            .detail-label { margin-top: 0.625rem; }
+            .detail-grid > .detail-label:first-child { margin-top: 0; }
+            .form-grid { grid-template-columns: 1fr; }
+            .detail-grid input, .detail-grid select { width: 100%; }
+            .card-split { flex-direction: column; }
+            .card-actions { flex-direction: row; flex-wrap: wrap; }
+            th, td { padding: 0.5rem 0.6rem; }
+        }
+        @@media (pointer: coarse) {
+            .btn, .btn-download, .log-toolbar .btn-download, .log-tail-button, .nav-toggle {
+                display: inline-flex;
+                align-items: center;
+                min-height: 44px;
+                padding: 0.6rem 1rem;
+            }
+            .btn-retry { padding: 0.5rem 0.75rem; font-size: 0.8rem; }
+            .workspace-delete { font-size: 0.875rem; padding: 0.4rem 0.6rem; }
+            .log-option { padding: 0.5rem 0.25rem; }
+            .sidebar nav a { padding: 0.85rem 1rem; }
+            .logfull-header > a { display: inline-flex; align-items: center; min-height: 44px; }
+        }
     </style>
 </head>
 <body>

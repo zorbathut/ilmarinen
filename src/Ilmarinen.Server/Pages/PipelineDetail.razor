@@ -41,18 +41,18 @@
                 <span class="detail-value"><input type="text" @bind="editScriptPath" /></span>
 
                 <span class="detail-label">Schedule</span>
-                <span class="detail-value">
+                <span class="detail-value input-row">
                     @if (clearingSchedule)
                     {
                         <span style="opacity: 0.5;">Will be removed</span>
-                        <button class="btn" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => clearingSchedule = false">Undo</button>
+                        <button class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => clearingSchedule = false">Undo</button>
                     }
                     else
                     {
                         <input type="text" @bind="editSchedule" placeholder="@(pipeline.Schedule != null ? $"Current: {FormatLocalCron(pipeline.Schedule)}" : "0 2 * * * in your local time (optional)")" />
                         @if (pipeline.Schedule != null)
                         {
-                            <button class="btn btn-danger" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => clearingSchedule = true">Remove</button>
+                            <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => clearingSchedule = true">Remove</button>
                         }
                     }
                 </span>
@@ -66,12 +66,12 @@
             </div>
             @if (editError != null)
             {
-                <div style="color: var(--danger); margin-top: 0.5rem;">@editError</div>
+                <div style="color: var(--error); margin-top: 0.5rem;">@editError</div>
             }
         }
         else
         {
-            <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div class="card-split">
                 <div class="detail-grid">
                     <span class="detail-label">Name</span>
                     <span class="detail-value">@pipeline.Name</span>
@@ -118,7 +118,7 @@
                     <span class="detail-value">@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
                 </div>
 
-                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <div class="card-actions">
                     <button class="btn" @onclick="StartEdit">Edit</button>
                     <button class="btn btn-danger" @onclick="DeletePipeline">Delete</button>
                 </div>
@@ -128,7 +128,7 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Trigger Run</h2>
-        <div style="display: flex; gap: 0.75rem; align-items: end;">
+        <div class="form-row">
             <div>
                 <label>Ref override (optional)</label>
                 <input type="text" @bind="refOverride" placeholder="@pipeline.DefaultRef" />
@@ -141,34 +141,36 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Jobs</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Status</th>
-                    <th>Ref</th>
-                    <th>Worker</th>
-                    <th>Created</th>
-                    <th>Completed</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (jobs != null)
-                {
-                    @foreach (var job in jobs)
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Status</th>
+                        <th>Ref</th>
+                        <th>Worker</th>
+                        <th>Created</th>
+                        <th>Completed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (jobs != null)
                     {
-                        <tr>
-                            <td><JobLink JobId="job.Id" /></td>
-                            <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
-                            <td>@job.Ref</td>
-                            <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
-                            <td>@job.CreatedAt.ToString("HH:mm:ss")</td>
-                            <td>@(job.CompletedAt?.ToString("HH:mm:ss") ?? "-")</td>
-                        </tr>
+                        @foreach (var job in jobs)
+                        {
+                            <tr>
+                                <td><JobLink JobId="job.Id" /></td>
+                                <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
+                                <td>@job.Ref</td>
+                                <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
+                                <td>@job.CreatedAt.ToString("HH:mm:ss")</td>
+                                <td>@(job.CompletedAt?.ToString("HH:mm:ss") ?? "-")</td>
+                            </tr>
+                        }
                     }
-                }
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
     </div>
 }
 else if (loading)

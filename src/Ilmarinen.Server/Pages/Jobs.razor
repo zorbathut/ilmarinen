@@ -14,49 +14,51 @@
 <h1 class="page-title">Jobs</h1>
 
 <div class="card">
-    <table>
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Status</th>
-                <th>Repository</th>
-                <th>Ref</th>
-                <th>Script</th>
-                <th>Worker</th>
-                <th>Duration</th>
-            </tr>
-        </thead>
-        <tbody>
-            @if (jobs != null)
-            {
-                @foreach (var job in jobs)
+    <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Repository</th>
+                    <th>Ref</th>
+                    <th class="hide-mobile">Script</th>
+                    <th class="hide-mobile">Worker</th>
+                    <th>Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (jobs != null)
                 {
-                    <tr>
-                        <td><JobLink JobId="job.Id" /></td>
-                        <td>
-                            <span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span>
-                            @if (job.Status is JobStatus.Failed or JobStatus.Cancelled)
-                            {
-                                @if (job.CanRetry)
+                    @foreach (var job in jobs)
+                    {
+                        <tr>
+                            <td><JobLink JobId="job.Id" /></td>
+                            <td>
+                                <span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span>
+                                @if (job.Status is JobStatus.Failed or JobStatus.Cancelled)
                                 {
-                                    <button class="btn btn-retry" @onclick="() => RetryJob(job.Id)" @onclick:stopPropagation="true">Retry</button>
+                                    @if (job.CanRetry)
+                                    {
+                                        <button class="btn btn-retry" @onclick="() => RetryJob(job.Id)" @onclick:stopPropagation="true">Retry</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-retry" disabled title="@job.RetryBlockedReason">Retry</button>
+                                    }
                                 }
-                                else
-                                {
-                                    <button class="btn btn-retry" disabled title="@job.RetryBlockedReason">Retry</button>
-                                }
-                            }
-                        </td>
-                        <td>@GetShortRepoUrl(job.RepoUrl)</td>
-                        <td>@job.Ref</td>
-                        <td>@job.ScriptPath</td>
-                        <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
-                        <td>@FormatDuration(job)</td>
-                    </tr>
+                            </td>
+                            <td>@GetShortRepoUrl(job.RepoUrl)</td>
+                            <td>@job.Ref</td>
+                            <td class="hide-mobile">@job.ScriptPath</td>
+                            <td class="hide-mobile"><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
+                            <td>@FormatDuration(job)</td>
+                        </tr>
+                    }
                 }
-            }
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 @code {
