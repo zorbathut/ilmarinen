@@ -1,5 +1,6 @@
 using Ilmarinen.Protocol.Requests;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -19,6 +20,7 @@ public class LogCollector
     private readonly Guid _jobId;
     private readonly HubConnection _connection;
     private readonly MessageBuffer _messageBuffer;
+    private readonly ILogger _logger;
     private readonly StringBuilder _buffer = new();
     private readonly object _lock = new();
     private readonly ConcurrentQueue<Task> _pendingFlushes = new();
@@ -29,19 +31,23 @@ public class LogCollector
     private const int FlushBytes = 4096;
     private const int FlushMs = 100;
 
-    public LogCollector(Guid jobId, HubConnection connection, MessageBuffer messageBuffer)
+    public LogCollector(Guid jobId, HubConnection connection, MessageBuffer messageBuffer, ILogger logger)
     {
         _jobId = jobId;
         _connection = connection;
         _messageBuffer = messageBuffer;
+        _logger = logger;
     }
 
     /// <summary>
-    /// Write a log entry. Type is "o" for stdout, "e" for stderr.
+    /// Write a log entry. Type is "o" for stdout, "e" for stderr, "m" for metadata.
     /// </summary>
     public void Write(string type, string data)
     {
-        if (string.IsNullOrEmpty(data) || _draining) return;
+        if (string.IsNullOrEmpty(data))
+        {
+            return;
+        }
 
         var entry = JsonSerializer.Serialize(new
         {
@@ -50,9 +56,21 @@ public class LogCollector
             ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         });
 
+        // The draining check has to happen under the lock: a writer that passed an unlocked check while FlushAsync drains would leave bytes in _buffer that nothing ever sends.
+        bool dropped;
         lock (_lock)
         {
-            _buffer.AppendLine(entry);
+            dropped = _draining;
+            if (!dropped)
+            {
+                _buffer.AppendLine(entry);
+            }
+        }
+
+        if (dropped)
+        {
+            _logger.LogWarning("Log write for job {JobId} arrived after the final flush and was dropped: {Data}", _jobId, data);
+            return;
         }
 
         // Track pending flush task to ensure we can drain before shutdown
@@ -82,9 +100,6 @@ public class LogCollector
             _pendingFlushes.Enqueue(task);
         }
     }
-
-    public void WriteStdout(string data) => Write("o", data);
-    public void WriteStderr(string data) => Write("e", data);
 
     /// <summary>
     /// Action callback that can be passed to PipelineRunner.

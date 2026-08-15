@@ -145,7 +145,6 @@ public class JobRunner
 
             // 6. Run pipeline with log streaming and artifact upload
             _logger.LogInformation("git describe: {Description}", DescribeHead(workDir));
-            _logger.LogInformation("Running {StepCount} step(s)...", scriptResult.Steps.Count);
 
             // Compute host path for Docker bind mounts (may differ when running in Docker)
             var hostWorkDir = Path.Combine(_config.HostWorkspacePath, Path.GetFileName(workDir)!);
@@ -167,16 +166,6 @@ public class JobRunner
         finally
         {
             _workspaceManager.SetActiveWorkspace(null);
-
-            // Flush any remaining logs
-            try
-            {
-                await _logCollector.FlushAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to flush logs");
-            }
 
             // Cleanup: only delete ephemeral workspaces
             if (workspaceConfig == null && workDir != null)

@@ -44,10 +44,12 @@ public class WorkerService : BackgroundService
         get { lock (_activityLock) return _activity == WorkerActivity.RunningJob ? _currentJobId : null; }
     }
 
-    private bool TryEnterActivity(WorkerActivity activity, Guid? jobId)
+    private bool TryEnterActivity(WorkerActivity activity, Guid? jobId, out WorkerActivity blockingActivity, out Guid? blockingJobId)
     {
         lock (_activityLock)
         {
+            blockingActivity = _activity;
+            blockingJobId = _currentJobId;
             if (_activity != WorkerActivity.Idle) return false;
             _activity = activity;
             _currentJobId = jobId;
@@ -342,7 +344,7 @@ public class WorkerService : BackgroundService
 
     private async Task ExecuteDiagnosticAsync()
     {
-        if (!TryEnterActivity(WorkerActivity.RunningDiagnostic, jobId: null))
+        if (!TryEnterActivity(WorkerActivity.RunningDiagnostic, jobId: null, out _, out _))
         {
             // Race: a job arrived (or was already running) before the worker received the RunDiagnostic request. The server marked us not-ready preparing to fire the diagnostic, but a job was already in-flight. Re-push the cached report so the UI doesn't sit on stale "Running" or pre-click state, and re-publish ready-on-healthy so the worker can pick up more jobs.
             _logger.LogInformation("Cannot run diagnostic: worker is busy");
@@ -408,18 +410,9 @@ public class WorkerService : BackgroundService
 
     private Task OnJobAssigned(JobAssignment job)
     {
-        if (!TryEnterActivity(WorkerActivity.RunningJob, job.Id))
+        if (!TryEnterActivity(WorkerActivity.RunningJob, job.Id, out var blockingActivity, out var blockingJobId))
         {
-            _logger.LogWarning(
-                "Job {JobId} assigned but worker is busy (current activity: {Activity}). Reporting failure.",
-                job.Id, _activity);
-            _ = SendReliableAsync("JobCompleted", job.Id, new JobResult
-            {
-                Id = job.Id,
-                Status = JobStatus.Failed,
-                Duration = TimeSpan.Zero,
-                Workspaces = _workspaceManager.DiscoverWorkspaces()
-            });
+            _ = RejectBusyJobAsync(job, blockingActivity, blockingJobId);
             return Task.CompletedTask;
         }
 
@@ -428,13 +421,40 @@ public class WorkerService : BackgroundService
         return Task.CompletedTask;
     }
 
+    private async Task RejectBusyJobAsync(JobAssignment job, WorkerActivity blockingActivity, Guid? blockingJobId)
+    {
+        if (blockingJobId == job.Id)
+        {
+            // The server redelivered the job we're already running. Don't write into its live log stream — a second collector for the same job would restart sequence numbers and collide with the running one's chunks.
+            _logger.LogWarning("Job {JobId} assigned but it is already running on this worker. Reporting failure.", job.Id);
+        }
+        else
+        {
+            var logCollector = new LogCollector(job.Id, _connection!, _messageBuffer, _logger);
+            var jobLogger = new LoggerTee(_logger, logCollector);
+            jobLogger.LogWarning(
+                "Job {JobId} assigned but worker is busy (current activity: {Activity}). Reporting failure.",
+                job.Id, blockingActivity);
+            await TryFlushLogsAsync(logCollector);
+        }
+
+        await SendReliableAsync("JobCompleted", job.Id, new JobResult
+        {
+            Id = job.Id,
+            Status = JobStatus.Failed,
+            Duration = TimeSpan.Zero,
+            Workspaces = SafeDiscoverWorkspaces()
+        });
+    }
+
     private async Task ExecuteJobAsync(JobAssignment job)
     {
-        _logger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
-
         var startTime = DateTime.UtcNow;
-        var logCollector = new LogCollector(job.Id, _connection!, _messageBuffer);
+        var logCollector = new LogCollector(job.Id, _connection!, _messageBuffer, _logger);
+        var jobLogger = new LoggerTee(_logger, logCollector);
         var jobKey = job.Id.ToString();
+
+        jobLogger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
         using var cts = new CancellationTokenSource();
         _runningJobs[jobKey] = cts;
 
@@ -449,7 +469,7 @@ public class WorkerService : BackgroundService
 
                 await SendReliableAsync("JobStarted", job.Id);
 
-                var runner = new JobRunner(_config, _workspaceManager, job, _connection!, _logger, logCollector);
+                var runner = new JobRunner(_config, _workspaceManager, job, _connection!, jobLogger, logCollector);
                 var runResult = await runner.ExecuteAsync(cts.Token);
 
                 var status = cts.IsCancellationRequested ? JobStatus.Cancelled : runResult.Status;
@@ -461,14 +481,12 @@ public class WorkerService : BackgroundService
                     Workspaces = SafeDiscoverWorkspaces()
                 };
 
+                jobLogger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
                 await logCollector.FlushAsync();
-                _logger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
-                _logger.LogInformation("Job {JobId} was cancelled", job.Id);
-
-                logCollector.WriteStderr("Job cancelled.");
+                jobLogger.LogInformation("Job {JobId} was cancelled", job.Id);
                 await TryFlushLogsAsync(logCollector);
 
                 result = new JobResult
@@ -481,9 +499,7 @@ public class WorkerService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Job {JobId} failed with exception", job.Id);
-
-                logCollector.WriteStderr($"Job failed with exception: {ex}");
+                jobLogger.LogError(ex, "Job {JobId} failed with exception", job.Id);
                 await TryFlushLogsAsync(logCollector);
 
                 result = new JobResult

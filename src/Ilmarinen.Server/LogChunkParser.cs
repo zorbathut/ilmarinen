@@ -6,7 +6,7 @@ using System;
 namespace Ilmarinen.Server;
 
 /// <summary>
-/// One piece of output from a job: "o" for stdout, "e" for stderr, "m" for pipeline metadata.
+/// One piece of output from a job: "o" for stdout, "e" for stderr, "m" for metadata (pipeline step markers and worker progress lines).
 /// </summary>
 public record LogEntry
 {
