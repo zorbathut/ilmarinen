@@ -17,7 +17,7 @@ public static class WorkspaceGitHelper
     /// <param name="gitRef">Git ref to checkout (branch, tag, or commit)</param>
     /// <param name="gitToken">Optional Git token for HTTPS authentication</param>
     /// <exception cref="InvalidOperationException">
-    /// Thrown if workspace exists but is not a git repo, repo URL doesn't match, or workspace has uncommitted changes.
+    /// Thrown if workspace exists but is not a git repo, or the repo URL doesn't match.
     /// </exception>
     public static void PrepareWorkspace(string path, string repoUrl, string gitRef, string? gitToken = null)
     {
@@ -98,12 +98,15 @@ public static class WorkspaceGitHelper
     {
         using var repo = new Repository(path);
 
+        // The target commit is authoritative (matching PrepareWorkspace's force-fetch): force checkout so untracked leftovers from previous runs — e.g. build-generated sidecar files a newer commit now tracks — are overwritten instead of failing the job with a checkout conflict.
+        var checkoutOptions = new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force };
+
         // Try to find the ref as a direct object (tag, commit SHA)
         var target = repo.Lookup(gitRef);
         if (target != null)
         {
             var commit = target as Commit ?? target.Peel<Commit>();
-            Commands.Checkout(repo, commit);
+            Commands.Checkout(repo, commit, checkoutOptions);
             return repo.Head.Tip.Sha;
         }
 
@@ -111,7 +114,7 @@ public static class WorkspaceGitHelper
         var remoteBranch = repo.Branches[$"origin/{gitRef}"];
         if (remoteBranch != null)
         {
-            Commands.Checkout(repo, remoteBranch.Tip);
+            Commands.Checkout(repo, remoteBranch.Tip, checkoutOptions);
             return repo.Head.Tip.Sha;
         }
 
@@ -119,7 +122,7 @@ public static class WorkspaceGitHelper
         var localBranch = repo.Branches[gitRef];
         if (localBranch != null)
         {
-            Commands.Checkout(repo, localBranch);
+            Commands.Checkout(repo, localBranch, checkoutOptions);
             return repo.Head.Tip.Sha;
         }
 
@@ -132,7 +135,7 @@ public static class WorkspaceGitHelper
             var commit = repo.Lookup<Commit>(refTarget.TargetIdentifier);
             if (commit != null)
             {
-                Commands.Checkout(repo, commit);
+                Commands.Checkout(repo, commit, checkoutOptions);
                 return repo.Head.Tip.Sha;
             }
         }
@@ -144,7 +147,7 @@ public static class WorkspaceGitHelper
                 branch.FriendlyName == $"origin/{gitRef}" ||
                 branch.CanonicalName.EndsWith($"/{gitRef}"))
             {
-                Commands.Checkout(repo, branch.Tip);
+                Commands.Checkout(repo, branch.Tip, checkoutOptions);
                 return repo.Head.Tip.Sha;
             }
         }

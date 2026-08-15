@@ -97,6 +97,26 @@ public class WorkspaceGitHelperTests
     }
 
     [Test]
+    public void PrepareWorkspace_OverwritesUntrackedFileCollidingWithNewCommit()
+    {
+        InitRemote();
+        var c1 = WriteAndCommit(_remoteDir, "file.txt", "v1");
+        WorkspaceGitHelper.PrepareWorkspace(_workspaceDir, _remoteDir, c1);
+
+        // A previous run left untracked files (e.g. build-generated sidecars); the remote then adds a tracked file at one of those paths
+        File.WriteAllText(Path.Combine(_workspaceDir, "generated.txt"), "stale local content");
+        File.WriteAllText(Path.Combine(_workspaceDir, "cache.txt"), "build cache");
+        var c2 = WriteAndCommit(_remoteDir, "generated.txt", "tracked content");
+
+        WorkspaceGitHelper.PrepareWorkspace(_workspaceDir, _remoteDir, c2);
+
+        Assert.That(File.ReadAllText(Path.Combine(_workspaceDir, "generated.txt")), Is.EqualTo("tracked content"),
+            "Checkout should overwrite the untracked file with the tracked version from the target commit.");
+        Assert.That(File.ReadAllText(Path.Combine(_workspaceDir, "cache.txt")), Is.EqualTo("build cache"),
+            "Non-colliding untracked files are the workspace's cache and must survive the checkout.");
+    }
+
+    [Test]
     public void PrepareWorkspace_PrunesDeletedTag()
     {
         InitRemote();
