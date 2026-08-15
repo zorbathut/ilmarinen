@@ -3,11 +3,13 @@
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
 @inject JobScheduler Scheduler
 @inject UIEventService UIEvents
 @inject NavigationManager Navigation
+@inject ILogger<JobDetail> Logger
 
 <h1 class="page-title">Job @Id</h1>
 
@@ -71,8 +73,15 @@
     </div>
 
     <div class="card" style="margin-top: 1rem;">
-        <h2 class="card-title">Logs</h2>
-        <LogViewer JobId="@jobGuid" IsStreaming="@(job.Status == JobStatus.Running)" />
+        <div class="card-split">
+            <h2 class="card-title">Logs</h2>
+            <div class="log-links">
+                <a href="/jobs/@job.Id/logs" class="btn-download">Full screen</a>
+                @* The download attribute stops Blazor from intercepting the click: otherwise the router takes the /api path first, matches no page, and only then force-loads it — a needless round trip through the circuit, and one that needs the circuit to be alive. *@
+                <a href="/api/jobs/@job.Id/logs/download" class="btn-download" download>Download</a>
+            </div>
+        </div>
+        <LogViewer @key="job.Id" JobId="@job.Id" InitialStatus="@job.Status" Class="log-embed" />
     </div>
 
     <div class="card" style="margin-top: 1rem;">
@@ -124,29 +133,60 @@ else
 
     private JobInfo? job;
     private Guid jobGuid;
+    private string? loadedId;
     private bool loading = true;
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
-        if (Guid.TryParse(Id, out jobGuid))
+        UIEvents.OnJobsChanged += OnJobsChanged;
+    }
+
+    // The router reuses this component across /jobs/{a} → /jobs/{b} — which is exactly what Retry does — so the lookup belongs here rather than in OnInitializedAsync, which would keep showing the first job under the second job's URL.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id == loadedId)
+        {
+            return;
+        }
+
+        loadedId = Id;
+        job = null;
+        loading = true;
+        jobGuid = Guid.TryParse(Id, out var parsed) ? parsed : default;
+
+        if (jobGuid != default)
         {
             job = await FetchJobAsync(jobGuid);
         }
+
         loading = false;
-        UIEvents.OnJobsChanged += OnJobsChanged;
     }
 
     private async void OnJobsChanged()
     {
         try
         {
-            if (jobGuid != default)
+            if (jobGuid == default)
             {
-                job = await FetchJobAsync(jobGuid);
-                await InvokeAsync(StateHasChanged);
+                return;
             }
+
+            // Fired from a scheduler thread, so the page can navigate to another job while this fetch is in flight; that job's own load owns the result then.
+            var fetchedFor = jobGuid;
+            var fetched = await FetchJobAsync(fetchedFor);
+
+            if (fetchedFor != jobGuid)
+            {
+                return;
+            }
+
+            job = fetched;
+            await InvokeAsync(StateHasChanged);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Refreshing job {JobId} after a job-change event failed", jobGuid);
+        }
     }
 
     private async Task<JobInfo?> FetchJobAsync(Guid id)

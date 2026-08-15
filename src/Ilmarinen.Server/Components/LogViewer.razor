@@ -1,192 +1,106 @@
-@using Ilmarinen.Protocol.Responses
-@using Ilmarinen.Server.Services
-@implements IDisposable
-@inject LogSubscriptionService SubscriptionService
-@inject JobLogRepository LogRepository
+@using Microsoft.Extensions.Logging
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject ILogger<LogViewer> Logger
 
-<div class="log-viewer">
-    <div class="log-toolbar">
-        <label class="log-option">
-            <input type="checkbox" @bind="autoScroll" /> Auto-scroll
-        </label>
-        <label class="log-option">
-            <input type="checkbox" @bind="showStderr" /> Show stderr
-        </label>
-        <span class="log-stats">@logLines.Count lines | @FormatBytes(totalBytes)</span>
-        @if (IsTruncated)
-        {
-            <span class="log-truncated" title="This view holds the first @ChunkLimit chunks of the log and renders the last @RenderLimit lines of those">truncated</span>
-        }
-        <a href="/jobs/@JobId/logs" class="btn-download">Full screen</a>
-        @* The download attribute stops Blazor from intercepting the click: otherwise the router takes the /api path first, matches no page, and only then force-loads it — a needless round trip through the circuit, and one that needs the circuit to be alive. *@
-        <a href="/api/jobs/@JobId/logs/download" class="btn-download" download>Download</a>
-        @if (IsStreaming)
-        {
-            <span class="log-status streaming">Streaming...</span>
-        }
-        else if (isComplete)
-        {
-            <span class="log-status complete">Complete</span>
-        }
-    </div>
-
-    <div class="log-container" @ref="logContainer">
-        @if (logLines.Count == 0 && !IsStreaming)
-        {
-            <div class="log-empty">No logs available</div>
-        }
-        else
-        {
-            @foreach (var line in GetVisibleLines())
-            {
-                <div class="log-line @(line.IsMetadata ? "log-meta" : line.IsStderr ? "log-stderr" : "log-stdout")">@line.Content</div>
-            }
-        }
-    </div>
-</div>
-
-<style>
-    .log-viewer {
-        display: flex;
-        flex-direction: column;
-    }
-    .log-viewer .log-toolbar {
-        border-radius: 0.5rem 0.5rem 0 0;
-    }
-    .log-truncated {
-        padding: 0.25rem 0.5rem;
-        border-radius: 0.25rem;
-        font-size: 0.75rem;
-        background-color: #78350f;
-        color: #fbbf24;
-    }
-    .log-container {
-        border-radius: 0 0 0.5rem 0.5rem;
-        min-height: 200px;
-        max-height: 600px;
-    }
-    .log-empty {
-        color: var(--text-secondary);
-        font-style: italic;
-    }
-</style>
+@* Everything inside this div is built and owned by log-viewer.js — Blazor holds no part of the log, which is the point. The render tree has to stay a single childless element: anything rendered in here, a spinner or an error banner, gives Blazor's diff a reason to start editing DOM that JS owns. *@
+<div class="log-shell @Class" @ref="container"></div>
 
 @code {
     [Parameter]
     public Guid JobId { get; set; }
 
+    /// <summary>What the page knew when it rendered. Read once, at attach: the viewer tracks the job's status from the feed and the live stream from then on, so later values here are ignored.</summary>
     [Parameter]
-    public bool IsStreaming { get; set; }
+    public JobStatus InitialStatus { get; set; }
 
-    // Past these the inline view would cost more than a job page should; the full-screen viewer is the way to read a log this long.
-    private const int ChunkLimit = 1000;
-    private const int RenderLimit = 2000;
+    [Parameter]
+    public string Class { get; set; } = "";
 
-    private bool IsTruncated
+    private ElementReference container;
+    private IJSObjectReference? module;
+    private Guid attachedJobId;
+    private int handle;
+    private bool disposed;
+
+    /// <summary>
+    /// A viewer attaches once and never re-targets, so a caller that reuses one across jobs would be
+    /// shown the wrong log with nothing to indicate it. Giving it <c>@key="job.Id"</c> makes a job
+    /// change build a new component, which is what both call sites do.
+    /// </summary>
+    protected override void OnParametersSet()
     {
-        get { return loadWasTruncated || logLines.Count > RenderLimit; }
-    }
-
-    private string? subscriberId;
-    private bool loadWasTruncated;
-    private List<LogLine> logLines = new();
-    private ElementReference logContainer;
-    private bool autoScroll = true;
-    private bool showStderr = true;
-    private bool isComplete;
-    private long totalBytes;
-    private int lastSequence;
-
-    protected override async Task OnInitializedAsync()
-    {
-        // Load historical logs first
-        await LoadHistoricalLogsAsync();
-
-        // Subscribe to live updates
-        subscriberId = SubscriptionService.Subscribe(
-            JobId,
-            OnLogChunk,
-            OnJobCompleted);
-    }
-
-    private async Task LoadHistoricalLogsAsync()
-    {
-        var chunks = await LogRepository.GetChunksAsync(JobId, 0, ChunkLimit);
-        loadWasTruncated = chunks.Count == ChunkLimit;
-
-        foreach (var chunk in chunks)
+        if (attachedJobId != Guid.Empty && attachedJobId != JobId)
         {
-            if (chunk.SequenceNumber > lastSequence)
+            throw new InvalidOperationException($"LogViewer is showing job {attachedJobId} and cannot be re-pointed at {JobId}. Give it @key=\"job.Id\" so a job change builds a new component.");
+        }
+    }
+
+    /// <summary>
+    /// Attaches on the component's own first render and never again: re-attaching in place would
+    /// race, since <see cref="module"/> is only assigned after the import round-trip and a second
+    /// attach could start before the first finished.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            var loaded = await JS.InvokeAsync<IJSObjectReference>("import", "./log-viewer.js");
+            var attached = await loaded.InvokeAsync<int>("attach", container, JobId, InitialStatus.ToString());
+
+            // Disposal can land while the import is in flight, and it cannot detach a viewer it has no handle for yet — leaving its poll timer and log stream running for the life of the tab.
+            if (disposed)
             {
-                lastSequence = chunk.SequenceNumber;
-                ParseAndAddContent(chunk.Content);
+                await loaded.InvokeVoidAsync("detach", attached);
+                await loaded.DisposeAsync();
+                return;
             }
+
+            module = loaded;
+            handle = attached;
+            attachedJobId = JobId;
         }
-    }
-
-    private void OnLogChunk(LogBroadcast chunk)
-    {
-        if (chunk.SequenceNumber <= lastSequence) return;
-        lastSequence = chunk.SequenceNumber;
-
-        ParseAndAddContent(chunk.Content);
-        InvokeAsync(StateHasChanged);
-    }
-
-    private void ParseAndAddContent(string content)
-    {
-        foreach (var entry in LogChunkParser.ParseEntries(content))
+        catch (Exception ex) when (IsCircuitGone(ex))
         {
-            totalBytes += entry.Data.Length;
-
-            // Split by newlines to create individual log lines
-            foreach (var logLine in entry.Data.Split('\n'))
-            {
-                if (!string.IsNullOrEmpty(logLine))
-                {
-                    logLines.Add(new LogLine
-                    {
-                        Content = logLine,
-                        IsStderr = entry.Type == "e",
-                        IsMetadata = entry.Type == "m"
-                    });
-                }
-            }
+            Logger.LogDebug(ex, "Circuit went away while attaching the log viewer for job {JobId}", JobId);
         }
     }
 
-    private void OnJobCompleted(JobStatus status)
+    /// <summary>
+    /// Navigating away is a route change, not a page load, so without this the viewer's poll timer,
+    /// log stream and scroll listener would outlive the page that owns them.
+    /// </summary>
+    public async ValueTask DisposeAsync()
     {
-        isComplete = true;
-        InvokeAsync(StateHasChanged);
-    }
+        disposed = true;
 
-    private IEnumerable<LogLine> GetVisibleLines()
-    {
-        var lines = showStderr ? logLines : logLines.Where(l => !l.IsStderr);
-        // Return last 2000 lines to prevent UI slowdown
-        return lines.TakeLast(RenderLimit);
-    }
-
-    private static string FormatBytes(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
-
-    public void Dispose()
-    {
-        if (subscriberId != null)
+        if (module == null)
         {
-            SubscriptionService.Unsubscribe(JobId, subscriberId);
+            return;
+        }
+
+        var leaving = module;
+        module = null;
+
+        try
+        {
+            await leaving.InvokeVoidAsync("detach", handle);
+            await leaving.DisposeAsync();
+        }
+        catch (Exception ex) when (IsCircuitGone(ex))
+        {
+            // The circuit can go first, in which case the browser has dropped the page and its timers along with it.
+            Logger.LogDebug(ex, "Log viewer for job {JobId} was already gone at teardown", JobId);
         }
     }
 
-    private record LogLine
+    private static bool IsCircuitGone(Exception ex)
     {
-        public required string Content { get; init; }
-        public required bool IsStderr { get; init; }
-        public bool IsMetadata { get; init; }
+        return ex is JSDisconnectedException or ObjectDisposedException or TaskCanceledException;
     }
 }

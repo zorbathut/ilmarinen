@@ -1,7 +1,5 @@
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
-using Ilmarinen.Server.Hubs;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
@@ -14,7 +12,6 @@ namespace Ilmarinen.Server.Services;
 public class LogStreamService
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IHubContext<JobLogsHub, IJobLogsClient> _hubContext;
     private readonly LogSubscriptionService _subscriptionService;
     private readonly ILogger<LogStreamService> _logger;
     private readonly ConcurrentDictionary<Guid, LogBuffer> _buffers = new();
@@ -24,24 +21,22 @@ public class LogStreamService
 
     public LogStreamService(
         IServiceScopeFactory scopeFactory,
-        IHubContext<JobLogsHub, IJobLogsClient> hubContext,
         LogSubscriptionService subscriptionService,
         ILogger<LogStreamService> logger)
     {
         _scopeFactory = scopeFactory;
-        _hubContext = hubContext;
         _subscriptionService = subscriptionService;
         _logger = logger;
     }
 
     /// <summary>
     /// Process incoming log chunk from worker.
-    /// 1. Broadcast to subscribed UI clients immediately (low latency)
+    /// 1. Hand it to the live tails watching this job immediately (low latency)
     /// 2. Buffer for batched persistence (efficiency)
     /// </summary>
     public async Task ProcessChunkAsync(LogChunk chunk)
     {
-        // 1. Immediate broadcast to UI
+        // 1. Straight out to anyone watching, ahead of the database
         var broadcast = new LogBroadcast
         {
             JobId = chunk.JobId,
@@ -50,11 +45,6 @@ public class LogStreamService
             Timestamp = chunk.Timestamp
         };
 
-        // Notify SignalR clients (external)
-        var groupName = $"job-logs-{chunk.JobId}";
-        _ = _hubContext.Clients.Group(groupName).ReceiveLogChunk(broadcast);
-
-        // Notify Blazor components (in-process)
         _subscriptionService.NotifyLogChunk(broadcast);
 
         // 2. Buffer for persistence
@@ -92,17 +82,12 @@ public class LogStreamService
     }
 
     /// <summary>
-    /// Notify UI clients that a job has completed.
+    /// Flush what the job wrote last, then tell the live tails it is over — in that order, so a
+    /// viewer that stops on the status has already been able to read everything the job produced.
     /// </summary>
     public async Task NotifyJobCompletedAsync(Guid jobId, Protocol.JobStatus status)
     {
         await FlushAsync(jobId);
-
-        // Notify SignalR clients (external)
-        var groupName = $"job-logs-{jobId}";
-        await _hubContext.Clients.Group(groupName).JobCompleted(jobId, status);
-
-        // Notify Blazor components (in-process)
         _subscriptionService.NotifyJobCompleted(jobId, status);
     }
 

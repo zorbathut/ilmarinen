@@ -1,7 +1,12 @@
-// Client-rendered log viewer for /jobs/{id}/logs.
+// Client-rendered log viewer, used both full-screen at /jobs/{id}/logs and embedded in the job page.
 //
 // The server streams stored NDJSON chunks and retains nothing, so this holds the window: a bounded
 // run of chunks that slides in either direction as you scroll, re-fetching whatever it evicted.
+//
+// Two paths bring chunks in. The feed (/logs/chunks) serves anything stored, and is the only one
+// that can fill a hole. The live tail (/logs/stream) pushes each chunk as the server receives it,
+// ahead of persistence, and is what makes a running job read live; everything it delivers is checked
+// against the window's sequence and handed back to the feed if it doesn't fit.
 //
 // The entry decoding below must agree with LogChunkParser.cs, which decodes the same stored format
 // on the server for the download and raw views.
@@ -11,7 +16,8 @@ const MAX_LINE_CHARS = 10000;       // one line can be a whole minified bundle, 
 const PAGE_LINES = 2000;            // a fetch keeps going until it has this much, since a chunk is anywhere from one line to 4 KB
 const FETCH_LIMIT = 200;            // the server's own page cap
 const MAX_SEQUENCE = 2147483647;    // asks the feed for "nothing newer than everything": an empty body carrying only the status
-const POLL_MS = 1000;
+const POLL_MS = 1000;               // when the feed is carrying the log on its own
+const POLL_STREAMING_MS = 10000;    // a backstop while the live tail is: it should find nothing, and covers a push that arrived mid-fetch or died in transit
 const TAIL_SLOP_PX = 40;            // how far off the bottom still counts as following the tail
 
 const TERMINAL_STATUSES = ["Success", "Failed", "Cancelled"];
@@ -36,10 +42,16 @@ export function attach(container, jobId, status) {
 
 export function detach(handle) {
     const view = views.get(handle);
-    if (view) {
-        view.stop();
-        views.delete(handle);
+    if (!view) {
+        // The container would stay flagged as attached, so the next attach on it would hand back a handle to a viewer that no longer polls. Only a lifecycle bug gets here.
+        console.warn(`log-viewer: detach called with unknown handle ${handle}`);
+        return;
     }
+
+    view.stop();
+    view.container.replaceChildren();
+    delete view.container.dataset.logViewer;
+    views.delete(handle);
 }
 
 class LogView {
@@ -52,18 +64,21 @@ class LogView {
         this.atStart = false;   // the window reaches the first chunk of the log
         this.atEnd = true;      // the window reaches the newest chunk
         this.caughtUp = false;  // a forward fetch has come back empty
-        this.following = true;
+        this.following = true;  // the reader is parked at the newest line, so it stays in view; scrolling away stops the view moving, not the log growing
         this.autoScroll = true;
         this.busy = false;
         this.pendingBackfill = false;
+        this.pendingTick = false;
         this.generation = 0;
         this.stopped = false;
         this.pollTimer = null;
+        this.stream = null;
 
         this.build(container);
     }
 
     build(container) {
+        this.container = container;
         this.toolbar = el("div", "log-toolbar");
 
         checkbox(this.toolbar, "log-autoscroll", "Auto-scroll", true, (on) => {
@@ -87,7 +102,7 @@ class LogView {
         this.toolbar.appendChild(this.tailButton);
         this.toolbar.appendChild(this.statusLabel);
 
-        this.pane = el("div", "logfull-pane");
+        this.pane = el("div", "log-pane");
         this.pane.tabIndex = 0;
         // Deliberately no aria-live: announcing a streaming log of this size would be unusable.
         this.pane.addEventListener("scroll", () => this.onScroll());
@@ -99,15 +114,115 @@ class LogView {
     }
 
     async start() {
-        await this.jumpToTail();
+        await this.load(null);
+
+        // Only now can an empty pane be read as an empty log rather than one still arriving.
+        this.container.classList.add("log-loaded");
+
+        this.pane.scrollTop = this.pane.scrollHeight;
+        this.openStream();
         this.schedulePoll();
     }
 
     stop() {
         this.stopped = true;
+        this.closeStream();
+
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
+        }
+    }
+
+    /**
+     * The live tail: chunks arrive here as the server receives them, well before the feed could serve
+     * them, and a running job is unreadable without that. A finished job has nothing to push.
+     */
+    openStream() {
+        if (this.stream || this.stopped || TERMINAL_STATUSES.includes(this.status)) {
+            return;
+        }
+
+        const stream = new EventSource(`/api/jobs/${this.jobId}/logs/stream`);
+        this.stream = stream;
+
+        // Connecting takes a round trip, and a reconnect can take far longer — whatever the job wrote in the meantime went to nobody, so every open reconciles against the feed before trusting what arrives next.
+        stream.addEventListener("open", () => this.tick());
+
+        stream.addEventListener("chunk", (event) => this.onPushed(Number(event.lastEventId), event.data));
+
+        // The only status the server sends is the job's last one, which closes the stream from setStatus.
+        stream.addEventListener("status", (event) => {
+            this.setStatus(event.data);
+            // The job's last chunks can still be sitting in the server's persistence buffer, and this is the poll that shakes them loose.
+            this.tick().then(() => this.schedulePoll());
+        });
+
+        // The browser reconnects on its own, so this only has to get the feed carrying the log again in the meantime; polling stands back down once the stream returns. The armed timer is thrown away because it is the slow one this stream was the reason for.
+        stream.addEventListener("error", () => {
+            if (this.pollTimer) {
+                clearTimeout(this.pollTimer);
+                this.pollTimer = null;
+            }
+
+            this.schedulePoll();
+        });
+    }
+
+    closeStream() {
+        if (this.stream) {
+            this.stream.close();
+            this.stream = null;
+        }
+    }
+
+    streaming() {
+        return this.stream !== null && this.stream.readyState === EventSource.OPEN;
+    }
+
+    /**
+     * A pushed chunk is appended only when it is exactly the one the window is missing next.
+     * Everything else — a chunk replayed after a worker reconnect, a gap left by a dropped event,
+     * output that arrived while a fetch was in flight — goes back to the feed, which is the only path
+     * that can fill a hole rather than paper over one.
+     *
+     * Whether the reader is watching the tail or parked further up doesn't come into it: the log
+     * keeps growing under them either way, and only the scrolling stops. What does is whether the
+     * window still reaches the end, since a backfill deep enough to evict the tail leaves nothing for
+     * this to append to.
+     */
+    onPushed(sequence, body) {
+        if (!this.atEnd) {
+            return;
+        }
+
+        if (this.busy) {
+            // Inserting underneath a fetch would interleave two writers into one window, so this waits for it and reconciles after.
+            this.pendingTick = true;
+            return;
+        }
+
+        const expected = (this.lastSeq ?? 0) + 1;
+
+        if (sequence < expected) {
+            // Already held, or replayed behind chunks that overtook it — a worker resends what it couldn't deliver, and by then the window has moved past. Appending it here would put it out of order, and the feed reads forward from the same place, so this one shows up on the next jump to the tail.
+            return;
+        }
+
+        if (sequence > expected || body.length === 0) {
+            // Something was missed, or the chunk was too big for the stream to carry and arrived as a bare sequence. Either way the feed has it.
+            this.tick();
+            return;
+        }
+
+        const block = this.renderBlock(body);
+        block.firstSeq = sequence;
+        block.lastSeq = sequence;
+
+        if (this.insert(block, false)) {
+            this.caughtUp = false;
+            this.stickToTail();
+            this.paint();
         }
     }
 
@@ -120,20 +235,22 @@ class LogView {
     }
 
     /**
-     * Reading history and following the tail are separate modes. Appending while the user has
-     * scrolled up would evict the very lines they are reading, and walking forward from far back
-     * would chase the whole remainder of the log a page at a time — so coming back to the tail
-     * throws the window away and re-fetches it instead.
+     * Usually just a scroll: new output keeps landing in the window while it is read, so the tail is
+     * already there. It is only gone once a backfill has pushed the window far enough back to evict
+     * it, and then walking forward from there would chase the whole remainder of the log a page at a
+     * time — so that case throws the window away and re-fetches the end instead.
      */
     async jumpToTail() {
-        this.generation++;
-        this.clear();
+        if (!this.atEnd) {
+            this.generation++;
+            this.clear();
+            this.atEnd = true;
+            this.caughtUp = false;
+
+            await this.load(null);
+        }
+
         this.following = true;
-        this.atEnd = true;
-        this.caughtUp = false;
-
-        await this.load(null);
-
         this.pane.scrollTop = this.pane.scrollHeight;
         this.schedulePoll();
     }
@@ -199,6 +316,7 @@ class LogView {
             }
         } finally {
             this.busy = false;
+            this.settlePushes();
         }
 
         this.paint();
@@ -214,7 +332,9 @@ class LogView {
         this.busy = true;
 
         try {
-            const page = await this.fetchWindow(`?after=${this.lastSeq ?? 0}&limit=${FETCH_LIMIT}`);
+            // An empty window holds nothing to read forward from, and asking for everything after sequence zero would walk the log from its beginning — it wants the tail, the same as a first load.
+            const bound = this.lastSeq === null ? "" : `after=${this.lastSeq}&`;
+            const page = await this.fetchWindow(`?${bound}limit=${FETCH_LIMIT}`);
 
             if (page === null) {
                 return 0;
@@ -230,7 +350,19 @@ class LogView {
             return this.insert(page, false) ? page.lines : 0;
         } finally {
             this.busy = false;
+            this.settlePushes();
             this.paint();
+        }
+    }
+
+    /**
+     * Pushes that landed mid-fetch were let go rather than queued, since the feed is where a hole
+     * gets filled from. Nothing else would come back for them if the job then went quiet.
+     */
+    settlePushes() {
+        if (this.pendingTick) {
+            this.pendingTick = false;
+            this.tick();
         }
     }
 
@@ -398,7 +530,7 @@ class LogView {
             this.pollTimer = null;
             await this.tick();
             this.schedulePoll();
-        }, POLL_MS);
+        }, this.streaming() ? POLL_STREAMING_MS : POLL_MS);
     }
 
     /**
@@ -410,27 +542,42 @@ class LogView {
             return false;
         }
 
-        return this.caughtUp || !this.following;
+        return this.caughtUp || !this.atEnd;
     }
 
     async tick() {
-        if (!this.following) {
-            // Nothing to append while the user reads history, but the status still has to catch the job finishing — that is also what stops the polling.
+        if (!this.atEnd) {
+            // Nothing to append to while the window sits back in history, but the status still has to catch the job finishing — that is also what stops the polling.
             await this.probeStatus();
             return;
         }
 
         const added = await this.poll();
-        if (added > 0 && this.autoScroll) {
+        if (added > 0) {
+            this.stickToTail();
+        }
+    }
+
+    /** Keeps the newest line in view, but only for a reader who was already watching it. */
+    stickToTail() {
+        if (this.following && this.autoScroll) {
             this.pane.scrollTop = this.pane.scrollHeight;
         }
     }
 
     setStatus(status) {
-        if (status && status !== this.status) {
-            this.status = status;
-            this.paint();
+        if (!status || status === this.status) {
+            return;
         }
+
+        this.status = status;
+
+        // A job that has finished has nothing left to push, however we found that out.
+        if (TERMINAL_STATUSES.includes(status)) {
+            this.closeStream();
+        }
+
+        this.paint();
     }
 
     clear() {

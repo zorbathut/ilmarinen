@@ -37,7 +37,7 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
     public string PostgresConnectionString => _postgres.ConnectionString;
 
-    /// <summary>URL for public endpoints (REST API, Blazor UI, JobLogsHub).</summary>
+    /// <summary>URL for public endpoints (REST API, Blazor UI).</summary>
     public string ServerUrl { get; private set; } = null!;
 
     /// <summary>URL for worker endpoints (WorkerHub SignalR).</summary>

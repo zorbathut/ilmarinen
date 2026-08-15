@@ -7,8 +7,9 @@ using System;
 namespace Ilmarinen.Server.Services;
 
 /// <summary>
-/// Service for Blazor components to subscribe to real-time log updates.
-/// Used internally by server-side Blazor (avoids SignalR client connection issues in Docker).
+/// In-process fan-out of a job's log as it arrives, ahead of persistence. Each open live tail
+/// (GET /api/jobs/{id}/logs/stream) is one subscriber; callbacks run on the caller's thread, so a
+/// subscriber must hand the chunk off rather than do anything slow with it.
 /// </summary>
 public class LogSubscriptionService
 {
@@ -30,6 +31,15 @@ public class LogSubscriptionService
         var jobSubscribers = _subscribers.GetOrAdd(jobId, _ => new ConcurrentDictionary<string, LogSubscriber>());
         jobSubscribers[subscriberId] = new LogSubscriber(onLogChunk, onJobCompleted);
         return subscriberId;
+    }
+
+    /// <summary>
+    /// Live tails currently watching this job. A subscriber that outlives the connection that made it
+    /// is a leak nothing else would show, so it is worth being able to see the count.
+    /// </summary>
+    public int SubscriberCount(Guid jobId)
+    {
+        return _subscribers.TryGetValue(jobId, out var jobSubscribers) ? jobSubscribers.Count : 0;
     }
 
     public void Unsubscribe(Guid jobId, string subscriberId)

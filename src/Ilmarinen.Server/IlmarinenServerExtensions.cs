@@ -42,13 +42,12 @@ public static class IlmarinenServerExtensions
     }
 
     /// <summary>
-    /// Maps endpoints accessible on the public port:
-    /// REST API controllers, JobLogsHub for UI log streaming.
+    /// Maps endpoints accessible on the public port: the REST API controllers, which include the log
+    /// feed and its live tail.
     /// </summary>
     public static IEndpointRouteBuilder MapPublicEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapControllers();
-        endpoints.MapHub<JobLogsHub>("/hub/job-logs");
         return endpoints;
     }
 

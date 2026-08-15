@@ -3,9 +3,13 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace Ilmarinen.Server.Controllers;
@@ -30,17 +34,56 @@ public class JobsController : ControllerBase
     /// </summary>
     public const int MaxPageBytes = 1_000_000;
 
+    /// <summary>
+    /// Events held for a live tail whose client isn't draining them. Past this they are dropped, and
+    /// the client refills the gap from the chunks feed — the same recovery a dropped connection gets.
+    /// Bounded by count, so the worst case is this many <see cref="LiveTailMaxChunkChars"/> chunks.
+    /// </summary>
+    private const int LiveTailBacklog = 64;
+
+    /// <summary>
+    /// Ceiling on one write to a live tail. A backlog that has built up goes out in several writes
+    /// rather than one string holding all of it.
+    /// </summary>
+    private const int LiveTailBatchChars = 256 * 1024;
+
+    /// <summary>
+    /// How long a live tail may sit silent before it emits a comment. A quiet build step can take
+    /// minutes, and to anything between here and the browser that is indistinguishable from a dead
+    /// connection.
+    /// </summary>
+    private const int LiveTailKeepAliveMs = 25_000;
+
+    /// <summary>
+    /// Past this a chunk is announced by sequence alone and fetched from the feed instead. See
+    /// <see cref="FormatChunkEvent"/>.
+    /// </summary>
+    private const int LiveTailMaxChunkChars = 64 * 1024;
+
     private readonly JobScheduler _scheduler;
     private readonly JobRepository _jobs;
     private readonly JobLogRepository _logs;
     private readonly LogStreamService _logStream;
+    private readonly LogSubscriptionService _subscriptions;
+    private readonly IHostApplicationLifetime _lifetime;
+    private readonly ILogger<JobsController> _logger;
 
-    public JobsController(JobScheduler scheduler, JobRepository jobs, JobLogRepository logs, LogStreamService logStream)
+    public JobsController(
+        JobScheduler scheduler,
+        JobRepository jobs,
+        JobLogRepository logs,
+        LogStreamService logStream,
+        LogSubscriptionService subscriptions,
+        IHostApplicationLifetime lifetime,
+        ILogger<JobsController> logger)
     {
         _scheduler = scheduler;
         _jobs = jobs;
         _logs = logs;
         _logStream = logStream;
+        _subscriptions = subscriptions;
+        _lifetime = lifetime;
+        _logger = logger;
     }
 
     [HttpPost]
@@ -169,9 +212,15 @@ public class JobsController : ControllerBase
         // The tail is a live URL, and one served from a cache would strand a viewer on stale output.
         Response.Headers.CacheControl = "no-store";
 
+        // A chunk sits in the persistence buffer until the next one arrives, so a quiet build would otherwise never show its last output. An unbounded read is a client establishing the window it will follow from, and it only gets one shot at being right — a hole here is one nothing later re-requests.
+        if (before == null && after == null)
+        {
+            await _logStream.FlushJobAsync(id);
+        }
+
         var chunks = await ReadWindowAsync(id, before, after, limit);
 
-        // A chunk sits in the persistence buffer until the next one arrives, so a quiet build would otherwise never show its last output. Flushing only when a forward window came back empty keeps that guarantee without turning every poll into an INSERT — and a backward window can't be affected by a flush, since what it persists is always newer.
+        // The other way that buffered chunk hides is behind a forward poll that found nothing. Flushing only on the empty ones keeps the guarantee without turning every poll into an INSERT — and a backward window can't be affected by a flush, since what it persists is always newer.
         if (chunks.Count == 0 && before == null)
         {
             await _logStream.FlushJobAsync(id);
@@ -198,6 +247,183 @@ public class JobsController : ControllerBase
         }
 
         return Content(content.ToString(), "application/x-ndjson");
+    }
+
+    /// <summary>
+    /// A job's live log tail, as Server-Sent Events: one event per chunk, sent the moment the server
+    /// receives it from the worker rather than when it reaches the database — which is the whole
+    /// point, since persistence is batched and a quiet build can leave a chunk buffered indefinitely.
+    ///
+    /// It deliberately carries no history. The chunks feed above is the only reader of stored log, so
+    /// a client that misses events — a full backlog, a dropped connection, a chunk too big to carry —
+    /// closes the gap from there by sequence number, which is also why Last-Event-ID is ignored.
+    ///
+    /// An endpoint rather than a push down the Blazor circuit, so that reading a log doesn't depend on
+    /// having a circuit: the full-screen viewer survives a dead circuit, and this stays testable at
+    /// the HTTP seam. It costs one of the browser's ~6 connections per origin for as long as the page
+    /// is open, so a reader with many job pages open at once will queue requests behind them. The
+    /// action's DI scope lives as long as the connection does, so nothing below the initial read may
+    /// touch the database.
+    /// </summary>
+    [HttpGet("{id}/logs/stream")]
+    public async Task<IActionResult> StreamLog(Guid id)
+    {
+        // Wait rather than one of the Drop modes: those discard silently and still report success, which would leave the client short of a chunk with nothing said about it. TryWrite on a full Wait channel refuses the write and says so.
+        var events = Channel.CreateBounded<LiveTailEvent>(new BoundedChannelOptions(LiveTailBacklog)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true
+        });
+
+        // A live tail ends when its reader leaves or when the server goes down. Without the second, every open log page would hold up shutdown until the host's timeout expired — on every deploy.
+        using var streaming = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted, _lifetime.ApplicationStopping);
+
+        var ended = false;
+
+        // Subscribing before the job is read, so a completion landing between the two ends this stream rather than stranding it open. These callbacks run on the thread receiving the worker's log, so they do nothing but hand the chunk over — the framing happens in the pump.
+        var subscriberId = _subscriptions.Subscribe(
+            id,
+            chunk =>
+            {
+                if (!ended && !events.Writer.TryWrite(new LiveTailEvent(chunk, null)))
+                {
+                    _logger.LogWarning("Live log tail for job {JobId} is not keeping up; dropped chunk {Sequence}. The client will refetch it from the feed.", id, chunk.SequenceNumber);
+                }
+            },
+            status =>
+            {
+                if (!events.Writer.TryWrite(new LiveTailEvent(null, status)))
+                {
+                    _logger.LogWarning("Live log tail for job {JobId} could not be told the job finished; its client will find out when it reconnects.", id);
+                }
+
+                ended = true;
+                events.Writer.TryComplete();
+            });
+
+        try
+        {
+            var job = await _jobs.GetAsync(id);
+            if (job == null)
+            {
+                return NotFound();
+            }
+
+            Response.ContentType = "text/event-stream";
+            Response.Headers.CacheControl = "no-store";
+            // A reverse proxy that buffers the response would defeat the point of a live tail.
+            Response.Headers["X-Accel-Buffering"] = "no";
+
+            // Headers and a first frame together: until bytes arrive the client can't know the subscription above is live, and an intermediary that buffers bodies rather than headers would sit on an empty stream until the first keepalive.
+            await WriteFrameAsync(": open\n\n", streaming.Token);
+
+            if (job.Status is Protocol.JobStatus.Success or Protocol.JobStatus.Failed or Protocol.JobStatus.Cancelled)
+            {
+                await WriteFrameAsync(FormatEvent(new LiveTailEvent(null, job.Status)), streaming.Token);
+                return new EmptyResult();
+            }
+
+            await PumpAsync(events.Reader, streaming.Token);
+        }
+        catch (OperationCanceledException) when (streaming.IsCancellationRequested)
+        {
+            // The reader closed the page, or the server is stopping. Both are how a live tail ends.
+        }
+        finally
+        {
+            _subscriptions.Unsubscribe(id, subscriberId);
+        }
+
+        return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Writes events until the job finishes or <paramref name="streaming"/> ends, breaking the wait
+    /// often enough to keep the connection warm.
+    /// </summary>
+    private async Task PumpAsync(ChannelReader<LiveTailEvent> events, CancellationToken streaming)
+    {
+        while (true)
+        {
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(streaming);
+            idle.CancelAfter(LiveTailKeepAliveMs);
+
+            bool more;
+            try
+            {
+                more = await events.WaitToReadAsync(idle.Token);
+            }
+            catch (OperationCanceledException) when (!streaming.IsCancellationRequested)
+            {
+                await WriteFrameAsync(": keepalive\n\n", streaming);
+                continue;
+            }
+
+            if (!more)
+            {
+                return;
+            }
+
+            var frames = new StringBuilder();
+
+            // Batched, so a burst is one write — but only up to a point: draining a full backlog into one string would hold the whole of it twice over.
+            while (frames.Length < LiveTailBatchChars && events.TryRead(out var pending))
+            {
+                frames.Append(FormatEvent(pending));
+            }
+
+            await WriteFrameAsync(frames.ToString(), streaming);
+        }
+    }
+
+    private async Task WriteFrameAsync(string frame, CancellationToken streaming)
+    {
+        await Response.WriteAsync(frame, streaming);
+        await Response.Body.FlushAsync(streaming);
+    }
+
+    /// <summary>Either a chunk to send or the job's final status — the two things a live tail carries.</summary>
+    private readonly record struct LiveTailEvent(LogBroadcast? Chunk, Protocol.JobStatus? Status);
+
+    private static string FormatEvent(LiveTailEvent pending)
+    {
+        return pending.Chunk != null
+            ? FormatChunkEvent(pending.Chunk)
+            : $"event: status\ndata: {pending.Status}\n\n";
+    }
+
+    /// <summary>
+    /// One chunk as an SSE frame. The sequence number is the event id, because that is what the
+    /// client checks for gaps; the chunk's stored NDJSON goes out one line per data field, which the
+    /// browser rejoins with newlines into exactly the body the feed would have served.
+    ///
+    /// A chunk is whatever one worker-side flush produced, so it can be arbitrarily large — past
+    /// <see cref="LiveTailMaxChunkChars"/> the frame carries an empty data field instead, and the
+    /// client fetches the content from the feed, where the page budget applies. The field still has to
+    /// be there: a frame whose data is absent entirely sets the last event id and is then discarded
+    /// without ever reaching a listener.
+    /// </summary>
+    private static string FormatChunkEvent(LogBroadcast chunk)
+    {
+        var frame = new StringBuilder();
+
+        frame.Append("id: ").Append(chunk.SequenceNumber).Append('\n');
+        frame.Append("event: chunk\n");
+
+        if (chunk.Content.Length > LiveTailMaxChunkChars)
+        {
+            return frame.Append("data: \n\n").ToString();
+        }
+
+        foreach (var line in chunk.Content.Split('\n'))
+        {
+            if (line.Length > 0)
+            {
+                frame.Append("data: ").Append(line).Append('\n');
+            }
+        }
+
+        return frame.Append('\n').ToString();
     }
 
     /// <summary>

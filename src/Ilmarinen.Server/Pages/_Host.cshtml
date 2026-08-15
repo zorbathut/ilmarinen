@@ -233,20 +233,7 @@
         .diagnostic-step-suggestion { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem; font-style: italic; }
         a { color: var(--accent); text-decoration: none; }
         a:hover { text-decoration: underline; }
-        .log-container {
-            background-color: var(--log-bg);
-            border-radius: 0.5rem;
-            padding: 1rem;
-            font-family: monospace;
-            font-size: 0.875rem;
-            max-height: 500px;
-            overflow-y: auto;
-        }
-        .log-line, .log-block {
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
-        /* Shared by the inline viewer and the full-screen one, whose toolbar is built by log-viewer.js. */
+        /* The log viewer's chrome, all of it built by log-viewer.js — on the full-screen page and embedded in the job page's card alike. */
         .log-toolbar {
             display: flex;
             flex-wrap: wrap;
@@ -292,7 +279,7 @@
         .log-meta {
             color: #22d3ee;
         }
-        .log-toolbar .btn-download, .log-tail-button {
+        .log-tail-button {
             background-color: var(--bg-secondary);
             border: 1px solid var(--text-secondary);
             color: var(--text-primary);
@@ -302,7 +289,7 @@
             text-decoration: none;
             cursor: pointer;
         }
-        /* The full-screen viewer at /jobs/{id}/logs, whose DOM is built by log-viewer.js. */
+        /* Page chrome for the full-screen viewer at /jobs/{id}/logs. */
         .logfull-header {
             display: flex;
             flex-wrap: wrap;
@@ -318,14 +305,14 @@
             overflow-wrap: anywhere;
             color: var(--text-secondary);
         }
-        .logfull {
+        .log-shell {
             display: flex;
             flex-direction: column;
             flex: 1;
             min-height: 0;
             min-width: 0;
         }
-        .logfull-pane {
+        .log-pane {
             flex: 1;
             min-height: 0;
             min-width: 0;
@@ -334,6 +321,23 @@
             background-color: var(--log-bg);
             font-family: monospace;
             font-size: 0.875rem;
+        }
+        /* The job page embeds the same viewer in a card, where it sizes to its content instead of to the page. */
+        .log-embed .log-toolbar { border-radius: 0.5rem 0.5rem 0 0; }
+        .log-embed .log-pane {
+            flex: 0 1 auto;
+            min-height: 200px;
+            max-height: 600px;
+            border-radius: 0 0 0.5rem 0.5rem;
+        }
+        .log-links {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .log-loaded .log-pane:empty::after {
+            content: "No logs";
+            color: var(--text-secondary);
+            font-style: italic;
         }
         .log-block {
             white-space: pre-wrap;
@@ -347,7 +351,6 @@
             font-style: italic;
             padding-top: 0.5rem;
         }
-        .log-stdout { color: var(--text-primary); }
         .log-stderr { color: var(--error); }
         .detail-grid {
             display: grid;
@@ -440,7 +443,7 @@
             th, td { padding: 0.5rem 0.6rem; }
         }
         @@media (pointer: coarse) {
-            .btn, .btn-download, .log-toolbar .btn-download, .log-tail-button, .nav-toggle {
+            .btn, .btn-download, .log-tail-button, .nav-toggle {
                 display: inline-flex;
                 align-items: center;
                 min-height: 44px;

@@ -129,6 +129,31 @@ public class JobLogFeedTests
     }
 
     /// <summary>
+    /// A tail read is a viewer establishing the window it will follow from — every later request is
+    /// relative to it, so a chunk still sitting in the persistence buffer at that moment is one
+    /// nothing would ever go back for.
+    /// </summary>
+    [Test]
+    public async Task Feed_TailRequest_IncludesAChunkStillBufferedForPersistence()
+    {
+        var jobId = await SeedNumberedChunksAsync(2);
+
+        var logStream = _fixture.Services.GetRequiredService<LogStreamService>();
+        await logStream.ProcessChunkAsync(new LogChunk
+        {
+            JobId = jobId,
+            SequenceNumber = 3,
+            Content = JobLogSeed.NdjsonLine("o", "still buffered\n"),
+            Timestamp = DateTime.UtcNow
+        });
+
+        var response = await FeedAsync(jobId, "?limit=200");
+
+        Assert.That(await DecodeAsync(response), Is.EqualTo("line 1\nline 2\nstill buffered\n"));
+        Assert.That(SequenceHeader(response, "X-Log-Last-Sequence"), Is.EqualTo(3));
+    }
+
+    /// <summary>
     /// A client probing for "anything newer than everything" must not wrap around to the start of
     /// the log.
     /// </summary>
