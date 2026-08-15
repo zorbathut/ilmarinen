@@ -27,4 +27,4 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app .
 
-ENTRYPOINT ["dotnet", "ilmarinen-worker-launcher.dll"]
+ENTRYPOINT ["dotnet", "ilmarinen-workerlauncher.dll"]

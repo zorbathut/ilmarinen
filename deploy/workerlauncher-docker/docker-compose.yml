@@ -1,8 +1,8 @@
 # Self-updating Ilmarinen worker: a thin launcher that downloads the worker bundle from the server and swaps to new bundles when the server is updated.
-# Run every command from this directory: cd deploy/worker-launcher && docker compose up -d --build
+# Run every command from this directory: cd deploy/workerlauncher-docker && docker compose up -d --build
 # See README.md — this mode means the server pushes (signed) code to this host; use deploy/worker-docker/ for hosts that must not auto-update.
 
-name: ilmarinen-worker-launcher
+name: ilmarinen-workerlauncher
 
 services:
   launcher:

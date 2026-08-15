@@ -1,6 +1,6 @@
-# Ilmarinen Worker Launcher — Self-Updating Worker Deployment
+# Ilmarinen Worker Launcher — Docker Compose Deployment
 
-Runs an Ilmarinen worker that updates itself when the server is updated. A thin **launcher** container downloads the current worker bundle from the server, verifies its signature, and runs the worker as a child process; when the server is redeployed with a new build, the worker swaps to the new bundle automatically — immediately when idle, or right after the current job finishes.
+Runs an Ilmarinen worker that updates itself when the server is updated. A thin **launcher** container downloads the current worker bundle from the server, verifies its signature, and runs the worker as a child process; when the server is redeployed with a new build, the worker swaps to the new bundle automatically — immediately when idle, or right after the current job finishes. This is the non-NixOS counterpart to [`../workerlauncher-nix/`](../workerlauncher-nix/); use that one for a NixOS target.
 
 Use this instead of [`../worker-docker/`](../worker-docker/) when you want "update the server, workers follow." Everything in that README about networking, security, disk, and operations applies here too; this one covers only what's different.
 
@@ -23,7 +23,7 @@ If a worker host must not auto-accept code from the server, keep using `../worke
 Register a worker on the server first (via the UI or `POST /api/workers`) and save the key it gives you.
 
 ```bash
-git clone <repo> && cd ilmarinen/deploy/worker-launcher
+git clone <repo> && cd ilmarinen/deploy/workerlauncher-docker
 cp .env.example .env      # add ILMARINEN_SERVER_URL and ILMARINEN_WORKER_KEY
 docker compose up -d --build
 docker compose logs -f
@@ -35,7 +35,7 @@ Same-host-as-server works exactly like the classic worker: `ILMARINEN_SERVER_URL
 docker compose -f docker-compose.yml -f docker-compose.same-host.yml up -d --build
 ```
 
-A healthy start logs the manifest fetch, the bundle download and verification, and then the worker's own startup sequence.
+A healthy first start logs the bundle download and verification, then the worker's own startup sequence. (Restarts with a cached bundle skip straight to starting the worker.)
 
 ## When you still have to touch this host
 
@@ -43,6 +43,7 @@ The launcher is the one component that cannot update itself — deliberately, so
 
 - **.NET major upgrades.** The bundle is framework-dependent; when the server moves to a new .NET major, the launcher image's runtime must follow. The launcher logs a loud, specific error when the manifest's `targetFramework` doesn't match its runtime.
 - **Manifest format bumps.** If a future server bumps the manifest's `formatVersion`, old launchers log "launcher is too old" and keep running their cached bundle until rebuilt.
+- **Changes to the launcher's own code.** Fixes to the launcher never arrive via self-update; they reach this host only through a rebuild here.
 
 ## Operations
 

@@ -2,7 +2,7 @@
 
 Runs an Ilmarinen worker on any host with Docker. This is the non-NixOS counterpart to [`../worker-nix/`](../worker-nix/); use that one for a NixOS target.
 
-If you'd rather not rebuild this host on every server deploy, see [`../worker-launcher/`](../worker-launcher/): a self-updating mode where the worker downloads its code from the server. It trades away this mode's guarantee that the server can never push code to the worker host — read its README's trust section before switching.
+If you'd rather not rebuild this host on every server deploy, see [`../workerlauncher-docker/`](../workerlauncher-docker/): a self-updating mode where the worker downloads its code from the server. It trades away this mode's guarantee that the server can never push code to the worker host — read its README's trust section before switching.
 
 The worker is a *client* — it makes outbound connections to the server and needs no inbound ports of its own.
 
@@ -63,7 +63,7 @@ docker compose up -d --build
 
 This recreates the container, which kills any job running on it — the step containers and the job's Docker network are orphaned rather than cleaned up. Check the server UI for a job on this worker before upgrading.
 
-Note for the server deploy that first introduces the self-update feature (`deploy/worker-launcher/`): that change alters the protocol hash like any other protocol change, so every classic worker needs one final manual rebuild — and no launcher-run workers exist yet to ride it out automatically.
+Note for the server deploy that first introduces the self-update feature (`deploy/workerlauncher-docker/`): that change alters the protocol hash like any other protocol change, so every classic worker needs one final manual rebuild — and no launcher-run workers exist yet to ride it out automatically.
 
 ## Security
 

@@ -1,6 +1,6 @@
 # Ilmarinen Server — Docker Compose Deployment
 
-Runs the Ilmarinen server and its PostgreSQL database on any host with Docker. Workers connect to it from here or from other machines (see [`../worker-docker/`](../worker-docker/) and [`../worker-nix/`](../worker-nix/)).
+Runs the Ilmarinen server and its PostgreSQL database on any host with Docker. Workers connect to it from here or from other machines (see [`../worker-docker/`](../worker-docker/) and [`../worker-nix/`](../worker-nix/), or the self-updating variants [`../workerlauncher-docker/`](../workerlauncher-docker/) and [`../workerlauncher-nix/`](../workerlauncher-nix/)).
 
 ## Read this first: there is no authentication
 

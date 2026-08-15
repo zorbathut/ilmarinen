@@ -1,7 +1,7 @@
 # Self-updating worker for the dev stack — shares the server's Compose network, so it only works on the server's host.
-# To run a launcher-based worker on a separate host, use deploy/worker-launcher/ instead.
+# To run a launcher-based worker on a separate host, use deploy/workerlauncher-docker/ instead.
 services:
-  worker-launcher:
+  workerlauncher:
     build:
       context: .
       dockerfile: src/Ilmarinen.WorkerLauncher/Dockerfile

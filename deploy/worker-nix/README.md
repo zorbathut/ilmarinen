@@ -12,6 +12,8 @@ The worker is published as a self-contained executable — no .NET runtime is ne
 
 For a non-NixOS host, use [`../worker-docker/`](../worker-docker/) instead.
 
+If you'd rather not re-run `deploy.sh` on every server deploy, see [`../workerlauncher-nix/`](../workerlauncher-nix/): a self-updating mode where the worker downloads its code from the server. It trades away this mode's guarantee that the server can never push code to the worker host — read the trust section in [`../workerlauncher-docker/README.md`](../workerlauncher-docker/README.md) before switching.
+
 ## Quick Start
 
 1. **Register a worker** on the Ilmarinen server (via the UI or `POST /api/workers`) and save the worker key.
@@ -56,7 +58,7 @@ You can also remove or comment out the `wsl.defaultUser` line and the `<nixos-ws
 
 ## Updating
 
-The server validates that workers are built from the same git commit. When the server is updated, re-run `deploy.sh` from the same commit:
+The server rejects workers whose protocol hash doesn't match its own, so the worker must be rebuilt from a ref compatible with the server's. When the server is updated, re-run `deploy.sh` from that ref:
 
 ```bash
 git pull
