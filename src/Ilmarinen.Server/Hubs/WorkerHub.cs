@@ -17,15 +17,17 @@ public class WorkerHub : Hub<IWorkerClient>
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ServerKeyService _serverKey;
+    private readonly WorkerBundleService _bundles;
     private readonly UIEventService _uiEvents;
     private readonly ILogger<WorkerHub> _logger;
 
     private static readonly ConcurrentDictionary<string, PendingAuth> _pendingAuths = new();
 
-    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, UIEventService uiEvents, ILogger<WorkerHub> logger)
+    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, WorkerBundleService bundles, UIEventService uiEvents, ILogger<WorkerHub> logger)
     {
         _scopeFactory = scopeFactory;
         _serverKey = serverKey;
+        _bundles = bundles;
         _uiEvents = uiEvents;
         _logger = logger;
     }
@@ -64,7 +66,8 @@ public class WorkerHub : Hub<IWorkerClient>
             WorkerId = request.WorkerId,
             WorkerNonce = request.Nonce,
             ServerNonce = serverNonce,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            BundleHash = request.BundleHash
         };
 
         _logger.LogDebug("Issued auth challenge for worker {WorkerId}", request.WorkerId);
@@ -73,7 +76,8 @@ public class WorkerHub : Hub<IWorkerClient>
         {
             Nonce = serverNonce,
             ServerSignature = serverSignature,
-            ProtocolHash = ProtocolVersion.Hash
+            ProtocolHash = ProtocolVersion.Hash,
+            CurrentBundleHash = _bundles.CurrentHash
         };
     }
 
@@ -120,6 +124,7 @@ public class WorkerHub : Hub<IWorkerClient>
         }
 
         await workers.ConnectAsync(Context.ConnectionId, pending.WorkerId, AddressFormat(remoteAddress));
+        workers.SetBundleHash(Context.ConnectionId, pending.BundleHash);
         workers.SetWorkspaces(Context.ConnectionId, info.Workspaces);
         _uiEvents.NotifyWorkersChanged();
         _logger.LogInformation("Worker authenticated: {WorkerId}", pending.WorkerId);
@@ -150,11 +155,27 @@ public class WorkerHub : Hub<IWorkerClient>
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
 
+        // Enforced server-side rather than trusting the worker: the whole point of self-update is that the connected worker may be running arbitrarily old code.
+        if (HasStaleBundle(workers, Context.ConnectionId))
+        {
+            _logger.LogInformation("Ignoring Ready from worker on a stale bundle: {ConnectionId}", Context.ConnectionId);
+            return;
+        }
+
         workers.SetReady(Context.ConnectionId, true);
         _uiEvents.NotifyWorkersChanged();
         _logger.LogInformation("Worker ready: {ConnectionId}", Context.ConnectionId);
 
         await scheduler.DispatchAsync();
+    }
+
+    /// <summary>
+    /// A launcher-run worker whose reported bundle differs from the one this server serves is about to exit for an update; it must never be marked ready or handed work. Classic workers report no bundle and are never stale.
+    /// </summary>
+    private bool HasStaleBundle(WorkerRepository workers, string connectionId)
+    {
+        var connectionBundle = workers.GetBundleHash(connectionId);
+        return connectionBundle != null && _bundles.CurrentHash != null && connectionBundle != _bundles.CurrentHash;
     }
 
     /// <summary>
@@ -263,11 +284,18 @@ public class WorkerHub : Hub<IWorkerClient>
 
         _logger.LogInformation("Job completed: {JobId} - {Status}", jobId, result.Status);
         await scheduler.CompleteJobAsync(jobId, result.Status);
-        workers.SetReady(Context.ConnectionId, true);
 
         if (result.Workspaces != null)
             workers.SetWorkspaces(Context.ConnectionId, result.Workspaces);
 
+        // A launcher-run worker on a stale bundle will exit for an update right after this call returns. Marking it ready would race a new assignment against that exit, so leave it not-ready and skip the dispatch that exists solely to feed the just-freed worker.
+        if (HasStaleBundle(workers, Context.ConnectionId))
+        {
+            _logger.LogInformation("Worker {WorkerId} completed job {JobId} on a stale bundle; draining for bundle update", worker.Id, jobId);
+            return;
+        }
+
+        workers.SetReady(Context.ConnectionId, true);
         await scheduler.DispatchAsync();
     }
 
@@ -353,4 +381,5 @@ internal class PendingAuth
     public required byte[] WorkerNonce { get; init; }
     public required byte[] ServerNonce { get; init; }
     public required DateTime CreatedAt { get; init; }
+    public string? BundleHash { get; init; }
 }

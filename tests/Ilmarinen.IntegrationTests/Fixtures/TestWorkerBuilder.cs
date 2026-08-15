@@ -15,15 +15,17 @@ public class TestWorkerBuilder
     private readonly Guid _workerId;
     private readonly string _workspacePath;
     private readonly IWorkerDiagnostic? _diagnosticOverride;
+    private readonly string? _bundleHash;
 
     public TestWorkerBuilder(string serverUrl, string workerKey)
         : this(serverUrl, workerKey, diagnostic: null) { }
 
-    public TestWorkerBuilder(string serverUrl, string workerKey, IWorkerDiagnostic? diagnostic)
+    public TestWorkerBuilder(string serverUrl, string workerKey, IWorkerDiagnostic? diagnostic, string? bundleHash = null)
     {
         _serverUrl = serverUrl;
         _workerKey = workerKey;
         _diagnosticOverride = diagnostic;
+        _bundleHash = bundleHash;
         // Parse the worker ID from the key (format: {name}:{guid}:{priv}:{pub})
         _workerId = Guid.Parse(workerKey.Split(':')[1]);
         _workspacePath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-worker-{_workerId}");
@@ -38,7 +40,8 @@ public class TestWorkerBuilder
         {
             ServerUrl = _serverUrl,
             WorkspacePath = _workspacePath,
-            WorkerKey = _workerKey
+            WorkerKey = _workerKey,
+            BundleHash = _bundleHash
         };
 
         var builder = Host.CreateApplicationBuilder();
@@ -59,6 +62,7 @@ public class TestWorkerBuilder
         builder.Services.AddSingleton(sp => new SleepInhibitor(
             sp.GetRequiredService<ILogger<SleepInhibitor>>(),
             busAddress: "unix:path=/nonexistent/ilmarinen-test-no-bus"));
+        builder.Services.AddSingleton<UpdateSignal>();
         builder.Services.AddHostedService<WorkerService>();
 
         return builder.Build();

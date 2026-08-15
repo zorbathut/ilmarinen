@@ -1,0 +1,40 @@
+# Self-updating Ilmarinen worker: a thin launcher that downloads the worker bundle from the server and swaps to new bundles when the server is updated.
+# Run every command from this directory: cd deploy/worker-launcher && docker compose up -d --build
+# See README.md — this mode means the server pushes (signed) code to this host; use deploy/worker-docker/ for hosts that must not auto-update.
+
+name: ilmarinen-worker-launcher
+
+services:
+  launcher:
+    build:
+      # Only the launcher is built from source; the worker itself is downloaded from the server at runtime. The launcher's protocol never changes, so it does not need rebuilding on server updates — that is the point.
+      context: ../..
+      dockerfile: src/Ilmarinen.WorkerLauncher/Dockerfile
+    restart: unless-stopped
+    # The launcher forwards SIGTERM to the worker and waits up to ~25s for an orderly stop; Docker's default 10s grace would SIGKILL both first.
+    stop_grace_period: 40s
+    environment:
+      # Must include the server's *worker* port (8081 by default), not the public one.
+      ILMARINEN_SERVER_URL: ${ILMARINEN_SERVER_URL:?set ILMARINEN_SERVER_URL in .env (see .env.example)}
+      ILMARINEN_WORKER_KEY: ${ILMARINEN_WORKER_KEY:?register a worker on the server, then set ILMARINEN_WORKER_KEY in .env (see .env.example)}
+      ILMARINEN_WORKSPACE_PATH: /data/workspaces
+      ILMARINEN_BUNDLE_CACHE_PATH: /data/bundles
+    volumes:
+      # The worker inspects its own container to map the workspace to a host path, which it then bind-mounts into job containers. It also spawns every job container here.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The destination MUST equal ILMARINEN_WORKSPACE_PATH: that equality is how the worker finds this mount and learns its host-side path. The worker refuses to start if it doesn't match.
+      - workspaces:/data/workspaces
+      # Downloaded bundles survive container restarts. One launcher per bundles volume — see README.md.
+      - bundles:/data/bundles
+    logging:
+      # Bounds this container's own logs only. Job containers are the daemon's business — see deploy/worker-docker/README.md on daemon-level log limits and pruning.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Do NOT set `hostname:` on the launcher. Docker defaults it to the container ID, which the worker (running inside this container) inspects to discover itself and which job containers resolve by DNS to reach the worker's agent API. Overriding it breaks both.
+
+volumes:
+  workspaces:
+  bundles:

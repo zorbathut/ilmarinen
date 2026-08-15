@@ -14,6 +14,7 @@
 @inject IHubContext<WorkerHub, IWorkerClient> HubContext
 @inject UIEventService UIEvents
 @inject NavigationManager Navigation
+@inject WorkerBundleService BundleService
 
 <h1 class="page-title">Worker @(worker?.Name ?? Id)</h1>
 
@@ -47,6 +48,22 @@
 
             <span class="detail-label">Last IP</span>
             <span class="detail-value">@(worker.LastIpAddress ?? "-")</span>
+
+            <span class="detail-label">Bundle</span>
+            <span class="detail-value">
+                @if (worker.BundleHash == null)
+                {
+                    <span>-</span>
+                }
+                else
+                {
+                    <span title="@worker.BundleHash">@worker.BundleHash[..Math.Min(8, worker.BundleHash.Length)]</span>
+                    @if (BundleService.CurrentHash != null && worker.BundleHash != BundleService.CurrentHash)
+                    {
+                        <span style="color: var(--warning, orange);"> (stale)</span>
+                    }
+                }
+            </span>
         </div>
     </div>
 

@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
+    <!-- Frozen: the launcher (Ilmarinen.WorkerLauncher) spawns `dotnet ilmarinen-worker.dll` from downloaded bundles, and deployed launchers are never auto-updated. Renaming this breaks every launcher host. -->
     <AssemblyName>ilmarinen-worker</AssemblyName>
   </PropertyGroup>
 

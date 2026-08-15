@@ -19,6 +19,7 @@ public static class IlmarinenServerExtensions
 
         services.AddSingleton<CredentialEncryptionService>();
         services.AddSingleton(_ => new ServerKeyService(Environment.GetEnvironmentVariable("ILMARINEN_SERVER_KEY")));
+        services.AddSingleton<WorkerBundleService>();
         services.AddScoped<WorkerRegistrationService>();
         services.AddScoped<JobRepository>();
         services.AddScoped<JobLogRepository>();
@@ -86,6 +87,23 @@ public static class IlmarinenServerExtensions
             return Results.Ok(artifact);
         }).DisableAntiforgery()
          .WithMetadata(new DisableRequestSizeLimitAttribute());
+
+        // Bundle serving for launcher-run workers. Unauthenticated by the same reasoning as the artifact upload above (port-gated); integrity comes from the manifest's ECDSA signature, which the launcher verifies with the server public key embedded in its worker key.
+        endpoints.MapGet("/hub/workers/bundle/manifest", (WorkerBundleService bundles) =>
+        {
+            if (!bundles.IsEnabled)
+                return Results.NotFound();
+
+            return Results.Json(bundles.GetManifest());
+        });
+
+        endpoints.MapGet("/hub/workers/bundle/download", (WorkerBundleService bundles) =>
+        {
+            if (!bundles.IsEnabled)
+                return Results.NotFound();
+
+            return Results.File(bundles.BundlePath!, "application/zip");
+        });
 
         return endpoints;
     }

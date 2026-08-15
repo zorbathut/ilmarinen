@@ -26,6 +26,8 @@ public class WorkerService : BackgroundService
     private readonly WorkspaceManager _workspaceManager;
     private readonly IWorkerDiagnostic _diagnostic;
     private readonly SleepInhibitor _sleepInhibitor;
+    private readonly UpdateSignal _updateSignal;
+    private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<WorkerService> _logger;
     private readonly MessageBuffer _messageBuffer = new();
     private HubConnection? _connection;
@@ -38,6 +40,10 @@ public class WorkerService : BackgroundService
 
     private DiagnosticReport? _lastDiagnostic;
     private CancellationToken _stoppingToken;
+
+    // True once an authenticated server has told us it serves a different bundle than the one we run. Only meaningful in launcher mode (BundleHash set).
+    private volatile bool _updatePending;
+    private int _handshakeFailures;
 
     private Guid? CurrentJobId
     {
@@ -71,6 +77,8 @@ public class WorkerService : BackgroundService
         WorkspaceManager workspaceManager,
         IWorkerDiagnostic diagnostic,
         SleepInhibitor sleepInhibitor,
+        UpdateSignal updateSignal,
+        IHostApplicationLifetime lifetime,
         ILogger<WorkerService> logger)
     {
         _config = config;
@@ -78,6 +86,8 @@ public class WorkerService : BackgroundService
         _workspaceManager = workspaceManager;
         _diagnostic = diagnostic;
         _sleepInhibitor = sleepInhibitor;
+        _updateSignal = updateSignal;
+        _lifetime = lifetime;
         _logger = logger;
     }
 
@@ -154,8 +164,24 @@ public class WorkerService : BackgroundService
                 {
                     _logger.LogWarning("Connection lost, reconnecting...");
                     await ConnectWithRetryAsync(stoppingToken);
-                    await ConnectAndSync();
-                    _logger.LogInformation("Worker {WorkerId} reconnected and ready", _workerId);
+                    try
+                    {
+                        await ConnectAndSync();
+                        _logger.LogInformation("Worker {WorkerId} reconnected and ready", _workerId);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Same zombie hazard as the Reconnected handler: without a teardown, the connection stays Connected-but-unauthenticated and this loop would happily heartbeat into the void forever.
+                        _logger.LogError(ex, "ConnectAndSync after manual reconnect failed; tearing down connection to retry");
+                        try
+                        {
+                            await _connection.StopAsync(stoppingToken);
+                        }
+                        catch (Exception stopEx)
+                        {
+                            _logger.LogDebug(stopEx, "Teardown StopAsync failed; connection state will settle via the next loop iteration");
+                        }
+                    }
                 }
                 else if (_connection.State == HubConnectionState.Connected)
                 {
@@ -205,7 +231,8 @@ public class WorkerService : BackgroundService
         {
             WorkerId = _workerId,
             ProtocolHash = ProtocolVersion.Hash,
-            Nonce = workerNonce
+            Nonce = workerNonce,
+            BundleHash = _config.BundleHash
         });
 
         // Step 2: Verify protocol compatibility
@@ -230,6 +257,12 @@ public class WorkerService : BackgroundService
             throw new InvalidOperationException("Server identity verification failed.");
         }
 
+        // Act only when the server has an opinion (null = no bundle configured, which must never drain the fleet). Assigning rather than or-ing lets a rollback to our own bundle clear a previously pending update. Note the handshake authenticates the peer, not this field — the channel is plaintext, so a MITM can tamper with it; that only causes spurious or suppressed restarts, never code execution (the launcher verifies bundle signatures).
+        if (_config.BundleHash != null && challenge.CurrentBundleHash != null)
+        {
+            _updatePending = challenge.CurrentBundleHash != _config.BundleHash;
+        }
+
         // Step 4: Sign the same data and authenticate
         using var workerKey = _config.GetWorkerPrivateKey();
         var signature = workerKey.SignData(challengeData, HashAlgorithmName.SHA256);
@@ -248,6 +281,47 @@ public class WorkerService : BackgroundService
     /// </summary>
     private async Task ConnectAndSync()
     {
+        try
+        {
+            await ConnectAndSyncCore();
+            Interlocked.Exchange(ref _handshakeFailures, 0);
+        }
+        catch
+        {
+            RecordHandshakeFailure();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// In launcher mode, persistent handshake failure means the server most likely moved to an incompatible build (a protocol break prevents us from ever learning the new bundle hash the normal way), so exit and let the launcher fetch the current bundle. The launcher backs off when the manifest hash turns out unchanged, so a spurious exit here (server down, revoked key) costs nothing but a restart.
+    /// </summary>
+    private void RecordHandshakeFailure()
+    {
+        if (_config.BundleHash == null || CurrentJobId != null)
+        {
+            return;
+        }
+
+        var failures = Interlocked.Increment(ref _handshakeFailures);
+
+        // A buffered message (typically a job result) dies with the process, so hold out far longer when the buffer is non-empty — exiting would mark a finished job Failed. Not forever, though: across a genuine protocol break the buffer is undeliverable anyway.
+        var threshold = _messageBuffer.IsEmpty ? 3 : 20;
+        if (failures >= threshold)
+        {
+            RequestUpdateExit($"{failures} consecutive handshake failures");
+        }
+    }
+
+    private void RequestUpdateExit(string reason)
+    {
+        _logger.LogInformation("Exiting for bundle update: {Reason}", reason);
+        _updateSignal.UpdateRequired = true;
+        _lifetime.StopApplication();
+    }
+
+    private async Task ConnectAndSyncCore()
+    {
         await Authenticate();
 
         // Replay buffered messages first so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
@@ -260,8 +334,9 @@ public class WorkerService : BackgroundService
             }
             catch (Exception ex)
             {
+                // Throw rather than return: a quiet return would leave a connected-but-unsynced worker (never Ready, never draining) that nothing retries, and would reset the handshake-failure counter as if this sync had succeeded.
                 _logger.LogWarning(ex, "Failed to replay {Method}, will retry on next reconnect", msg!.Method);
-                return;
+                throw;
             }
         }
 
@@ -286,6 +361,13 @@ public class WorkerService : BackgroundService
         // If a job is running we don't gate it on the diagnostic — the in-flight job is the source of truth. Skip Ready (the existing contract) and skip the diagnostic.
         if (currentJob != null)
             return;
+
+        // Idle on a stale bundle: exit now, before Ready, so the server never dispatches to a worker that is about to vanish. The buffer replay above already delivered anything pending (a buffered JobCompleted included), so nothing is lost.
+        if (_updatePending)
+        {
+            RequestUpdateExit($"server bundle differs from running bundle {_config.BundleHash}");
+            return;
+        }
 
         // First connect ever: run the diagnostic. Subsequent reconnects re-push the cached result so the server reconstructs its state without re-running (and without the per-reconnect cost of an image pull / container run).
         if (_lastDiagnostic == null)
@@ -351,8 +433,10 @@ public class WorkerService : BackgroundService
             if (_lastDiagnostic != null)
             {
                 await SendReliableAsync("ReportDiagnostic", _lastDiagnostic);
-                if (CanAcceptJobs(_lastDiagnostic.Status))
-                    await SendReliableAsync("Ready");
+                if (CanAcceptJobs(_lastDiagnostic.Status) && !_updatePending)
+                {
+                    await SendReadyIfConnectedAsync();
+                }
             }
             return;
         }
@@ -398,9 +482,11 @@ public class WorkerService : BackgroundService
             _lastDiagnostic = report;
             await SendReliableAsync("ReportDiagnostic", report);
 
-            // Server flipped us not-ready before invoking the diagnostic. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready.
-            if (CanAcceptJobs(report.Status))
-                await SendReliableAsync("Ready");
+            // Server flipped us not-ready before invoking the diagnostic. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready. And never ask while an update is pending — a draining worker must not attract jobs.
+            if (CanAcceptJobs(report.Status) && !_updatePending)
+            {
+                await SendReadyIfConnectedAsync();
+            }
         }
         finally
         {
@@ -519,7 +605,13 @@ public class WorkerService : BackgroundService
         }
 
         // The server's JobCompleted handler marks this worker ready and dispatches the next queued job. Sending an explicit Ready here too would double-trigger dispatch and could stack a second job on this worker.
-        await SendReliableAsync("JobCompleted", job.Id, result);
+        var delivered = await SendReliableAsync("JobCompleted", job.Id, result);
+
+        // Exit only on confirmed delivery: a buffered JobCompleted dies with this process and the job would be marked Failed on relaunch. When buffered, the reconnect path replays the buffer and then performs this drain itself.
+        if (_updatePending && delivered)
+        {
+            RequestUpdateExit("job finished on a stale bundle");
+        }
     }
 
     private IReadOnlyList<WorkspaceInfo> SafeDiscoverWorkspaces()
@@ -535,23 +627,46 @@ public class WorkerService : BackgroundService
     /// <summary>
     /// Sends a message to the server with implicit acknowledgment via InvokeAsync.
     /// If the server is unreachable, the message is buffered for replay on reconnection.
+    /// Returns whether the message was actually delivered, as opposed to buffered.
     /// </summary>
-    private async Task SendReliableAsync(string method, params object[] args)
+    private async Task<bool> SendReliableAsync(string method, params object[] args)
     {
         if (_connection?.State != HubConnectionState.Connected)
         {
             _messageBuffer.Enqueue(new BufferedMessage { Method = method, Args = args });
-            return;
+            return false;
         }
 
         try
         {
             await _connection.InvokeCoreAsync(method, args);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to send {Method}, buffering for replay", method);
             _messageBuffer.Enqueue(new BufferedMessage { Method = method, Args = args });
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Ready is a state hint that ConnectAndSyncCore re-derives on every reconnect, so it must never be buffered: a replayed stale Ready would arrive after re-auth and mark a worker ready past the update-pending gates (same reasoning as the Running placeholder above).
+    /// </summary>
+    private async Task SendReadyIfConnectedAsync()
+    {
+        if (_connection?.State != HubConnectionState.Connected)
+        {
+            return;
+        }
+
+        try
+        {
+            await _connection.SendAsync("Ready");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not send Ready; the next reconnect re-derives it");
         }
     }
 

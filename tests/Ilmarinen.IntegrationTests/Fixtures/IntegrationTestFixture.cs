@@ -9,9 +9,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http.Json;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Threading;
@@ -26,6 +28,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     private IHost? _workerHost;
     private TestWorkerBuilder? _workerBuilder;
     private CancellationTokenSource? _workerCts;
+    private readonly List<string> _bundleFiles = [];
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -38,12 +41,18 @@ public class IntegrationTestFixture : IAsyncDisposable
     public IServiceProvider Services => _factory.Services;
     public string? WorkerWorkspacePath => _workerBuilder?.WorkspacePath;
 
-    public async Task SetupAsync()
+    /// <summary>The worker's update-exit flag, captured at worker start because RunAsync disposes the host's service provider when the worker stops — which is precisely the moment drain tests want to read it.</summary>
+    public Ilmarinen.Worker.Services.UpdateSignal? WorkerUpdateSignal { get; private set; }
+
+    /// <summary>Completes when the in-process worker host stops — including when the worker stops itself to request a bundle update.</summary>
+    public Task? WorkerRunTask { get; private set; }
+
+    public async Task SetupAsync(string? workerBundlePath = null)
     {
         // Limit concurrent fixtures to avoid exhausting Docker's network address pool. Each fixture may run a job that creates a Docker network.
         await DockerCleanup.NetworkSemaphore.WaitAsync();
 
-        _factory = new IlmarinenWebApplicationFactory();
+        _factory = new IlmarinenWebApplicationFactory { WorkerBundlePath = workerBundlePath };
         await _factory.InitializeAsync();
 
         _httpClient = _factory.CreateClient();
@@ -60,7 +69,7 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     public Task<Guid> StartWorkerAsync() => StartWorkerAsync(diagnostic: null, waitForReady: true);
 
-    public async Task<Guid> StartWorkerAsync(Ilmarinen.Worker.Services.IWorkerDiagnostic? diagnostic, bool waitForReady)
+    public async Task<Guid> StartWorkerAsync(Ilmarinen.Worker.Services.IWorkerDiagnostic? diagnostic, bool waitForReady, string? bundleHash = null)
     {
         // Pre-register the worker on the server to get auth credentials
         _workerCount++;
@@ -68,12 +77,13 @@ public class IntegrationTestFixture : IAsyncDisposable
         var registrationService = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
         var result = await registrationService.RegisterWorkerAsync($"test-worker-{_workerCount}");
 
-        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey, diagnostic);
+        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey, diagnostic, bundleHash);
         _workerHost = _workerBuilder.Build();
+        WorkerUpdateSignal = _workerHost.Services.GetRequiredService<Ilmarinen.Worker.Services.UpdateSignal>();
         _workerCts = new CancellationTokenSource();
 
         // Start worker in background
-        _ = _workerHost.RunAsync(_workerCts.Token);
+        WorkerRunTask = _workerHost.RunAsync(_workerCts.Token);
 
         if (waitForReady)
         {
@@ -367,8 +377,17 @@ public class IntegrationTestFixture : IAsyncDisposable
 
         if (_workerHost != null)
         {
-            await _workerHost.StopAsync(TimeSpan.FromSeconds(5));
-            _workerHost.Dispose();
+            // RunAsync disposes the host when the worker stops itself (e.g. the update drain), so both calls may face a disposed host.
+            try
+            {
+                await _workerHost.StopAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (ObjectDisposedException) { }
+            try
+            {
+                _workerHost.Dispose();
+            }
+            catch (ObjectDisposedException) { }
             _workerHost = null;
         }
 
@@ -389,10 +408,37 @@ public class IntegrationTestFixture : IAsyncDisposable
                 "No preserved worker identity. Call StopWorkerAsync(preserveIdentity: true) first.");
 
         _workerHost = _workerBuilder.Build();
+        WorkerUpdateSignal = _workerHost.Services.GetRequiredService<Ilmarinen.Worker.Services.UpdateSignal>();
         _workerCts = new CancellationTokenSource();
-        _ = _workerHost.RunAsync(_workerCts.Token);
+        WorkerRunTask = _workerHost.RunAsync(_workerCts.Token);
         await WaitForWorkerReadyAsync(_workerBuilder.WorkerId);
         return _workerBuilder.WorkerId;
+    }
+
+    /// <summary>
+    /// Restart the server on the same ports with a different (or no) worker bundle — the production "server deploy" event.
+    /// </summary>
+    public async Task RestartServerAsync(string? workerBundlePath)
+    {
+        await _factory.RestartServerAsync(workerBundlePath);
+    }
+
+    /// <summary>
+    /// Writes a fake bundle file and returns its path and SHA-256 hex hash. The server never inspects bundle content — it only hashes, signs, and serves it — so arbitrary bytes suffice for tests. The file is deleted on fixture disposal.
+    /// </summary>
+    public async Task<(string Path, string Hash)> CreateBundleFileAsync()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-bundle-{Guid.NewGuid():N}.zip");
+        var content = Guid.NewGuid().ToByteArray();
+        await File.WriteAllBytesAsync(path, content);
+        _bundleFiles.Add(path);
+        return (path, Convert.ToHexString(SHA256.HashData(content)));
+    }
+
+    /// <summary>Registers a bundle file created before SetupAsync (the server hashes its bundle at startup) for disposal-time cleanup.</summary>
+    public void TrackBundleFile(string path)
+    {
+        _bundleFiles.Add(path);
     }
 
     /// <summary>
@@ -423,6 +469,18 @@ public class IntegrationTestFixture : IAsyncDisposable
             await StopWorkerAsync();
             _httpClient?.Dispose();
             await _factory.DisposeAsync();
+
+            foreach (var bundleFile in _bundleFiles)
+            {
+                try
+                {
+                    File.Delete(bundleFile);
+                }
+                catch (IOException)
+                {
+                    // Cleanup only; the OS temp dir is the backstop
+                }
+            }
         }
         finally
         {

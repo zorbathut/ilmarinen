@@ -1,4 +1,5 @@
 using Ilmarinen.Database;
+using Ilmarinen.Server.Services;
 using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -27,6 +28,12 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
     private WebApplication? _app;
     private bool _initialized;
     private string? _artifactPath;
+    private string? _serverKeyBase64;
+    private int _publicPort;
+    private int _workerPort;
+
+    /// <summary>Bundle zip served to launcher-run workers. Set before InitializeAsync; null = feature off.</summary>
+    public string? WorkerBundlePath { get; set; }
 
     public string PostgresConnectionString => _postgres.ConnectionString;
 
@@ -45,10 +52,9 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
         await _postgres.StartAsync();
 
-        // Generate a test server key for worker authentication
+        // Generate a test server key for worker authentication. Held in a field and injected explicitly (not via the ambient ILMARINEN_SERVER_KEY env var) because parallel fixtures overwrite the process-wide variable, and a server restart re-resolving it would pick up a foreign key and break auth for already-registered workers.
         using var testKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var serverKeyBase64 = Convert.ToBase64String(testKey.ExportParameters(true).D!);
-        Environment.SetEnvironmentVariable("ILMARINEN_SERVER_KEY", serverKeyBase64);
+        _serverKeyBase64 = Convert.ToBase64String(testKey.ExportParameters(true).D!);
 
         _artifactPath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-artifacts-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_artifactPath);
@@ -58,6 +64,8 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         {
             try
             {
+                _publicPort = GetAvailablePort();
+                _workerPort = GetAvailablePort();
                 await StartServerAsync();
                 break;
             }
@@ -73,18 +81,51 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Stop the server process and start a fresh one on the same ports, with the given worker bundle. This reproduces a production server deploy exactly: new process, new bundle hash, every SignalR connection dropped, in-memory worker state gone, database preserved.
+    /// </summary>
+    public async Task RestartServerAsync(string? newWorkerBundlePath)
+    {
+        if (_app != null)
+        {
+            await _app.StopAsync();
+            await _app.DisposeAsync();
+            _app = null;
+        }
+
+        WorkerBundlePath = newWorkerBundlePath;
+
+        // Same ports, so the reconnecting worker finds us — retry with delay rather than fresh ports, accepting the small window where a parallel test grabs them.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await StartServerAsync();
+                break;
+            }
+            catch (IOException) when (attempt < 10)
+            {
+                if (_app != null)
+                {
+                    await _app.DisposeAsync();
+                    _app = null;
+                }
+                await Task.Delay(200);
+            }
+        }
+    }
+
     private async Task StartServerAsync()
     {
-        var publicPort = GetAvailablePort();
-        var workerPort = GetAvailablePort();
-        ServerUrl = $"http://localhost:{publicPort}";
-        WorkerUrl = $"http://localhost:{workerPort}";
+        ServerUrl = $"http://localhost:{_publicPort}";
+        WorkerUrl = $"http://localhost:{_workerPort}";
 
         var serverConfig = new ServerConfig
         {
-            PublicPort = publicPort,
-            WorkerPort = workerPort,
-            ArtifactStoragePath = _artifactPath!
+            PublicPort = _publicPort,
+            WorkerPort = _workerPort,
+            ArtifactStoragePath = _artifactPath!,
+            WorkerBundlePath = WorkerBundlePath
         };
 
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -96,8 +137,8 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.ListenLocalhost(publicPort);
-            options.ListenLocalhost(workerPort);
+            options.ListenLocalhost(_publicPort);
+            options.ListenLocalhost(_workerPort);
         });
 
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(PostgresConnectionString);
@@ -110,6 +151,8 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
                     w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning)));
 
         builder.Services.AddIlmarinenServer();
+        // Pin the key: AddIlmarinenServer's registration reads the ambient env var, which parallel fixtures race on. Last registration wins.
+        builder.Services.AddSingleton(new ServerKeyService(_serverKeyBase64));
         builder.Services.AddHealthChecks();
 
         builder.Environment.EnvironmentName = "Testing";

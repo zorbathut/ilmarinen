@@ -163,6 +163,7 @@ A comment earns its place by saying something the code cannot. That's usually on
 
 **Entry Points:**
 - **Ilmarinen.Cli** - Command-line interface for local execution and job submission (Cocona-based)
+- **Ilmarinen.WorkerLauncher** - Thin self-updating worker host: downloads the signed worker bundle from the server, runs the worker as a child process, and relaunches it from the current bundle when the server updates. Deliberately references no Ilmarinen projects (it is the one component that cannot auto-update); its manifest contract and exit-code constant are frozen duplicates.
 
 ### Key Design Pattern
 
@@ -236,11 +237,17 @@ The `IJobContext` interface provides these capabilities to step actions:
 ### Server/Worker Communication
 
 SignalR hub methods:
-- `Register(WorkerRegister)` - Worker joins, validates build compatibility
+- `Connect(WorkerConnect)` → `AuthChallenge` - Protocol-hash check, mutual ECDSA challenge; exchanges bundle hashes for launcher-run workers
+- `Authenticate(WorkerAuthenticate)` - Signature verification completes the handshake
+- `Reconnect(WorkerReconnect)` - Job-state reconciliation after reconnection
 - `Ready()` - Worker signals availability for jobs
 - `StreamLogs(LogChunk)` - Worker streams output chunks
 - `JobStarted(jobId)` / `JobCompleted(jobId, result)` - Status updates
 - `Heartbeat(WorkerHeartbeat)` - Connection keepalive
+
+### Worker Self-Update (launcher mode)
+
+The server can serve a zipped worker publish output (baked into its image; `ServerConfig.WorkerBundlePath`) at `GET /hub/workers/bundle/manifest` and `/download` on the worker port. The manifest is a frozen JSON contract carrying the bundle's SHA-256 and an ECDSA signature that the launcher verifies with the server public key inside `ILMARINEN_WORKER_KEY`. Workers launched by `Ilmarinen.WorkerLauncher` (env `ILMARINEN_BUNDLE_HASH`) report their bundle hash at auth and drain when it is stale — immediately when idle, after `JobCompleted` delivery when busy — exiting with `WorkerExitCodes.UpdateRequired` so the launcher relaunches them from the current bundle. Classic workers (no bundle hash) are unaffected; the mode is opt-in per host.
 
 ### Security
 

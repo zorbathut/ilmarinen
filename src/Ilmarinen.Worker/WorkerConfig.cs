@@ -19,6 +19,11 @@ public class WorkerConfig
     public required string WorkerKey { get; init; }
     public string WorkspacePath { get; init; } = GetDefaultWorkspacePath();
 
+    /// <summary>
+    /// Hash of the bundle this worker was launched from. Set via ILMARINEN_BUNDLE_HASH by the launcher; null means classic mode (no self-update behavior).
+    /// </summary>
+    public string? BundleHash { get; init; }
+
     public static string GetDefaultWorkspacePath()
     {
         var dataDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

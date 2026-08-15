@@ -31,6 +31,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ilmarinen.NotificationClien
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ilmarinen.DiscordBot", "src\Ilmarinen.DiscordBot\Ilmarinen.DiscordBot.csproj", "{ED6704CB-DE13-4E52-B8FA-C12E4212193E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ilmarinen.WorkerLauncher", "src\Ilmarinen.WorkerLauncher\Ilmarinen.WorkerLauncher.csproj", "{43B04A0D-ED9B-4943-95FA-09167D585D17}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -185,6 +187,18 @@ Global
 		{ED6704CB-DE13-4E52-B8FA-C12E4212193E}.Release|x64.Build.0 = Release|Any CPU
 		{ED6704CB-DE13-4E52-B8FA-C12E4212193E}.Release|x86.ActiveCfg = Release|Any CPU
 		{ED6704CB-DE13-4E52-B8FA-C12E4212193E}.Release|x86.Build.0 = Release|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Debug|x64.Build.0 = Debug|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Debug|x86.Build.0 = Debug|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Release|Any CPU.Build.0 = Release|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Release|x64.ActiveCfg = Release|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Release|x64.Build.0 = Release|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Release|x86.ActiveCfg = Release|Any CPU
+		{43B04A0D-ED9B-4943-95FA-09167D585D17}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -202,5 +216,6 @@ Global
 		{E315C4EB-D4B9-42C1-829E-0A27ACB1AE24} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{1D1DEB3A-94EA-4F90-878B-0E0F3B7E6507} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{ED6704CB-DE13-4E52-B8FA-C12E4212193E} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{43B04A0D-ED9B-4943-95FA-09167D585D17} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

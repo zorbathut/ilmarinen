@@ -1,0 +1,22 @@
+# Self-updating worker for the dev stack — shares the server's Compose network, so it only works on the server's host.
+# To run a launcher-based worker on a separate host, use deploy/worker-launcher/ instead.
+services:
+  worker-launcher:
+    build:
+      context: .
+      dockerfile: src/Ilmarinen.WorkerLauncher/Dockerfile
+    stop_grace_period: 40s
+    environment:
+      ILMARINEN_SERVER_URL: http://server:8081
+      # Set after registering a worker via the server UI or POST /api/workers
+      ILMARINEN_WORKER_KEY: "register-worker-on-server-first"
+      ILMARINEN_WORKSPACE_PATH: /data/workspaces
+      ILMARINEN_BUNDLE_CACHE_PATH: /data/bundles
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - launcher-workspace:/data/workspaces
+      - launcher-bundles:/data/bundles
+
+volumes:
+  launcher-workspace:
+  launcher-bundles:

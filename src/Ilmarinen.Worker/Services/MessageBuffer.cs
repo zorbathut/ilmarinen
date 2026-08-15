@@ -30,6 +30,11 @@ public class MessageBuffer
     {
         while (_messages.TryDequeue(out _)) { }
     }
+
+    public bool IsEmpty
+    {
+        get { return _messages.IsEmpty; }
+    }
 }
 
 public record BufferedMessage

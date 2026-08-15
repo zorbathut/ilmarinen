@@ -84,6 +84,7 @@ public class JobSchedulingTests
     private WorkerHub MakeHub(string connectionId) => new(
         _fixture.Services.GetRequiredService<IServiceScopeFactory>(),
         _fixture.Services.GetRequiredService<ServerKeyService>(),
+        _fixture.Services.GetRequiredService<WorkerBundleService>(),
         _fixture.Services.GetRequiredService<UIEventService>(),
         _fixture.Services.GetRequiredService<ILogger<WorkerHub>>())
     {
@@ -329,14 +330,4 @@ public class JobSchedulingTests
             "the stale ready flag on the busy worker must be cleared");
     }
 
-    private sealed class FakeHubCallerContext(string connectionId) : HubCallerContext
-    {
-        public override string ConnectionId { get; } = connectionId;
-        public override string? UserIdentifier => null;
-        public override ClaimsPrincipal? User => null;
-        public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
-        public override IFeatureCollection Features { get; } = new FeatureCollection();
-        public override CancellationToken ConnectionAborted => CancellationToken.None;
-        public override void Abort() { }
-    }
 }

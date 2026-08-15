@@ -29,6 +29,9 @@ public class WorkerRepository
     // Diagnostic state, keyed by worker ID (not connection ID) so it survives reconnects. Cleared on revoke, not disconnect — a reconnecting worker re-pushes its cached diagnostic so the value here is replaced anyway, and keeping it across the brief reconnect window avoids a "no diagnostic" UI flicker.
     private readonly ConcurrentDictionary<Guid, DiagnosticReport> _workerDiagnostics = new();
 
+    // Bundle hash reported at authentication by launcher-run workers; absent for classic workers.
+    private readonly ConcurrentDictionary<string, string> _connectionBundleHashes = new();
+
     public WorkerRepository(IServiceScopeFactory scopeFactory)
     {
         _scopeFactory = scopeFactory;
@@ -68,6 +71,7 @@ public class WorkerRepository
     {
         _workerWorkspaces.TryRemove(connectionId, out _);
         _readyWorkers.TryRemove(connectionId, out _);
+        _connectionBundleHashes.TryRemove(connectionId, out _);
         // _workerDiagnostics is intentionally NOT cleared here — keyed on worker ID, it survives reconnects, and the worker re-pushes its cached report on auth.
 
         if (_connectionToWorker.TryRemove(connectionId, out var workerId))
@@ -166,6 +170,18 @@ public class WorkerRepository
         return rows > 0;
     }
 
+    public void SetBundleHash(string connectionId, string? bundleHash)
+    {
+        if (bundleHash != null)
+            _connectionBundleHashes[connectionId] = bundleHash;
+    }
+
+    public string? GetBundleHash(string connectionId)
+    {
+        _connectionBundleHashes.TryGetValue(connectionId, out var hash);
+        return hash;
+    }
+
     public void SetWorkspaces(string connectionId, IReadOnlyList<WorkspaceInfo>? workspaces)
     {
         if (workspaces != null)
@@ -235,8 +251,12 @@ public class WorkerRepository
 
         ImmutableList<WorkspaceInfo>? workspaces = null;
         DiagnosticReport? diagnostic = null;
+        string? bundleHash = null;
         if (connectionId != null)
+        {
             _workerWorkspaces.TryGetValue(connectionId, out workspaces);
+            _connectionBundleHashes.TryGetValue(connectionId, out bundleHash);
+        }
         _workerDiagnostics.TryGetValue(w.Id, out diagnostic);
 
         var currentJobIds = await db.Jobs
@@ -261,7 +281,8 @@ public class WorkerRepository
             LastIpAddress = w.LastIpAddress,
             Priority = w.Priority,
             Workspaces = workspaces ?? [],
-            Diagnostic = diagnostic
+            Diagnostic = diagnostic,
+            BundleHash = bundleHash
         };
     }
 
@@ -292,8 +313,12 @@ public class WorkerRepository
 
             ImmutableList<WorkspaceInfo>? workspaces = null;
             DiagnosticReport? diagnostic = null;
+            string? bundleHash = null;
             if (connectionId != null)
+            {
                 _workerWorkspaces.TryGetValue(connectionId, out workspaces);
+                _connectionBundleHashes.TryGetValue(connectionId, out bundleHash);
+            }
             _workerDiagnostics.TryGetValue(w.Id, out diagnostic);
 
             return new WorkerView
@@ -308,7 +333,8 @@ public class WorkerRepository
                 LastIpAddress = w.LastIpAddress,
                 Priority = w.Priority,
                 Workspaces = workspaces ?? [],
-                Diagnostic = diagnostic
+                Diagnostic = diagnostic,
+                BundleHash = bundleHash
             };
         }).ToList();
     }
@@ -334,4 +360,5 @@ public class WorkerView
     public WorkerPriority Priority { get; init; }
     public IReadOnlyList<WorkspaceInfo> Workspaces { get; init; } = [];
     public DiagnosticReport? Diagnostic { get; init; }
+    public string? BundleHash { get; init; }
 }

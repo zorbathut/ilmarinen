@@ -56,6 +56,28 @@ catch (ConfigurationException ex)
     return 1;
 }
 
+// Same eager-resolution reasoning as the key: a WorkerBundlePath pointing at a missing file should stop the server here, not 500 on the first manifest request.
+WorkerBundleService workerBundles;
+try
+{
+    workerBundles = app.Services.GetRequiredService<WorkerBundleService>();
+}
+catch (ConfigurationException ex)
+{
+    Log.Fatal("{Message}", ex.Message);
+    await Log.CloseAndFlushAsync();
+    return 1;
+}
+
+if (workerBundles.IsEnabled)
+{
+    Log.Information("Worker bundle serving enabled: {BundlePath} ({BundleHash})", workerBundles.BundlePath, workerBundles.CurrentHash);
+}
+else
+{
+    Log.Information("Worker bundle serving disabled (Server__WorkerBundlePath not set)");
+}
+
 if (serverKey.IsPlaceholder)
 {
     Log.Warning("ILMARINEN_SERVER_KEY is still the placeholder value. The server will start, but worker registration and credential storage stay disabled until it is set to a real key. Generate one with: openssl rand -base64 32");

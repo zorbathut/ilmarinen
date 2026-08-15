@@ -11,6 +11,7 @@
 @inject WorkspaceDeletionService DeletionService
 @inject IHubContext<WorkerHub, IWorkerClient> HubContext
 @inject UIEventService UIEvents
+@inject WorkerBundleService BundleService
 
 <h1 class="page-title">Workers</h1>
 
@@ -53,6 +54,7 @@
                     <th>Priority</th>
                     <th>Current Job</th>
                     <th>Workspaces</th>
+                    <th class="hide-mobile">Bundle</th>
                     <th class="hide-mobile">Registered</th>
                     <th class="hide-mobile">Last Seen</th>
                     <th></th>
@@ -102,6 +104,21 @@
                                 else
                                 {
                                     <span>-</span>
+                                }
+                            </td>
+                            <td class="hide-mobile">
+                                @if (worker.BundleHash == null)
+                                {
+                                    <span>-</span>
+                                }
+                                else
+                                {
+                                    @* The hash is worker-reported; don't let a short one crash the render *@
+                                    <span title="@worker.BundleHash">@worker.BundleHash[..Math.Min(8, worker.BundleHash.Length)]</span>
+                                    @if (BundleService.CurrentHash != null && worker.BundleHash != BundleService.CurrentHash)
+                                    {
+                                        <span style="color: var(--warning, orange);"> (stale)</span>
+                                    }
                                 }
                             </td>
                             <td class="hide-mobile">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm")</td>
