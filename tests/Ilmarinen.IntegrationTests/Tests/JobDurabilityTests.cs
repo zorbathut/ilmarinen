@@ -101,7 +101,6 @@ public class JobDurabilityTests
 
         // Restart worker — the running job is lost
         await _fixture.StopWorkerAsync(preserveIdentity: true);
-        await Task.Delay(1000);
         await _fixture.RestartWorkerAsync();
 
         // Orphaned job should be failed

@@ -82,7 +82,6 @@ public class WorkerConnectionTests
         Assert.That(connectedIp, Is.Not.Null);
 
         await _fixture.StopWorkerAsync();
-        await _fixture.WaitForWorkerDisconnectAsync(workerId);
 
         using var afterScope = _fixture.Services.CreateScope();
         var afterWorkers = afterScope.ServiceProvider.GetRequiredService<WorkerRepository>();

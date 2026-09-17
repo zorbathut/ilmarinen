@@ -389,6 +389,9 @@ public class IntegrationTestFixture : IAsyncDisposable
             }
             catch (ObjectDisposedException) { }
             _workerHost = null;
+
+            // A stopped host doesn't mean the server has handled the disconnect yet; until it has, the old connection can still read as connected and Ready.
+            await WaitForWorkerDisconnectAsync(_workerBuilder!.WorkerId);
         }
 
         if (!preserveIdentity)
@@ -466,9 +469,16 @@ public class IntegrationTestFixture : IAsyncDisposable
     {
         try
         {
-            await StopWorkerAsync();
-            _httpClient?.Dispose();
-            await _factory.DisposeAsync();
+            // The server and its database container must go even when stopping the worker fails, e.g. because a failed server restart left nothing to confirm the disconnect against.
+            try
+            {
+                await StopWorkerAsync();
+            }
+            finally
+            {
+                _httpClient?.Dispose();
+                await _factory.DisposeAsync();
+            }
 
             foreach (var bundleFile in _bundleFiles)
             {
