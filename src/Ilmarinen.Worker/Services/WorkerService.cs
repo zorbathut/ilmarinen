@@ -557,7 +557,7 @@ public class WorkerService : BackgroundService
 
                 await _sender!.SendOrBufferAsync("JobStarted", job.Id);
 
-                var runner = new JobRunner(_config, _workspaceManager, job, _connection!, jobLogger, logCollector);
+                var runner = new JobRunner(_config, _workspaceManager, job, _sender!, jobLogger, logCollector);
                 var runResult = await runner.ExecuteAsync(cts.Token);
 
                 var status = cts.IsCancellationRequested ? JobStatus.Cancelled : runResult.Status;

@@ -4,7 +4,6 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Ilmarinen.Scripting;
 using LibGit2Sharp;
-using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 using System.IO;
 using System.Net.Http.Headers;
@@ -22,7 +21,7 @@ public class JobRunner
     private readonly WorkerConfig _config;
     private readonly WorkspaceManager _workspaceManager;
     private readonly JobAssignment _job;
-    private readonly HubConnection _connection;
+    private readonly BufferedHubSender _sender;
     private readonly ILogger _logger;
     private readonly LogCollector _logCollector;
 
@@ -30,14 +29,14 @@ public class JobRunner
         WorkerConfig config,
         WorkspaceManager workspaceManager,
         JobAssignment job,
-        HubConnection connection,
+        BufferedHubSender sender,
         ILogger logger,
         LogCollector logCollector)
     {
         _config = config;
         _workspaceManager = workspaceManager;
         _job = job;
-        _connection = connection;
+        _sender = sender;
         _logger = logger;
         _logCollector = logCollector;
     }
@@ -60,8 +59,8 @@ public class JobRunner
             var commitSha = CheckoutRef(tempDir);
             _logger.LogInformation("Resolved {Ref} to {CommitSha}", _job.Ref, commitSha);
 
-            // Report resolved commit to server
-            await _connection.InvokeCoreAsync("ReportCommit", [_job.Id, commitSha]);
+            // Report resolved commit to server. An unreachable server delays the report; it must not fail the job.
+            await _sender.SendOrBufferAsync("ReportCommit", _job.Id, commitSha);
 
             // 3. Load pipeline script to get workspace config
             var scriptPath = Path.Combine(tempDir, _job.ScriptPath);
