@@ -179,8 +179,7 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
 
     private async Task SendToDiscordAsync(JobNotification notification)
     {
-        var channel = await _discordClient!.GetChannelAsync(_channelId) as IMessageChannel
-            ?? throw new InvalidOperationException($"Cannot find Discord channel with ID {_channelId}");
+        var channel = await GetChannelAsync();
 
         var isSuccess = notification.Status == JobStatus.Success;
         var color = isSuccess ? Color.Green : Color.Red;
@@ -209,14 +208,24 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
 
         embed.WithFooter($"Job ID: {notification.JobId}");
 
-        string? messageContent = null;
-        if (!string.IsNullOrWhiteSpace(_config!.MentionRoleId) && !isSuccess)
-            messageContent = $"<@&{_config.MentionRoleId}>";
-
-        await channel.SendMessageAsync(text: messageContent, embed: embed.Build());
+        await channel.SendMessageAsync(text: isSuccess ? null : RoleMention(), embed: embed.Build());
 
         _logger.LogInformation("Sent {Status} notification to Discord for job {JobId}",
             notification.Status, notification.JobId);
+    }
+
+    private async Task<IMessageChannel> GetChannelAsync()
+    {
+        return await _discordClient!.GetChannelAsync(_channelId) as IMessageChannel
+            ?? throw new InvalidOperationException($"Cannot find Discord channel with ID {_channelId}");
+    }
+
+    /// <summary>
+    /// Message text pinging the configured role, or null when none is configured.
+    /// </summary>
+    private string? RoleMention()
+    {
+        return string.IsNullOrWhiteSpace(_config!.MentionRoleId) ? null : $"<@&{_config.MentionRoleId}>";
     }
 
     private string? BuildJobUrl(Guid jobId)
