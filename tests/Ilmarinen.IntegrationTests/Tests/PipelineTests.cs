@@ -5,7 +5,9 @@ using Ilmarinen.Protocol;
 using NUnit.Framework;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System;
@@ -486,6 +488,19 @@ public class PipelineTests
             });
 
         Assert.That((int)response.StatusCode, Is.EqualTo(400));
+    }
+
+    [Test]
+    public async Task SubmitJob_OutOfRangeMinWorkerPriority_Returns400()
+    {
+        // System.Text.Json deserializes any number into an enum; a job requiring priority 99 would wait for a worker that can never exist.
+        var body = $$"""{"repoUrl":"{{_repo.Url}}","ref":"master","scriptPath":"pipeline.csx","minWorkerPriority":99}""";
+        var response = await _fixture.HttpClient.PostAsync("/api/jobs", new StringContent(body, Encoding.UTF8, "application/json"));
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(400));
+
+        var jobs = await _fixture.HttpClient.GetFromJsonAsync<List<JobInfo>>("/api/jobs", new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Assert.That(jobs, Is.Empty, "a rejected submission must not leave a job behind");
     }
 
     [Test]

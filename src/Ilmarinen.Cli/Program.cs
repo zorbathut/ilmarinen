@@ -134,7 +134,8 @@ public class Commands
         [Option('r', Description = "Repository URL")] string repo,
         [Option("ref", Description = "Git ref")] string gitRef = "main",
         [Option(Description = "Script path")] string script = "pipeline.csx",
-        [Option('t', Description = "Git token for HTTPS authentication (or set ILMARINEN_GIT_TOKEN)")] string? token = null)
+        [Option('t', Description = "Git token for HTTPS authentication (or set ILMARINEN_GIT_TOKEN)")] string? token = null,
+        [Option("min-worker-priority", Description = "Only run on workers of at least this priority")] WorkerPriority? minWorkerPriority = null)
     {
         // Use environment variable as fallback for token
         var gitToken = token ?? Environment.GetEnvironmentVariable("ILMARINEN_GIT_TOKEN");
@@ -168,7 +169,8 @@ public class Commands
             Ref = gitRef,
             ScriptPath = script,
             GitTokenMode = gitToken != null ? GitTokenMode.Explicit : GitTokenMode.None,
-            GitToken = gitToken
+            GitToken = gitToken,
+            MinWorkerPriority = minWorkerPriority
         };
 
         var response = await http.PostAsJsonAsync($"{server}/api/jobs", submission);
@@ -214,6 +216,7 @@ public class Commands
         Console.WriteLine($"Repository: {job.RepoUrl}");
         Console.WriteLine($"Ref:        {job.Ref}");
         Console.WriteLine($"Worker:     {job.WorkerId?.ToString() ?? "(none)"}");
+        Console.WriteLine($"Min worker: {job.MinWorkerPriority} priority");
         Console.WriteLine($"Created:    {job.CreatedAt:u}");
         if (job.StartedAt.HasValue)
             Console.WriteLine($"Started:    {job.StartedAt:u}");

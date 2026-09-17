@@ -69,7 +69,8 @@ public class JobRepository
             CreatedAt = DateTime.UtcNow,
             EncryptedGitToken = _encryption.Encrypt(resolvedGitToken),
             GitTokenMode = submission.GitTokenMode,
-            PipelineId = submission.PipelineId
+            PipelineId = submission.PipelineId,
+            MinWorkerPriority = submission.MinWorkerPriority ?? WorkerPriority.Low
         };
 
         _db.Jobs.Add(job);
@@ -142,7 +143,8 @@ public class JobRepository
                     RepoUrl = job.RepoUrl,
                     Ref = job.Ref,
                     ScriptPath = job.ScriptPath,
-                    GitTokenMode = GitTokenMode.None
+                    GitTokenMode = GitTokenMode.None,
+                    MinWorkerPriority = job.MinWorkerPriority
                 };
 
             case GitTokenMode.Inherit:
@@ -162,7 +164,8 @@ public class JobRepository
                     PipelineId = job.PipelineId,
                     Ref = job.Ref,
                     ScriptPath = job.ScriptPath,
-                    GitTokenMode = GitTokenMode.Inherit
+                    GitTokenMode = GitTokenMode.Inherit,
+                    MinWorkerPriority = job.MinWorkerPriority
                 };
             }
 
@@ -284,12 +287,12 @@ public class JobRepository
     }
 
     /// <summary>
-    /// The queued job dispatch should hand out next, oldest first; null when nothing is queued.
+    /// The queued job dispatch should hand a worker of this priority next: the oldest one whose minimum it meets. Null when nothing queued fits.
     /// </summary>
-    public async Task<Guid?> GetNextQueuedJobIdAsync()
+    public async Task<Guid?> GetNextQueuedJobIdAsync(WorkerPriority workerPriority)
     {
         return await _db.Jobs
-            .Where(j => j.Status == JobStatus.Queued)
+            .Where(j => j.Status == JobStatus.Queued && j.MinWorkerPriority <= workerPriority)
             .OrderBy(j => j.CreatedAt)
             .ThenBy(j => j.Id)
             .Select(j => (Guid?)j.Id)
@@ -376,6 +379,7 @@ public class JobRepository
             GitTokenMode = job.GitTokenMode,
             PipelineId = job.PipelineId,
             PipelineName = pipelineName,
+            MinWorkerPriority = job.MinWorkerPriority,
             CanRetry = canRetry,
             RetryBlockedReason = retryBlockedReason
         };

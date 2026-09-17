@@ -19,20 +19,20 @@ public class WorkersController : ControllerBase
     private readonly WorkerRegistrationService _registration;
     private readonly WorkspaceDeletionService _deletionService;
     private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
-    private readonly UIEventService _uiEvents;
+    private readonly JobScheduler _scheduler;
 
     public WorkersController(
         WorkerRepository workers,
         WorkerRegistrationService registration,
         WorkspaceDeletionService deletionService,
         IHubContext<WorkerHub, IWorkerClient> hubContext,
-        UIEventService uiEvents)
+        JobScheduler scheduler)
     {
         _workers = workers;
         _registration = registration;
         _deletionService = deletionService;
         _hubContext = hubContext;
-        _uiEvents = uiEvents;
+        _scheduler = scheduler;
     }
 
     [HttpGet]
@@ -61,12 +61,11 @@ public class WorkersController : ControllerBase
     [HttpPut("{workerId}")]
     public async Task<ActionResult> UpdateWorker(Guid workerId, [FromBody] WorkerUpdate update)
     {
-        if (!await _workers.SetPriorityAsync(workerId, update.Priority))
+        if (!await _scheduler.SetWorkerPriorityAsync(workerId, update.Priority))
         {
             return NotFound(new { error = "Worker not found." });
         }
 
-        _uiEvents.NotifyWorkersChanged();
         return NoContent();
     }
 

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System;
 
 namespace Ilmarinen.Protocol.Requests;
@@ -7,6 +8,7 @@ namespace Ilmarinen.Protocol.Requests;
 /// or internally from pipeline triggers.
 ///
 /// When PipelineId is set, RepoUrl/Ref/ScriptPath fall back to the pipeline's values.
+/// MinWorkerPriority falls back to Low: any worker may run the job.
 /// GitTokenMode controls credential resolution:
 ///   None     — no git token
 ///   Inherit  — use the pipeline's repository token (requires PipelineId)
@@ -20,4 +22,6 @@ public record JobSubmission
     public string? ScriptPath { get; init; }
     public GitTokenMode GitTokenMode { get; init; }
     public string? GitToken { get; init; }
+    [EnumDataType(typeof(WorkerPriority))]
+    public WorkerPriority? MinWorkerPriority { get; init; }
 }

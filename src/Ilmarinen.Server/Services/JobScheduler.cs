@@ -52,7 +52,7 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Hands queued jobs to ready workers, highest-priority worker first. Called whenever the pool or the queue changes — a job is submitted, a worker signals Ready, a worker finishes a job — and keeps going until the queue drains or no ready worker will take another job, so a queued job can never sit behind an idle worker.
+    /// Hands queued jobs to ready workers, highest-priority worker first. Called whenever the pool or the queue changes — a job is submitted, a worker signals Ready, a worker finishes a job, a worker's priority changes — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
     /// </summary>
     public async Task DispatchAsync()
     {
@@ -64,7 +64,7 @@ public class JobScheduler
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
             // One pass is enough: each candidate takes at most one job, and after that it is busy. A worker that frees up meanwhile raises its own DispatchAsync, which is waiting on this lock.
-            foreach (var connectionId in await workers.GetReadyConnectionIdsByPriorityAsync())
+            foreach (var (connectionId, priority) in await workers.GetReadyWorkersByPriorityAsync())
             {
                 var worker = workers.GetByConnectionId(connectionId);
                 if (worker == null || !worker.IsReady)
@@ -79,7 +79,8 @@ public class JobScheduler
                     continue;
                 }
 
-                if (!await AssignNextJobAsync(jobs, workers, connectionId, worker.Id))
+                // Candidates come highest priority first, and a worker qualifies for everything a lower-priority one does, so once nothing queued fits this worker nothing fits the rest.
+                if (!await AssignNextJobAsync(jobs, workers, connectionId, worker.Id, priority))
                 {
                     return;
                 }
@@ -92,11 +93,11 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Takes queued jobs, oldest first, until one is handed to this worker. Returns false if none are left. Caller holds _assignLock and has already confirmed the worker is idle.
+    /// Takes queued jobs this worker's priority qualifies it for, oldest first, until one is handed to it. Returns false if none fit. Caller holds _assignLock and has already confirmed the worker is idle.
     /// </summary>
-    private async Task<bool> AssignNextJobAsync(JobRepository jobs, WorkerRepository workers, string connectionId, Guid workerId)
+    private async Task<bool> AssignNextJobAsync(JobRepository jobs, WorkerRepository workers, string connectionId, Guid workerId, WorkerPriority workerPriority)
     {
-        while (await jobs.GetNextQueuedJobIdAsync() is { } jobId)
+        while (await jobs.GetNextQueuedJobIdAsync(workerPriority) is { } jobId)
         {
             JobAssignment assignment;
             try
@@ -135,6 +136,36 @@ public class JobScheduler
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Changes a worker's priority, then dispatches: a promoted worker may now meet the minimum of a job that is waiting. Returns false if the worker doesn't exist.
+    /// </summary>
+    public async Task<bool> SetWorkerPriorityAsync(Guid workerId, WorkerPriority priority)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        // Under the dispatch lock, so a demotion can't land between a dispatch reading this worker's priority and handing it a job only the old priority qualified it for.
+        bool updated;
+        await _assignLock.WaitAsync();
+        try
+        {
+            updated = await workers.SetPriorityAsync(workerId, priority);
+        }
+        finally
+        {
+            _assignLock.Release();
+        }
+
+        if (!updated)
+        {
+            return false;
+        }
+
+        _uiEvents.NotifyWorkersChanged();
+        await DispatchAsync();
+        return true;
     }
 
     /// <summary>

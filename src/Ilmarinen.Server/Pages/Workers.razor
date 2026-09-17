@@ -10,6 +10,7 @@
 @inject WorkerRegistrationService RegistrationService
 @inject WorkspaceDeletionService DeletionService
 @inject IHubContext<WorkerHub, IWorkerClient> HubContext
+@inject JobScheduler Scheduler
 @inject UIEventService UIEvents
 @inject WorkerBundleService BundleService
 
@@ -207,18 +208,12 @@
 
         try
         {
-            using var scope = ScopeFactory.CreateScope();
-            var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-
-            if (!await workerRepo.SetPriorityAsync(workerId, priority))
+            if (!await Scheduler.SetWorkerPriorityAsync(workerId, priority))
             {
                 actionError = "Worker not found.";
             }
 
             workers = await FetchWorkersAsync();
-
-            // The dashboard writes through the repository rather than the controller, so nothing else tells other open browsers to refresh.
-            UIEvents.NotifyWorkersChanged();
         }
         catch (Exception ex)
         {

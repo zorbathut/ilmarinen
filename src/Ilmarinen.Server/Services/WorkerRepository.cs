@@ -126,9 +126,9 @@ public class WorkerRepository
     }
 
     /// <summary>
-    /// The ready workers' connection IDs, highest priority first. Ties are ordered arbitrarily. Callers must still re-validate each candidate before assigning: the in-memory ready flag can lag the database, which is the source of truth for whether a worker is busy.
+    /// The ready workers' connection IDs and priorities, highest priority first. Ties are ordered arbitrarily. Callers must still re-validate each candidate before assigning: the in-memory ready flag can lag the database, which is the source of truth for whether a worker is busy.
     /// </summary>
-    public async Task<IReadOnlyList<string>> GetReadyConnectionIdsByPriorityAsync()
+    public async Task<IReadOnlyList<(string ConnectionId, WorkerPriority Priority)>> GetReadyWorkersByPriorityAsync()
     {
         // A reconnecting worker can transiently hold two connection IDs, so index rather than Add — an arbitrary one of them wins, as before.
         var candidates = new Dictionary<Guid, string>();
@@ -152,12 +152,15 @@ public class WorkerRepository
         var ordered = await db.Workers
             .Where(w => workerIds.Contains(w.Id))
             .OrderByDescending(w => w.Priority)
-            .Select(w => w.Id)
+            .Select(w => new { w.Id, w.Priority })
             .ToListAsync();
 
-        return ordered.Select(id => candidates[id]).ToList();
+        return ordered.Select(w => (candidates[w.Id], w.Priority)).ToList();
     }
 
+    /// <summary>
+    /// Writes the stored priority and nothing else. To change a worker's priority use JobScheduler.SetWorkerPriorityAsync, which keeps the write from racing a dispatch and dispatches afterwards.
+    /// </summary>
     public async Task<bool> SetPriorityAsync(Guid workerId, WorkerPriority priority)
     {
         using var scope = _scopeFactory.CreateScope();

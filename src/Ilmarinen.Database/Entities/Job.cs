@@ -18,4 +18,5 @@ public class Job
     public string? EncryptedGitToken { get; set; }
     public GitTokenMode GitTokenMode { get; set; }
     public Guid? PipelineId { get; set; }
+    public WorkerPriority MinWorkerPriority { get; set; }
 }

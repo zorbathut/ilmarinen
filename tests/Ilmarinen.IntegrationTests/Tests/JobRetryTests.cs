@@ -6,6 +6,7 @@ using NUnit.Framework;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 
@@ -107,6 +108,58 @@ public class JobRetryTests
         var retryJob = await _fixture.GetJobAsync(retryJobId);
         Assert.That(retryJob.PipelineId, Is.EqualTo(pipeline.Id));
         Assert.That(retryJob.GitTokenMode, Is.EqualTo(GitTokenMode.Inherit));
+    }
+
+    [Test]
+    public async Task RetryJob_NoneMode_PreservesMinWorkerPriority()
+    {
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            RepoUrl = _repo.Url,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            GitTokenMode = GitTokenMode.None,
+            MinWorkerPriority = WorkerPriority.High
+        });
+
+        await AssertRetryPreservesMinWorkerPriorityAsync(jobId);
+    }
+
+    [Test]
+    public async Task RetryJob_InheritMode_PreservesMinWorkerPriority()
+    {
+        var repository = await _fixture.CreateRepositoryAsync(new RepositorySubmission
+        {
+            Name = "retry-min-priority-repo",
+            RepoUrl = _repo.Url
+        });
+
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "retry-min-priority-pipeline",
+            RepositoryId = repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            PipelineId = pipeline.Id,
+            GitTokenMode = GitTokenMode.Inherit,
+            MinWorkerPriority = WorkerPriority.High
+        });
+
+        await AssertRetryPreservesMinWorkerPriorityAsync(jobId);
+    }
+
+    private async Task AssertRetryPreservesMinWorkerPriorityAsync(Guid jobId)
+    {
+        // No worker is started, so the job stays queued; cancelling it is enough to make it retryable.
+        Assert.That(await _fixture.CancelJobAsync(jobId), Is.True);
+
+        var retryJob = await _fixture.GetJobAsync(await _fixture.RetryJobAsync(jobId));
+
+        Assert.That(retryJob.MinWorkerPriority, Is.EqualTo(WorkerPriority.High));
     }
 
     [Test]

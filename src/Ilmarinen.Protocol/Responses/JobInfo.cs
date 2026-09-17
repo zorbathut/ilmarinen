@@ -23,6 +23,7 @@ public record JobInfo
     public GitTokenMode GitTokenMode { get; init; }
     public Guid? PipelineId { get; init; }
     public string? PipelineName { get; init; }
+    public WorkerPriority MinWorkerPriority { get; init; }
     public bool CanRetry { get; init; }
     public string? RetryBlockedReason { get; init; }
 }
