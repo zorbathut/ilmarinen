@@ -142,8 +142,8 @@ public class WorkerConnectionTests
         var queuedJob = await _fixture.GetJobAsync(jobId);
         Assert.That(queuedJob.Status, Is.EqualTo(JobStatus.Queued));
 
-        // Act - Start worker
-        await _fixture.StartWorkerAsync();
+        // Act - Start worker. Not waiting for Ready: the queued job is dispatched the moment the worker reports it, so Ready may never be observable.
+        await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: false);
 
         // Assert - Job should complete
         var completedJob = await _fixture.WaitForJobCompletionAsync(jobId);
