@@ -1,6 +1,6 @@
 using Ilmarinen.IntegrationTests.Fixtures;
-using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
 using Ilmarinen.Worker.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -94,10 +94,13 @@ public class WorkerDiagnosticGatingTests
     [Test]
     public async Task SleepInhibitionUnavailable_IsReportedButWorkerStillTakesWork()
     {
-        Assume.That(DnsProbe.CanResolveRegistry(), "the real diagnostic needs a resolver that can reach the registry");
-
         // The real diagnostic, whose SleepInhibitor points at a dead bus, so this is the unavailable branch, deterministically.
-        var workerId = await _fixture.StartWorkerAsync(TestWorkerBuilder.RealDiagnostic, waitForReady: true);
+        var workerId = await _fixture.StartWorkerAsync(TestWorkerBuilder.RealDiagnostic, waitForReady: false);
+
+        // Taken before waiting for Ready, which a diagnostic that failed on this host's network would never reach.
+        var report = await WaitForDiagnosticReportAsync(workerId);
+        DiagnosticPrecondition.IgnoreIfHostNetworkFailed(report);
+        await _fixture.WaitForWorkerReadyAsync(workerId);
 
         using var scope = _fixture.Services.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
@@ -144,6 +147,24 @@ public class WorkerDiagnosticGatingTests
         await _fixture.WaitForWorkerReadyAsync(workerId, timeoutMs: 90000);
 
         Assert.That(stub.CallCount, Is.EqualTo(1), "a reconnecting worker must replay its cached diagnostic, not run a new one");
+    }
+
+    private async Task<DiagnosticReport> WaitForDiagnosticReportAsync(Guid workerId, int timeoutMs = 60000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var scope = _fixture.Services.CreateScope();
+            var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+            var report = (await workers.GetByIdAsync(workerId))?.Diagnostic;
+            if (report != null)
+            {
+                return report;
+            }
+            await Task.Delay(100);
+        }
+        throw new TimeoutException(
+            $"Worker {workerId} did not report a diagnostic within {timeoutMs}ms");
     }
 
     private async Task WaitForDiagnosticAsync(Guid workerId, DiagnosticStatus expected, int timeoutMs = 10000)

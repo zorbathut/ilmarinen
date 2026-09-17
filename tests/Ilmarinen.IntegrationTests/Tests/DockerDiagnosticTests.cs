@@ -17,11 +17,10 @@ public class DockerDiagnosticTests
     [Test]
     public async Task Diagnostic_OnHealthyHost_ReturnsHealthy()
     {
-        Assume.That(DnsProbe.CanResolveRegistry(), "the diagnostic resolves and reaches the registry, which this host currently can't");
-
         await using var diagnostic = new DockerDiagnostic(workerContainerId: null, extraSteps: []);
 
         var report = await diagnostic.RunAsync(progress: null, ct: CancellationToken.None);
+        DiagnosticPrecondition.IgnoreIfHostNetworkFailed(report);
 
         Assert.That(report.Status, Is.EqualTo(DiagnosticStatus.Healthy),
             $"Expected Healthy, got {report.Status}. Summary: {report.Summary}. " +
@@ -60,8 +59,6 @@ public class DockerDiagnosticTests
     [Test]
     public async Task Diagnostic_StreamsProgress_ToReporter()
     {
-        Assume.That(DnsProbe.CanResolveRegistry(), "the diagnostic resolves and reaches the registry, which this host currently can't");
-
         await using var diagnostic = new DockerDiagnostic(workerContainerId: null, extraSteps: []);
         var observed = new List<string>();
         var progress = new Progress<DiagnosticStepResult>(r =>
@@ -71,6 +68,7 @@ public class DockerDiagnosticTests
         });
 
         var report = await diagnostic.RunAsync(progress, CancellationToken.None);
+        DiagnosticPrecondition.IgnoreIfHostNetworkFailed(report);
 
         // Wait briefly for any pending progress callbacks to fire.
         await Task.Delay(100);
