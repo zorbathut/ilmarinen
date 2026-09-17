@@ -1,8 +1,10 @@
 using Docker.DotNet;
 using Docker.DotNet.Models;
+using Ilmarinen.Docker;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -39,6 +41,13 @@ public class DockerCleanup
 
     private static async Task PruneStaleNetworksAsync(DockerClient client)
     {
+        var ownPidNamespace = LinuxInterop.GetPidNamespaceId();
+        if (ownPidNamespace == null)
+        {
+            TestContext.Progress.WriteLine("Skipping stale Docker network cleanup: can't identify this process's PID namespace, so no network owner's PID can be checked");
+            return;
+        }
+
         var networks = await client.Networks.ListNetworksAsync(new NetworksListParameters
         {
             Filters = new Dictionary<string, IDictionary<string, bool>>
@@ -49,40 +58,60 @@ public class DockerCleanup
 
         foreach (var network in networks)
         {
-            if (!network.Labels.TryGetValue("ilmarinen.test.pid", out var pidStr)
-                || !int.TryParse(pidStr, out var pid))
+            if (!IsStaleNetwork(network.Labels, ownPidNamespace, IsProcessAlive))
+            {
                 continue;
-
-            // Check if the owning process is still alive
-            try
-            {
-                System.Diagnostics.Process.GetProcessById(pid);
-                continue; // Still running, leave it alone
-            }
-            catch (ArgumentException)
-            {
-                // Process is gone — network is stale
             }
 
-            // Owning process is dead — stop orphaned containers and remove the network
+            // Owning process is dead — stop the containers it ran on the network, detach everything, and remove the network. A container that merely connected to the network, like a worker running in a container, is only detached: its life isn't the dead run's.
             try
             {
                 var inspected = await client.Networks.InspectNetworkAsync(network.ID);
 
                 foreach (var container in inspected.Containers)
                 {
-                    await client.Containers.StopContainerAsync(container.Key,
-                        new ContainerStopParameters { WaitBeforeKillSeconds = 1 });
+                    var details = await client.Containers.InspectContainerAsync(container.Key);
+                    if (details.HostConfig.NetworkMode == network.Name)
+                    {
+                        await client.Containers.StopContainerAsync(container.Key,
+                            new ContainerStopParameters { WaitBeforeKillSeconds = 1 });
+                    }
                     await client.Networks.DisconnectNetworkAsync(network.ID,
                         new NetworkDisconnectParameters { Container = container.Key, Force = true });
                 }
 
                 await client.Networks.DeleteNetworkAsync(network.ID);
             }
-            catch
+            catch (Exception ex)
             {
                 // Best effort — don't let cleanup failures block the test suite
+                TestContext.Progress.WriteLine($"Could not clean up stale Docker network {network.Name}: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// Whether a network was left behind by a process in our own PID namespace that has since died. A PID from any other namespace, such as a worker running in a container, can't be checked from here: it would read as dead while its run is still going.
+    /// </summary>
+    internal static bool IsStaleNetwork(IDictionary<string, string> labels, string ownPidNamespace, Func<int, bool> isProcessAlive)
+    {
+        return labels.TryGetValue("ilmarinen.test.pid", out var pidText)
+            && int.TryParse(pidText, out var pid)
+            && labels.TryGetValue("ilmarinen.test.pidns", out var pidNamespace)
+            && pidNamespace == ownPidNamespace
+            && !isProcessAlive(pid);
+    }
+
+    private static bool IsProcessAlive(int pid)
+    {
+        try
+        {
+            Process.GetProcessById(pid);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
         }
     }
 
@@ -120,10 +149,11 @@ public class DockerCleanup
                 totalSubnets = fallbackPoolSize;
         }
 
-        // Subtract networks that already exist (non-test system networks we can't touch)
+        // Subtract networks that already exist and that no test run of ours will remove: everything but our own namespace's test networks
+        var ownPidNamespace = LinuxInterop.GetPidNamespaceId();
         var existingNetworks = await client.Networks.ListNetworksAsync();
         var nonTestNetworks = existingNetworks.Count(n =>
-            !n.Labels.ContainsKey("ilmarinen.test.pid"));
+            !n.Labels.TryGetValue("ilmarinen.test.pidns", out var pidNamespace) || pidNamespace != ownPidNamespace);
 
         // Reserve headroom: leave 25% of capacity or at least 4 networks for other Docker usage
         var reserved = Math.Max(4, totalSubnets / 4);

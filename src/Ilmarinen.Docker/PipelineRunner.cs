@@ -454,14 +454,22 @@ public class PipelineRunner : IDisposable
 
     private async Task CreateNetworkAsync(string name)
     {
+        // The PID namespace goes with the PID so a cleanup can tell whether the PID is one it can check: a worker in a container labels its networks with an in-container PID.
+        var labels = new Dictionary<string, string>
+        {
+            ["ilmarinen.test.pid"] = Environment.ProcessId.ToString()
+        };
+        var pidNamespaceId = LinuxInterop.GetPidNamespaceId();
+        if (pidNamespaceId != null)
+        {
+            labels["ilmarinen.test.pidns"] = pidNamespaceId;
+        }
+
         await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
         {
             Name = name,
             Driver = "bridge",
-            Labels = new Dictionary<string, string>
-            {
-                ["ilmarinen.test.pid"] = Environment.ProcessId.ToString()
-            }
+            Labels = labels
         });
 
         // In Docker-in-Docker: connect worker container to the network so job containers can reach the AgentApiServer via Docker DNS

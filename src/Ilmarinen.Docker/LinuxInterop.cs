@@ -29,6 +29,26 @@ internal static class LinuxInterop
     }
 
     /// <summary>
+    /// Identifies the current process's PID namespace, which a PID is only meaningful within, as the boot ID and namespace (e.g. "…/pid:[4026531836]"): namespace numbers alone repeat across machines and reboots. Returns null on non-Linux platforms or when /proc can't be read.
+    /// </summary>
+    public static string? GetPidNamespaceId()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return null;
+        }
+
+        const string bootIdPath = "/proc/sys/kernel/random/boot_id";
+        var pidNamespace = new FileInfo("/proc/self/ns/pid").LinkTarget;
+        if (pidNamespace == null || !File.Exists(bootIdPath))
+        {
+            return null;
+        }
+
+        return $"{File.ReadAllText(bootIdPath).Trim()}/{pidNamespace}";
+    }
+
+    /// <summary>
     /// Gets the group ID (GID) of the Docker socket on Linux.
     /// Returns null on non-Linux platforms or if the socket doesn't exist.
     /// </summary>
