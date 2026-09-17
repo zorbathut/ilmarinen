@@ -1,4 +1,5 @@
 using Ilmarinen.Models;
+using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
@@ -60,12 +61,6 @@ public class WorkersController : ControllerBase
     [HttpPut("{workerId}")]
     public async Task<ActionResult> UpdateWorker(Guid workerId, [FromBody] WorkerUpdate update)
     {
-        // System.Text.Json does not range-check enums, so an out-of-range number deserializes cleanly and would sort above High.
-        if (!Enum.IsDefined(update.Priority))
-        {
-            return BadRequest(new { error = "Priority must be Low, Medium, or High." });
-        }
-
         if (!await _workers.SetPriorityAsync(workerId, update.Priority))
         {
             return NotFound(new { error = "Worker not found." });
@@ -126,9 +121,4 @@ public class WorkersController : ControllerBase
 public record RegisterWorkerRequest
 {
     public string Name { get; init; } = "";
-}
-
-public record WorkerUpdate
-{
-    public required WorkerPriority Priority { get; init; }
 }
