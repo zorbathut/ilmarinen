@@ -23,7 +23,7 @@ public class LoggerTeeTests
         _connection = new HubConnectionBuilder().WithUrl("http://localhost:1").Build();
         _messageBuffer = new MessageBuffer();
         _inner = new LoggerCapture();
-        _collector = new LogCollector(Guid.NewGuid(), _connection, _messageBuffer, _inner);
+        _collector = new LogCollector(Guid.NewGuid(), new BufferedHubSender(_connection, _messageBuffer, _inner), _inner);
         _tee = new LoggerTee(_inner, _collector);
     }
 

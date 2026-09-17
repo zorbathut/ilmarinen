@@ -1,5 +1,4 @@
 using Ilmarinen.Protocol.Requests;
-using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -11,15 +10,12 @@ using System;
 namespace Ilmarinen.Worker.Services;
 
 /// <summary>
-/// Collects log output from pipeline execution and streams to server via SignalR.
-/// Buffers small chunks to reduce network overhead. Failed sends are stored in a
-/// MessageBuffer for replay on reconnection.
+/// Collects log output from pipeline execution and streams it to the server via SignalR, batching small writes into chunks to reduce network overhead. Chunks that can't be sent are buffered by the BufferedHubSender for replay on reconnection.
 /// </summary>
 public class LogCollector
 {
     private readonly Guid _jobId;
-    private readonly HubConnection _connection;
-    private readonly MessageBuffer _messageBuffer;
+    private readonly BufferedHubSender _sender;
     private readonly ILogger _logger;
     private readonly StringBuilder _buffer = new();
     private readonly object _lock = new();
@@ -31,11 +27,10 @@ public class LogCollector
     private const int FlushBytes = 4096;
     private const int FlushMs = 100;
 
-    public LogCollector(Guid jobId, HubConnection connection, MessageBuffer messageBuffer, ILogger logger)
+    public LogCollector(Guid jobId, BufferedHubSender sender, ILogger logger)
     {
         _jobId = jobId;
-        _connection = connection;
-        _messageBuffer = messageBuffer;
+        _sender = sender;
         _logger = logger;
     }
 
@@ -173,36 +168,12 @@ public class LogCollector
 
     private async Task SendChunkAsync(int sequence, string content)
     {
-        var chunk = new LogChunk
+        await _sender.SendOrBufferAsync("StreamLogs", new LogChunk
         {
             JobId = _jobId,
             SequenceNumber = sequence,
             Content = content,
             Timestamp = DateTime.UtcNow
-        };
-
-        if (_connection.State != HubConnectionState.Connected)
-        {
-            _messageBuffer.Enqueue(new BufferedMessage
-            {
-                Method = "StreamLogs",
-                Args = new object[] { chunk }
-            });
-            return;
-        }
-
-        try
-        {
-            await _connection.InvokeAsync("StreamLogs", chunk);
-        }
-        catch
-        {
-            // Connection lost — buffer for replay
-            _messageBuffer.Enqueue(new BufferedMessage
-            {
-                Method = "StreamLogs",
-                Args = new object[] { chunk }
-            });
-        }
+        });
     }
 }

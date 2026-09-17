@@ -518,12 +518,12 @@ public class WorkerService : BackgroundService
         }
         else
         {
-            var logCollector = new LogCollector(job.Id, _connection!, _messageBuffer, _logger);
+            var logCollector = new LogCollector(job.Id, _sender!, _logger);
             var jobLogger = new LoggerTee(_logger, logCollector);
             jobLogger.LogWarning(
                 "Job {JobId} assigned but worker is busy (current activity: {Activity}). Reporting failure.",
                 job.Id, blockingActivity);
-            await TryFlushLogsAsync(logCollector);
+            await logCollector.FlushAsync();
         }
 
         await _sender!.SendOrBufferAsync("JobCompleted", job.Id, new JobResult
@@ -538,7 +538,7 @@ public class WorkerService : BackgroundService
     private async Task ExecuteJobAsync(JobAssignment job)
     {
         var startTime = DateTime.UtcNow;
-        var logCollector = new LogCollector(job.Id, _connection!, _messageBuffer, _logger);
+        var logCollector = new LogCollector(job.Id, _sender!, _logger);
         var jobLogger = new LoggerTee(_logger, logCollector);
         var jobKey = job.Id.ToString();
 
@@ -575,7 +575,7 @@ public class WorkerService : BackgroundService
             catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
                 jobLogger.LogInformation("Job {JobId} was cancelled", job.Id);
-                await TryFlushLogsAsync(logCollector);
+                await logCollector.FlushAsync();
 
                 result = new JobResult
                 {
@@ -588,7 +588,7 @@ public class WorkerService : BackgroundService
             catch (Exception ex)
             {
                 jobLogger.LogError(ex, "Job {JobId} failed with exception", job.Id);
-                await TryFlushLogsAsync(logCollector);
+                await logCollector.FlushAsync();
 
                 result = new JobResult
                 {
@@ -643,18 +643,6 @@ public class WorkerService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not send Ready; the next reconnect re-derives it");
-        }
-    }
-
-    private static async Task TryFlushLogsAsync(LogCollector logCollector)
-    {
-        try
-        {
-            await logCollector.FlushAsync();
-        }
-        catch
-        {
-            // Connection may be down — chunks are in the message buffer
         }
     }
 

@@ -22,7 +22,7 @@ public class LogCollectorTests
         _connection = new HubConnectionBuilder().WithUrl("http://localhost:1").Build();
         _messageBuffer = new MessageBuffer();
         _logger = new LoggerCapture();
-        _collector = new LogCollector(Guid.NewGuid(), _connection, _messageBuffer, _logger);
+        _collector = new LogCollector(Guid.NewGuid(), new BufferedHubSender(_connection, _messageBuffer, _logger), _logger);
     }
 
     [TearDown]

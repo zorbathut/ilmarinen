@@ -9,7 +9,7 @@ using System;
 namespace Ilmarinen.Core.Tests;
 
 /// <summary>
-/// Decodes the StreamLogs chunks a LogCollector parked in a MessageBuffer (its connection being down) back into the (type, data) entries they carry.
+/// Decodes the StreamLogs chunks a LogCollector's sender parked in a MessageBuffer (its connection being down) back into the (type, data) entries they carry.
 /// </summary>
 public static class LogChunkDrain
 {
