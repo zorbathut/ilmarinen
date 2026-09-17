@@ -15,4 +15,5 @@ public record PipelineInfo
     public DateTime CreatedAt { get; init; }
     public string? Schedule { get; init; }
     public DateTime? LastTriggeredAt { get; init; }
+    public WorkerPriority MinWorkerPriority { get; init; }
 }

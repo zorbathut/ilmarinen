@@ -30,6 +30,7 @@ public class JobRepository
         string? resolvedRepoUrl = submission.RepoUrl;
         string? resolvedRef = submission.Ref;
         string? resolvedScriptPath = submission.ScriptPath;
+        WorkerPriority? resolvedMinWorkerPriority = submission.MinWorkerPriority;
         string? resolvedGitToken = null;
 
         if (submission.PipelineId != null)
@@ -44,6 +45,7 @@ public class JobRepository
             resolvedRepoUrl ??= pipeline.Repository?.RepoUrl;
             resolvedRef ??= pipeline.DefaultRef;
             resolvedScriptPath ??= pipeline.ScriptPath;
+            resolvedMinWorkerPriority ??= pipeline.MinWorkerPriority;
 
             if (submission.GitTokenMode == GitTokenMode.Inherit)
                 resolvedGitToken = _encryption.Decrypt(pipeline.Repository?.EncryptedGitToken);
@@ -70,7 +72,7 @@ public class JobRepository
             EncryptedGitToken = _encryption.Encrypt(resolvedGitToken),
             GitTokenMode = submission.GitTokenMode,
             PipelineId = submission.PipelineId,
-            MinWorkerPriority = submission.MinWorkerPriority ?? WorkerPriority.Low
+            MinWorkerPriority = resolvedMinWorkerPriority ?? WorkerPriority.Low
         };
 
         _db.Jobs.Add(job);

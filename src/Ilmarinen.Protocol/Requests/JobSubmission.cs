@@ -7,8 +7,8 @@ namespace Ilmarinen.Protocol.Requests;
 /// CLI → Server: Submit a new job via HTTP POST /api/jobs
 /// or internally from pipeline triggers.
 ///
-/// When PipelineId is set, RepoUrl/Ref/ScriptPath fall back to the pipeline's values.
-/// MinWorkerPriority falls back to Low: any worker may run the job.
+/// When PipelineId is set, RepoUrl/Ref/ScriptPath/MinWorkerPriority fall back to the pipeline's values.
+/// Without a pipeline, MinWorkerPriority falls back to Low: any worker may run the job.
 /// GitTokenMode controls credential resolution:
 ///   None     — no git token
 ///   Inherit  — use the pipeline's repository token (requires PipelineId)

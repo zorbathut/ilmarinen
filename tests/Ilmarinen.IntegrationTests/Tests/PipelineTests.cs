@@ -377,6 +377,116 @@ public class PipelineTests
     }
 
     [Test]
+    public async Task CreatePipeline_MinWorkerPriority_RoundTrips()
+    {
+        var restricted = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "min-priority-restricted",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            MinWorkerPriority = WorkerPriority.High
+        });
+
+        var unrestricted = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "min-priority-unrestricted",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        Assert.That((await _fixture.GetPipelineAsync(restricted.Id)).MinWorkerPriority, Is.EqualTo(WorkerPriority.High));
+        Assert.That((await _fixture.GetPipelineAsync(unrestricted.Id)).MinWorkerPriority, Is.EqualTo(WorkerPriority.Low));
+    }
+
+    [Test]
+    public async Task UpdatePipeline_MinWorkerPriority_SetsItAndOtherUpdatesLeaveItAlone()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "min-priority-update",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        var raised = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate { MinWorkerPriority = WorkerPriority.Medium });
+        Assert.That(raised.MinWorkerPriority, Is.EqualTo(WorkerPriority.Medium));
+
+        var renamed = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate { Name = "min-priority-renamed" });
+        Assert.That(renamed.MinWorkerPriority, Is.EqualTo(WorkerPriority.Medium),
+            "an update that doesn't mention the minimum must not reset it");
+    }
+
+    [TestCase(WorkerPriority.High, null, WorkerPriority.High)]
+    [TestCase(WorkerPriority.High, WorkerPriority.Low, WorkerPriority.Low)]
+    [TestCase(WorkerPriority.Low, WorkerPriority.High, WorkerPriority.High)]
+    public async Task TriggerPipeline_MinWorkerPriority_OverrideWinsOverPipeline(WorkerPriority pipelineMinimum, WorkerPriority? triggerMinimum, WorkerPriority expected)
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "min-priority-trigger",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            MinWorkerPriority = pipelineMinimum
+        });
+
+        var jobId = await _fixture.TriggerPipelineAsync(pipeline.Id, new PipelineTrigger { MinWorkerPriority = triggerMinimum });
+
+        Assert.That((await _fixture.GetJobAsync(jobId)).MinWorkerPriority, Is.EqualTo(expected));
+    }
+
+    [Test]
+    public async Task CreatePipeline_OutOfRangeMinWorkerPriority_Returns400()
+    {
+        var body = $$"""{"name":"min-priority-out-of-range","repositoryId":"{{_repository.Id}}","ref":"master","scriptPath":"pipeline.csx","minWorkerPriority":99}""";
+        var response = await _fixture.HttpClient.PostAsync("/api/pipelines", new StringContent(body, Encoding.UTF8, "application/json"));
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(400));
+        Assert.That(await _fixture.GetAllPipelinesAsync(), Is.Empty);
+    }
+
+    [Test]
+    public async Task UpdatePipeline_OutOfRangeMinWorkerPriority_Returns400()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "min-priority-update-out-of-range",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            MinWorkerPriority = WorkerPriority.High
+        });
+
+        var response = await _fixture.HttpClient.PutAsync($"/api/pipelines/{pipeline.Id}", new StringContent("""{"minWorkerPriority":99}""", Encoding.UTF8, "application/json"));
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(400));
+        Assert.That((await _fixture.GetPipelineAsync(pipeline.Id)).MinWorkerPriority, Is.EqualTo(WorkerPriority.High),
+            "a rejected update must not change the stored minimum");
+    }
+
+    [Test]
+    public async Task TriggerPipeline_OutOfRangeMinWorkerPriority_Returns400()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "min-priority-trigger-out-of-range",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        var response = await _fixture.HttpClient.PostAsync($"/api/pipelines/{pipeline.Id}/trigger", new StringContent("""{"minWorkerPriority":99}""", Encoding.UTF8, "application/json"));
+
+        Assert.That((int)response.StatusCode, Is.EqualTo(400));
+
+        var jobs = await _fixture.HttpClient.GetFromJsonAsync<List<JobInfo>>("/api/jobs", new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Assert.That(jobs, Is.Empty, "a rejected trigger must not leave a job behind");
+    }
+
+    [Test]
     public async Task CreatePipeline_DuplicateName_Returns409OrError()
     {
         var submission = new PipelineSubmission
@@ -427,6 +537,27 @@ public class PipelineTests
         Assert.That(job.ScriptPath, Is.EqualTo("pipeline.csx"));
         Assert.That(job.PipelineId, Is.EqualTo(pipeline.Id));
         Assert.That(job.GitTokenMode, Is.EqualTo(GitTokenMode.Inherit));
+    }
+
+    [Test]
+    public async Task SubmitJob_WithPipelineId_InheritsPipelineMinimum()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "min-priority-inherit",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            MinWorkerPriority = WorkerPriority.High
+        });
+
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            PipelineId = pipeline.Id,
+            GitTokenMode = GitTokenMode.Inherit
+        });
+
+        Assert.That((await _fixture.GetJobAsync(jobId)).MinWorkerPriority, Is.EqualTo(WorkerPriority.High));
     }
 
     [Test]

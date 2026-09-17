@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using System;
 
 namespace Ilmarinen.Database.Entities;
@@ -12,6 +13,7 @@ public class Pipeline
     public DateTime CreatedAt { get; set; }
     public string? Schedule { get; set; }
     public DateTime? LastTriggeredAt { get; set; }
+    public WorkerPriority MinWorkerPriority { get; set; }
 
     public Repository? Repository { get; set; }
 }

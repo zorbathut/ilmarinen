@@ -57,6 +57,16 @@
                     }
                 </span>
 
+                <span class="detail-label">Min Worker Priority</span>
+                <span class="detail-value">
+                    <select @bind="editMinWorkerPriority">
+                        @foreach (var priority in Enum.GetValues<WorkerPriority>())
+                        {
+                            <option value="@priority">@priority</option>
+                        }
+                    </select>
+                </span>
+
                 <span class="detail-label">Created</span>
                 <span class="detail-value">@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
             </div>
@@ -108,6 +118,9 @@
                         }
                     </span>
 
+                    <span class="detail-label">Min Worker Priority</span>
+                    <span class="detail-value">@pipeline.MinWorkerPriority</span>
+
                     @if (pipeline.LastTriggeredAt != null)
                     {
                         <span class="detail-label">Last Triggered</span>
@@ -132,6 +145,16 @@
             <div>
                 <label>Ref override (optional)</label>
                 <input type="text" @bind="refOverride" placeholder="@pipeline.DefaultRef" />
+            </div>
+            <div>
+                <label>Min worker priority</label>
+                <select @bind="triggerMinWorkerPriority">
+                    <option value="">Pipeline default (@pipeline.MinWorkerPriority)</option>
+                    @foreach (var priority in Enum.GetValues<WorkerPriority>())
+                    {
+                        <option value="@priority">@priority</option>
+                    }
+                </select>
             </div>
             <button class="btn" @onclick="TriggerRun" disabled="@triggering">
                 @(triggering ? "Triggering..." : "Run")
@@ -190,6 +213,7 @@ else
     private IReadOnlyList<JobInfo>? jobs;
     private IReadOnlyList<RepositoryInfo>? repositories;
     private string refOverride = "";
+    private WorkerPriority? triggerMinWorkerPriority;
     private bool loading = true;
     private bool triggering;
 
@@ -204,6 +228,7 @@ else
     private string editScriptPath = "";
     private string editSchedule = "";
     private bool clearingSchedule;
+    private WorkerPriority editMinWorkerPriority;
 
     protected override async Task OnInitializedAsync()
     {
@@ -266,7 +291,8 @@ else
             {
                 PipelineId = ulid,
                 Ref = string.IsNullOrWhiteSpace(refOverride) ? null : refOverride.Trim(),
-                GitTokenMode = Ilmarinen.Protocol.GitTokenMode.Inherit
+                GitTokenMode = Ilmarinen.Protocol.GitTokenMode.Inherit,
+                MinWorkerPriority = triggerMinWorkerPriority
             };
 
             var jobId = await Scheduler.EnqueueJobAsync(submission);
@@ -290,6 +316,7 @@ else
         editScriptPath = pipeline.ScriptPath;
         editSchedule = "";
         clearingSchedule = false;
+        editMinWorkerPriority = pipeline.MinWorkerPriority;
         editError = null;
         editing = true;
     }
@@ -319,7 +346,8 @@ else
                 Ref = editRef != pipeline.DefaultRef ? editRef : null,
                 ScriptPath = editScriptPath != pipeline.ScriptPath ? editScriptPath : null,
                 ClearSchedule = clearingSchedule,
-                Schedule = clearingSchedule ? null : ConvertScheduleToUtc(editSchedule)
+                Schedule = clearingSchedule ? null : ConvertScheduleToUtc(editSchedule),
+                MinWorkerPriority = editMinWorkerPriority != pipeline.MinWorkerPriority ? editMinWorkerPriority : null
             };
 
             using var scope = ScopeFactory.CreateScope();

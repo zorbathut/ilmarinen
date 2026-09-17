@@ -44,6 +44,15 @@
             <label>Schedule (optional, cron in your local time)</label>
             <input type="text" @bind="newSchedule" placeholder="0 2 * * *" />
         </div>
+        <div>
+            <label>Min Worker Priority</label>
+            <select @bind="newMinWorkerPriority">
+                @foreach (var priority in Enum.GetValues<WorkerPriority>())
+                {
+                    <option value="@priority">@priority</option>
+                }
+            </select>
+        </div>
     </div>
     <button class="btn" @onclick="CreatePipeline" disabled="@creating">
         @(creating ? "Creating..." : "Create Pipeline")
@@ -92,6 +101,7 @@
     private string newDefaultRef = "main";
     private string newScriptPath = "";
     private string newSchedule = "";
+    private WorkerPriority newMinWorkerPriority = WorkerPriority.Low;
     private string? error;
     private bool creating;
 
@@ -140,7 +150,8 @@
                 RepositoryId = repoId,
                 Ref = newDefaultRef.Trim(),
                 ScriptPath = newScriptPath.Trim(),
-                Schedule = ConvertScheduleToUtc(newSchedule)
+                Schedule = ConvertScheduleToUtc(newSchedule),
+                MinWorkerPriority = newMinWorkerPriority
             };
 
             await PipelineRepo.CreateAsync(submission);
@@ -150,6 +161,7 @@
             newDefaultRef = "main";
             newScriptPath = "";
             newSchedule = "";
+            newMinWorkerPriority = WorkerPriority.Low;
 
             pipelines = await PipelineRepo.GetAllAsync();
         }

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System;
 
 namespace Ilmarinen.Protocol.Requests;
@@ -11,4 +12,7 @@ public record PipelineUpdate
 
     public string? Schedule { get; init; }
     public bool ClearSchedule { get; init; }
+
+    [EnumDataType(typeof(WorkerPriority))]
+    public WorkerPriority? MinWorkerPriority { get; init; }
 }

@@ -31,7 +31,8 @@ public class PipelineRepository
             DefaultRef = submission.Ref,
             ScriptPath = submission.ScriptPath,
             CreatedAt = DateTime.UtcNow,
-            Schedule = submission.Schedule
+            Schedule = submission.Schedule,
+            MinWorkerPriority = submission.MinWorkerPriority
         };
 
         _db.Pipelines.Add(pipeline);
@@ -90,6 +91,10 @@ public class PipelineRepository
             pipeline.Schedule = null;
         else if (update.Schedule != null)
             pipeline.Schedule = update.Schedule;
+        if (update.MinWorkerPriority != null)
+        {
+            pipeline.MinWorkerPriority = update.MinWorkerPriority.Value;
+        }
 
         await _db.SaveChangesAsync();
 
@@ -129,6 +134,7 @@ public class PipelineRepository
         HasGitToken = repo.EncryptedGitToken != null,
         CreatedAt = pipeline.CreatedAt,
         Schedule = pipeline.Schedule,
-        LastTriggeredAt = pipeline.LastTriggeredAt
+        LastTriggeredAt = pipeline.LastTriggeredAt,
+        MinWorkerPriority = pipeline.MinWorkerPriority
     };
 }
