@@ -47,7 +47,7 @@ public class WorkerBundleDrainTests
     {
         var (bundlePath, bundleHash) = await SetupWithBundleAsync();
 
-        var workerId = await _fixture.StartWorkerAsync(new StubDiagnostic(), waitForReady: true, bundleHash: bundleHash);
+        var workerId = await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: true, bundleHash: bundleHash);
 
         var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
         var view = await workers.GetByIdAsync(workerId);
@@ -60,7 +60,7 @@ public class WorkerBundleDrainTests
     {
         await _fixture.SetupAsync();
 
-        await _fixture.StartWorkerAsync(new StubDiagnostic(), waitForReady: true, bundleHash: "AAAA1111");
+        await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: true, bundleHash: "AAAA1111");
 
         // Null server hash means "no opinion", never "stale" — the worker must not drain.
         Assert.That(WorkerUpdateSignal.UpdateRequired, Is.False);
@@ -70,7 +70,7 @@ public class WorkerBundleDrainTests
     public async Task StaleBundle_IdleWorker_DrainsOnReconnect()
     {
         var (_, bundleHashA) = await SetupWithBundleAsync();
-        var workerId = await _fixture.StartWorkerAsync(new StubDiagnostic(), waitForReady: true, bundleHash: bundleHashA);
+        var workerId = await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: true, bundleHash: bundleHashA);
 
         var (bundlePathB, bundleHashB) = await _fixture.CreateBundleFileAsync();
         Assert.That(bundleHashB, Is.Not.EqualTo(bundleHashA));
@@ -89,7 +89,7 @@ public class WorkerBundleDrainTests
     public async Task UnchangedBundle_AfterServerRestart_WorkerReadiesAgain()
     {
         var (bundlePathA, bundleHashA) = await SetupWithBundleAsync();
-        var workerId = await _fixture.StartWorkerAsync(new StubDiagnostic(), waitForReady: true, bundleHash: bundleHashA);
+        var workerId = await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: true, bundleHash: bundleHashA);
 
         await _fixture.RestartServerAsync(bundlePathA);
 
@@ -101,7 +101,7 @@ public class WorkerBundleDrainTests
     public async Task StaleBundle_BusyWorker_FinishesJobThenDrains_AndQueuedJobIsNotDispatched()
     {
         var (_, bundleHashA) = await SetupWithBundleAsync();
-        await _fixture.StartWorkerAsync(new StubDiagnostic(), waitForReady: true, bundleHash: bundleHashA);
+        await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: true, bundleHash: bundleHashA);
 
         using var repo = new TestGitRepository();
         repo.AddFile("pipeline.csx", """
@@ -138,7 +138,7 @@ public class WorkerBundleDrainTests
     public async Task PersistentHandshakeFailure_LauncherMode_ExitsForUpdate()
     {
         var (bundlePathA, bundleHashA) = await SetupWithBundleAsync();
-        var workerId = await _fixture.StartWorkerAsync(new StubDiagnostic(), waitForReady: true, bundleHash: bundleHashA);
+        var workerId = await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: true, bundleHash: bundleHashA);
 
         // Revoke the worker, then restart the server so the next handshake actually runs — and fails with "Unknown worker" every time. This stands in for any persistent handshake failure, protocol breaks included: the worker can't tell them apart, which is the point of the fallback.
         using (var scope = _fixture.Services.CreateScope())
@@ -157,7 +157,7 @@ public class WorkerBundleDrainTests
     public async Task PersistentHandshakeFailure_ClassicMode_KeepsRetrying()
     {
         var (bundlePathA, _) = await SetupWithBundleAsync();
-        var workerId = await _fixture.StartWorkerAsync(new StubDiagnostic(), waitForReady: true, bundleHash: null);
+        var workerId = await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: true, bundleHash: null);
 
         using (var scope = _fixture.Services.CreateScope())
         {
@@ -215,19 +215,5 @@ public class WorkerBundleDrainTests
         await _fixture.SetupAsync(workerBundlePath: path);
         _fixture.TrackBundleFile(path);
         return (path, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)));
-    }
-
-    private class StubDiagnostic : IWorkerDiagnostic
-    {
-        public Task<DiagnosticReport> RunAsync(string? workerContainerId, CancellationToken ct)
-        {
-            return Task.FromResult(new DiagnosticReport
-            {
-                Status = DiagnosticStatus.Healthy,
-                Summary = "stub",
-                Steps = [],
-                CheckedAt = DateTime.UtcNow
-            });
-        }
     }
 }

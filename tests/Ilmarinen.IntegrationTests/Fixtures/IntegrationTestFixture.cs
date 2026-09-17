@@ -69,7 +69,7 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     public Task<Guid> StartWorkerAsync() => StartWorkerAsync(diagnostic: null, waitForReady: true);
 
-    public async Task<Guid> StartWorkerAsync(Ilmarinen.Worker.Services.IWorkerDiagnostic? diagnostic, bool waitForReady, string? bundleHash = null)
+    public async Task<Guid> StartWorkerAsync(Func<IServiceProvider, Ilmarinen.Worker.Services.IWorkerDiagnostic>? diagnostic, bool waitForReady, string? bundleHash = null)
     {
         // Pre-register the worker on the server to get auth credentials
         _workerCount++;

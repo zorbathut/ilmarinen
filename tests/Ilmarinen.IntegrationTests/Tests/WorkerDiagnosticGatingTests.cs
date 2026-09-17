@@ -36,7 +36,7 @@ public class WorkerDiagnosticGatingTests
     {
         var stub = new StubDiagnostic(DiagnosticStatus.Unhealthy, "synthetic failure for test");
 
-        var workerId = await _fixture.StartWorkerAsync(stub, waitForReady: false);
+        var workerId = await _fixture.StartWorkerAsync(_ => stub, waitForReady: false);
 
         // Wait for the diagnostic to be reported (which is what flips the status to Unhealthy on the server)
         await WaitForDiagnosticAsync(workerId, expected: DiagnosticStatus.Unhealthy);
@@ -58,7 +58,7 @@ public class WorkerDiagnosticGatingTests
     {
         var stub = new StubDiagnostic(DiagnosticStatus.Healthy, "stub healthy");
 
-        var workerId = await _fixture.StartWorkerAsync(stub, waitForReady: true);
+        var workerId = await _fixture.StartWorkerAsync(_ => stub, waitForReady: true);
 
         using var scope = _fixture.Services.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
@@ -77,7 +77,7 @@ public class WorkerDiagnosticGatingTests
     {
         var stub = new StubDiagnostic(DiagnosticStatus.Degraded, "All checks passed, but cleanup failed: stub");
 
-        var workerId = await _fixture.StartWorkerAsync(stub, waitForReady: true);
+        var workerId = await _fixture.StartWorkerAsync(_ => stub, waitForReady: true);
 
         using var scope = _fixture.Services.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
@@ -94,8 +94,10 @@ public class WorkerDiagnosticGatingTests
     [Test]
     public async Task SleepInhibitionUnavailable_IsReportedButWorkerStillTakesWork()
     {
-        // TestWorkerBuilder points SleepInhibitor at a dead bus, so this is the unavailable branch, deterministically.
-        var workerId = await _fixture.StartWorkerAsync();
+        Assume.That(DnsProbe.CanResolveRegistry(), "the real diagnostic needs a resolver that can reach the registry");
+
+        // The real diagnostic, whose SleepInhibitor points at a dead bus, so this is the unavailable branch, deterministically.
+        var workerId = await _fixture.StartWorkerAsync(TestWorkerBuilder.RealDiagnostic, waitForReady: true);
 
         using var scope = _fixture.Services.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
@@ -120,7 +122,7 @@ public class WorkerDiagnosticGatingTests
     {
         var stub = new StubDiagnostic(DiagnosticStatus.Healthy, "stub healthy");
 
-        await _fixture.StartWorkerAsync(stub, waitForReady: true);
+        await _fixture.StartWorkerAsync(_ => stub, waitForReady: true);
         Assert.That(stub.CallCount, Is.EqualTo(1));
 
         await _fixture.StopWorkerAsync(preserveIdentity: true);
@@ -134,7 +136,7 @@ public class WorkerDiagnosticGatingTests
     {
         var stub = new StubDiagnostic(DiagnosticStatus.Healthy, "stub healthy");
 
-        var workerId = await _fixture.StartWorkerAsync(stub, waitForReady: true);
+        var workerId = await _fixture.StartWorkerAsync(_ => stub, waitForReady: true);
         Assert.That(stub.CallCount, Is.EqualTo(1));
 
         // The restarted server starts with no in-memory connection or Ready state, so Ready can only come from this same worker process having reconnected.

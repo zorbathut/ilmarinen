@@ -14,13 +14,13 @@ public class TestWorkerBuilder
     private readonly string _workerKey;
     private readonly Guid _workerId;
     private readonly string _workspacePath;
-    private readonly IWorkerDiagnostic? _diagnosticOverride;
+    private readonly Func<IServiceProvider, IWorkerDiagnostic>? _diagnosticOverride;
     private readonly string? _bundleHash;
 
     public TestWorkerBuilder(string serverUrl, string workerKey)
         : this(serverUrl, workerKey, diagnostic: null) { }
 
-    public TestWorkerBuilder(string serverUrl, string workerKey, IWorkerDiagnostic? diagnostic, string? bundleHash = null)
+    public TestWorkerBuilder(string serverUrl, string workerKey, Func<IServiceProvider, IWorkerDiagnostic>? diagnostic, string? bundleHash = null)
     {
         _serverUrl = serverUrl;
         _workerKey = workerKey;
@@ -29,6 +29,12 @@ public class TestWorkerBuilder
         // Parse the worker ID from the key (format: {name}:{guid}:{priv}:{pub})
         _workerId = Guid.Parse(workerKey.Split(':')[1]);
         _workspacePath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-worker-{_workerId}");
+    }
+
+    /// <summary>The diagnostic a production worker runs, built from the worker's own services. For the tests that are about the diagnostic itself; every other test worker gets <see cref="DiagnosticStub"/>.</summary>
+    public static IWorkerDiagnostic RealDiagnostic(IServiceProvider services)
+    {
+        return ActivatorUtilities.CreateInstance<DockerWorkerDiagnostic>(services);
     }
 
     public Guid WorkerId => _workerId;
@@ -54,10 +60,8 @@ public class TestWorkerBuilder
 
         builder.Services.AddSingleton(config);
         builder.Services.AddSingleton<WorkspaceManager>();
-        if (_diagnosticOverride != null)
-            builder.Services.AddSingleton(_diagnosticOverride);
-        else
-            builder.Services.AddSingleton<IWorkerDiagnostic, DockerWorkerDiagnostic>();
+        var diagnostic = _diagnosticOverride ?? (_ => new DiagnosticStub());
+        builder.Services.AddSingleton<IWorkerDiagnostic>(sp => diagnostic(sp));
         // Point the inhibitor at a dead bus: tests have no business registering inhibitors with the developer's logind, and the worker treats an unreachable bus as a no-op.
         builder.Services.AddSingleton(sp => new SleepInhibitor(
             sp.GetRequiredService<ILogger<SleepInhibitor>>(),

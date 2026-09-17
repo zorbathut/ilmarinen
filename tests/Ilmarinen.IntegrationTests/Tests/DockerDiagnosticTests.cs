@@ -1,4 +1,5 @@
 using Ilmarinen.Docker;
+using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol;
 using NUnit.Framework;
 using System.Collections.Generic;
@@ -16,6 +17,8 @@ public class DockerDiagnosticTests
     [Test]
     public async Task Diagnostic_OnHealthyHost_ReturnsHealthy()
     {
+        Assume.That(DnsProbe.CanResolveRegistry(), "the diagnostic resolves and reaches the registry, which this host currently can't");
+
         await using var diagnostic = new DockerDiagnostic(workerContainerId: null, extraSteps: []);
 
         var report = await diagnostic.RunAsync(progress: null, ct: CancellationToken.None);
@@ -57,6 +60,8 @@ public class DockerDiagnosticTests
     [Test]
     public async Task Diagnostic_StreamsProgress_ToReporter()
     {
+        Assume.That(DnsProbe.CanResolveRegistry(), "the diagnostic resolves and reaches the registry, which this host currently can't");
+
         await using var diagnostic = new DockerDiagnostic(workerContainerId: null, extraSteps: []);
         var observed = new List<string>();
         var progress = new Progress<DiagnosticStepResult>(r =>
