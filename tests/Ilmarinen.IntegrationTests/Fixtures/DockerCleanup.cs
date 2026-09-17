@@ -63,7 +63,7 @@ public class DockerCleanup
                 continue;
             }
 
-            // Owning process is dead — stop the containers it ran on the network, detach everything, and remove the network. A container that merely connected to the network, like a worker running in a container, is only detached: its life isn't the dead run's.
+            // Owning process is dead — remove the containers it ran on the network, detach anything else, and remove the network. Removed rather than stopped, because an exited container no longer shows on the network and nothing would find it again. A container that merely connected to the network, like a worker running in a container, is only detached: its life isn't the dead run's.
             try
             {
                 var inspected = await client.Networks.InspectNetworkAsync(network.ID);
@@ -73,11 +73,14 @@ public class DockerCleanup
                     var details = await client.Containers.InspectContainerAsync(container.Key);
                     if (details.HostConfig.NetworkMode == network.Name)
                     {
-                        await client.Containers.StopContainerAsync(container.Key,
-                            new ContainerStopParameters { WaitBeforeKillSeconds = 1 });
+                        await client.Containers.RemoveContainerAsync(container.Key,
+                            new ContainerRemoveParameters { Force = true });
                     }
-                    await client.Networks.DisconnectNetworkAsync(network.ID,
-                        new NetworkDisconnectParameters { Container = container.Key, Force = true });
+                    else
+                    {
+                        await client.Networks.DisconnectNetworkAsync(network.ID,
+                            new NetworkDisconnectParameters { Container = container.Key, Force = true });
+                    }
                 }
 
                 await client.Networks.DeleteNetworkAsync(network.ID);
