@@ -260,6 +260,22 @@ public class JobSchedulingTests
     }
 
     [Test]
+    public async Task Dispatch_JobQueuedBeforeServerRestart_IsDispatchedAfterIt()
+    {
+        var jobId = await _fixture.Services.GetRequiredService<JobScheduler>().EnqueueJobAsync(Submission());
+        Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Queued));
+
+        await _fixture.RestartServerAsync(null);
+
+        var workerId = await RegisterReadyWorkerAsync("conn-after-restart");
+        await _fixture.Services.GetRequiredService<JobScheduler>().DispatchAsync();
+
+        Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Running),
+            "the queue lives in the database, so a restarted server must still hand out what was queued before");
+        Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
+    }
+
+    [Test]
     public async Task Reconnect_WorkerLostItsJob_FailsJobAndRefreshesUI()
     {
         const string conn = "conn-reconnect-lost-job";

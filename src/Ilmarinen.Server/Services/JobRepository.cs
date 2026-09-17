@@ -104,18 +104,20 @@ public class JobRepository
         return ToJobInfo(job, artifacts, workerName, pipelineName, retryablePipelines);
     }
 
-    public async Task<JobSubmission?> GetSubmissionAsync(Guid id)
+    /// <summary>
+    /// What a worker needs to run this job, git token decrypted.
+    /// </summary>
+    public async Task<JobAssignment> GetAssignmentAsync(Guid id)
     {
-        var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
-        return job != null ? new JobSubmission
+        var job = await _db.Jobs.FirstAsync(j => j.Id == id);
+        return new JobAssignment
         {
-            PipelineId = job.PipelineId,
+            Id = job.Id,
             RepoUrl = job.RepoUrl,
             Ref = job.Ref,
             ScriptPath = job.ScriptPath,
-            GitTokenMode = job.GitTokenMode,
             GitToken = _encryption.Decrypt(job.EncryptedGitToken)
-        } : null;
+        };
     }
 
     /// <summary>
@@ -281,13 +283,17 @@ public class JobRepository
             retryablePipelines: retryablePipelines)).ToList();
     }
 
-    public async Task<IReadOnlyList<Guid>> GetQueuedJobIdsAsync()
+    /// <summary>
+    /// The queued job dispatch should hand out next, oldest first; null when nothing is queued.
+    /// </summary>
+    public async Task<Guid?> GetNextQueuedJobIdAsync()
     {
         return await _db.Jobs
             .Where(j => j.Status == JobStatus.Queued)
             .OrderBy(j => j.CreatedAt)
-            .Select(j => j.Id)
-            .ToListAsync();
+            .ThenBy(j => j.Id)
+            .Select(j => (Guid?)j.Id)
+            .FirstOrDefaultAsync();
     }
 
     public async Task<bool> TryCancelAsync(Guid id)
