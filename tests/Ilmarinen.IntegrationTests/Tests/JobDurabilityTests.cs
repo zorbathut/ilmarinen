@@ -59,9 +59,6 @@ public class JobDurabilityTests
         // Disconnect the worker
         await _fixture.StopWorkerAsync(preserveIdentity: true);
 
-        // Give the server time to process the disconnect
-        await Task.Delay(2000);
-
         // Job should still be Running, not Failed
         var job = await _fixture.GetJobAsync(jobId);
         Assert.That(job.Status, Is.EqualTo(JobStatus.Running),
@@ -182,7 +179,6 @@ public class JobDurabilityTests
 
         // Disconnect the worker
         await _fixture.StopWorkerAsync(preserveIdentity: true);
-        await Task.Delay(1000);
 
         // Cancel the job while worker is disconnected
         var cancelled = await _fixture.CancelJobAsync(jobId);
@@ -219,7 +215,6 @@ public class JobDurabilityTests
         await _fixture.WaitForJobStatusAsync(jobId, JobStatus.Running);
 
         await _fixture.StopWorkerAsync(preserveIdentity: true);
-        await Task.Delay(1000);
 
         var cancelled = await _fixture.CancelJobAsync(jobId);
         Assert.That(cancelled, Is.True);
@@ -263,7 +258,6 @@ public class JobDurabilityTests
 
         // Disconnect the worker, cancel the job, then reconnect
         await _fixture.StopWorkerAsync(preserveIdentity: true);
-        await Task.Delay(1000);
 
         await _fixture.CancelJobAsync(jobId);
 
