@@ -301,6 +301,37 @@ public class JobRepository
             .FirstOrDefaultAsync();
     }
 
+    /// <summary>
+    /// Queued jobs whose minimum is above the highest available worker's priority, oldest first — every queued job when no worker is available.
+    /// </summary>
+    public async Task<IReadOnlyList<JobInfo>> GetUnsatisfiableJobsAsync(WorkerPriority? highestAvailablePriority)
+    {
+        var queued = _db.Jobs.Where(j => j.Status == JobStatus.Queued);
+        if (highestAvailablePriority is { } highest)
+        {
+            queued = queued.Where(j => j.MinWorkerPriority > highest);
+        }
+
+        var jobs = await queued
+            .OrderBy(j => j.CreatedAt)
+            .ThenBy(j => j.Id)
+            .ToListAsync();
+
+        // Polled on a timer and almost always empty, so skip resolving pipeline names when there is nothing to name.
+        if (jobs.Count == 0)
+        {
+            return [];
+        }
+
+        var pipelineIds = jobs.Where(j => j.PipelineId != null).Select(j => j.PipelineId!.Value).Distinct().ToList();
+        var pipelineNames = await _db.Pipelines
+            .Where(p => pipelineIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, p => p.Name);
+
+        return jobs.Select(j => ToJobInfo(j,
+            pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null)).ToList();
+    }
+
     public async Task<bool> TryCancelAsync(Guid id)
     {
         var now = DateTime.UtcNow;

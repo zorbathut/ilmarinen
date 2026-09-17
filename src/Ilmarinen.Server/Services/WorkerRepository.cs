@@ -159,6 +159,36 @@ public class WorkerRepository
     }
 
     /// <summary>
+    /// The highest priority among available workers, or null when there are none. What counts as available is defined on UnsatisfiableJobsReport. The ready half is dispatch's own candidate list, so the two can't disagree about which workers are ready.
+    /// </summary>
+    public async Task<WorkerPriority?> GetHighestAvailablePriorityAsync()
+    {
+        var connectedIds = _connectionToWorker.Values.Distinct().ToList();
+        if (connectedIds.Count == 0)
+        {
+            return null;
+        }
+
+        var ready = await GetReadyWorkersByPriorityAsync();
+        WorkerPriority? highestReady = ready.Count > 0 ? ready[0].Priority : null;
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        // Joined through the workers table, like the ready candidates, so a revoked worker still holding a connection doesn't count.
+        var highestBusy = await db.Workers
+            .Where(w => connectedIds.Contains(w.Id) && db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running))
+            .MaxAsync(w => (WorkerPriority?)w.Priority);
+
+        if (highestReady == null || highestBusy > highestReady)
+        {
+            return highestBusy;
+        }
+
+        return highestReady;
+    }
+
+    /// <summary>
     /// Writes the stored priority and nothing else. To change a worker's priority use JobScheduler.SetWorkerPriorityAsync, which keeps the write from racing a dispatch and dispatches afterwards.
     /// </summary>
     public async Task<bool> SetPriorityAsync(Guid workerId, WorkerPriority priority)

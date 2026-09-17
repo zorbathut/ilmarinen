@@ -119,6 +119,15 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
+    /// Queued jobs that need a higher worker priority than any available worker has; they wait until a suitable worker becomes available.
+    /// </summary>
+    [HttpGet("unsatisfiable")]
+    public async Task<ActionResult<UnsatisfiableJobsReport>> GetUnsatisfiableJobs()
+    {
+        return Ok(await _scheduler.GetUnsatisfiableJobsAsync());
+    }
+
+    /// <summary>
     /// Download a job's whole stored log as plain text. For a running job that means everything
     /// persisted so far — a snapshot, not a live stream.
     /// </summary>

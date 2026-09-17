@@ -1,5 +1,6 @@
 using Ilmarinen.Database;
 using Ilmarinen.IntegrationTests.Fixtures;
+using Ilmarinen.NotificationClient;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
@@ -481,4 +482,119 @@ public class JobSchedulingTests
         Assert.That(await RunningJobCountAsync(workerId), Is.EqualTo(1));
     }
 
+    private async Task<UnsatisfiableJobsReport> GetUnsatisfiableJobsAsync()
+    {
+        using var client = new IlmarinenNotificationClient(_fixture.HttpClient.BaseAddress!.ToString(), _fixture.HttpClient);
+        return await client.GetUnsatisfiableJobsAsync(CancellationToken.None);
+    }
+
+    [Test]
+    public async Task GetUnsatisfiableJobs_NoWorkerConnected_ListsEveryQueuedJob()
+    {
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var anyWorkerJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.Low));
+        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        Assert.That(report.HighestAvailableWorkerPriority, Is.Null);
+        Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { anyWorkerJob, highOnlyJob }),
+            "with no worker available every queued job is stuck, oldest first");
+    }
+
+    [Test]
+    public async Task GetUnsatisfiableJobs_ListsOnlyJobsAboveTheHighestAvailableWorker()
+    {
+        await RegisterReadyWorkerAsync("conn-unsatisfiable-busy", WorkerPriority.Medium);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var runningJob = await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await JobStatusAsync(runningJob), Is.EqualTo(JobStatus.Running));
+
+        var anyWorkerJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.Low));
+        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        // The busy Medium worker will take the Low job once it is free, so only the High job is stuck.
+        Assert.That(report.HighestAvailableWorkerPriority, Is.EqualTo(WorkerPriority.Medium));
+        Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { highOnlyJob }));
+        Assert.That(await JobStatusAsync(anyWorkerJob), Is.EqualTo(JobStatus.Queued));
+    }
+
+    [Test]
+    public async Task GetUnsatisfiableJobs_IdleReadyWorkerBelowTheMinimum_CountsAsAvailable()
+    {
+        await RegisterReadyWorkerAsync("conn-unsatisfiable-idle", WorkerPriority.Medium);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        Assert.That(report.HighestAvailableWorkerPriority, Is.EqualTo(WorkerPriority.Medium),
+            "an idle worker is available even when it can't take the stuck job; the report must not claim no worker is available");
+        Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { highOnlyJob }));
+    }
+
+    [Test]
+    public async Task GetUnsatisfiableJobs_PipelineJob_CarriesItsPipelineName()
+    {
+        var repository = await _fixture.CreateRepositoryAsync(new RepositorySubmission
+        {
+            Name = "unsatisfiable-repo",
+            RepoUrl = "https://example.invalid/repo.git"
+        });
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "unsatisfiable-pipeline",
+            RepositoryId = repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+
+        await _fixture.Services.GetRequiredService<JobScheduler>().EnqueueJobAsync(new JobSubmission
+        {
+            PipelineId = pipeline.Id,
+            GitTokenMode = GitTokenMode.Inherit
+        });
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        Assert.That(report.Jobs.Single().PipelineName, Is.EqualTo(pipeline.Name));
+    }
+
+    [Test]
+    public async Task GetUnsatisfiableJobs_ConnectedWorkerThatIsNeitherReadyNorBusy_DoesNotCount()
+    {
+        const string conn = "conn-unsatisfiable-not-ready";
+        await RegisterReadyWorkerAsync(conn, WorkerPriority.High);
+        _fixture.Services.GetRequiredService<WorkerRepository>().SetReady(conn, false);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var jobId = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        Assert.That(report.HighestAvailableWorkerPriority, Is.Null,
+            "a connected worker that will never be handed work must not count as available");
+        Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { jobId }));
+    }
+
+    [Test]
+    public async Task GetUnsatisfiableJobs_OnlyWorkerDisconnects_QueuedJobsBecomeUnsatisfiable()
+    {
+        const string conn = "conn-unsatisfiable-disconnect";
+        await RegisterReadyWorkerAsync(conn, WorkerPriority.Low);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        await scheduler.EnqueueJobAsync(Submission());
+        var queuedJob = await scheduler.EnqueueJobAsync(Submission());
+
+        Assert.That((await GetUnsatisfiableJobsAsync()).Jobs, Is.Empty);
+
+        await _fixture.Services.GetRequiredService<WorkerRepository>().SetDisconnectedAsync(conn);
+
+        Assert.That((await GetUnsatisfiableJobsAsync()).Jobs.Select(j => j.Id), Is.EqualTo(new[] { queuedJob }));
+    }
 }

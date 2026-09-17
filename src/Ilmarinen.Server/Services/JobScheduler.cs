@@ -169,6 +169,23 @@ public class JobScheduler
     }
 
     /// <summary>
+    /// Queued jobs no available worker can take, with the highest priority on offer. Taken without _assignLock: it is a read-only snapshot, and a momentary disagreement with an in-flight dispatch clears on the next read.
+    /// </summary>
+    public async Task<UnsatisfiableJobsReport> GetUnsatisfiableJobsAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        var highestAvailablePriority = await workers.GetHighestAvailablePriorityAsync();
+        return new UnsatisfiableJobsReport
+        {
+            HighestAvailableWorkerPriority = highestAvailablePriority,
+            Jobs = await jobs.GetUnsatisfiableJobsAsync(highestAvailablePriority)
+        };
+    }
+
+    /// <summary>
     /// Status-write-gated entry for reported completions (worker JobCompleted, orphaned-job failure on reconnect): persist the terminal status and, if the write actually changed it, emit the completion signal. If the write is refused (the job is already terminal — e.g. the worker's Cancelled report after CancelJobAsync already signalled), the signal is suppressed and only the log buffer is flushed, so chunks streamed after the cancel still persist. EmitCompletionAsync owns the side effects themselves; CancelJobAsync calls it directly because TryCancelAsync is its own atomic terminal transition.
     /// </summary>
     public async Task CompleteJobAsync(Guid jobId, JobStatus status)

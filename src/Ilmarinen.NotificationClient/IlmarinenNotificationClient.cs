@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Threading;
 using System;
 
 namespace Ilmarinen.NotificationClient;
@@ -100,6 +101,15 @@ public class IlmarinenNotificationClient : IDisposable
         var response = await _httpClient.PostAsJsonAsync(
             $"{_baseUrl}/api/subscribers/{SubscriberId}/notifications/ack", notificationIds, _jsonOptions);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<UnsatisfiableJobsReport> GetUnsatisfiableJobsAsync(CancellationToken ct)
+    {
+        var response = await _httpClient.GetAsync($"{_baseUrl}/api/jobs/unsatisfiable", ct);
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadFromJsonAsync<UnsatisfiableJobsReport>(_jsonOptions, ct)
+            ?? throw new InvalidOperationException("Failed to deserialize unsatisfiable jobs report");
     }
 
     public void Dispose()
