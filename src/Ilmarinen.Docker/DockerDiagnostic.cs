@@ -230,14 +230,22 @@ public class DockerDiagnostic : IAsyncDisposable
             _apiServer = new AgentApiServer();
 
             _testNetworkName = $"ilmarinen-diag-{Guid.NewGuid():N}";
+            // The PID namespace goes with the PID so a cleanup can tell whether the PID is one it can check.
+            var labels = new Dictionary<string, string>
+            {
+                ["ilmarinen.diagnostic.pid"] = Environment.ProcessId.ToString()
+            };
+            var pidNamespaceId = LinuxInterop.GetPidNamespaceId();
+            if (pidNamespaceId != null)
+            {
+                labels["ilmarinen.diagnostic.pidns"] = pidNamespaceId;
+            }
+
             await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
             {
                 Name = _testNetworkName,
                 Driver = "bridge",
-                Labels = new Dictionary<string, string>
-                {
-                    ["ilmarinen.diagnostic.pid"] = Environment.ProcessId.ToString()
-                }
+                Labels = labels
             }, ct);
 
             // In Docker-in-Docker, attach the worker container to the diagnostic network so the test container can reach the AgentApiServer running inside the worker.

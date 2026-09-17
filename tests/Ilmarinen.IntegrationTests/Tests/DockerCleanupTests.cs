@@ -13,10 +13,12 @@ public class DockerCleanupTests
     private static readonly Func<int, bool> Dead = _ => false;
     private static readonly Func<int, bool> Alive = _ => true;
 
-    [Test]
-    public void IsStaleNetwork_DeadOwnerInOurNamespace_IsStale()
+    // The diagnostic's scratch networks are labelled under their own prefix and leak the same way a pipeline network does.
+    [TestCase("ilmarinen.test")]
+    [TestCase("ilmarinen.diagnostic")]
+    public void IsStaleNetwork_DeadOwnerInOurNamespace_IsStale(string prefix)
     {
-        var labels = Labels(pid: "4242", pidNamespace: OwnNamespace);
+        var labels = Labels(pid: "4242", pidNamespace: OwnNamespace, prefix: prefix);
 
         Assert.That(DockerCleanup.IsStaleNetwork(labels, OwnNamespace, Dead), Is.True);
     }
@@ -57,16 +59,16 @@ public class DockerCleanupTests
         Assert.That(LinuxInterop.GetPidNamespaceId(), Does.Match(@"^[0-9a-f-]{36}/pid:\[\d+\]$"));
     }
 
-    private static Dictionary<string, string> Labels(string? pid, string? pidNamespace)
+    private static Dictionary<string, string> Labels(string? pid, string? pidNamespace, string prefix = "ilmarinen.test")
     {
         var labels = new Dictionary<string, string>();
         if (pid != null)
         {
-            labels["ilmarinen.test.pid"] = pid;
+            labels[$"{prefix}.pid"] = pid;
         }
         if (pidNamespace != null)
         {
-            labels["ilmarinen.test.pidns"] = pidNamespace;
+            labels[$"{prefix}.pidns"] = pidNamespace;
         }
         return labels;
     }

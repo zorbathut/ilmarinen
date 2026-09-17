@@ -25,6 +25,9 @@ public class DockerCleanup
     /// </summary>
     public static SemaphoreSlim NetworkSemaphore { get; private set; } = null!;
 
+    // Pipeline networks and the diagnostic's scratch networks each carry their creator's PID and PID namespace under their own prefix.
+    private static readonly string[] OwnerLabelPrefixes = ["ilmarinen.test", "ilmarinen.diagnostic"];
+
     [OneTimeSetUp]
     public async Task PruneStaleNetworksAndComputeCapacity()
     {
@@ -48,13 +51,7 @@ public class DockerCleanup
             return;
         }
 
-        var networks = await client.Networks.ListNetworksAsync(new NetworksListParameters
-        {
-            Filters = new Dictionary<string, IDictionary<string, bool>>
-            {
-                ["label"] = new Dictionary<string, bool> { ["ilmarinen.test.pid"] = true }
-            }
-        });
+        var networks = await client.Networks.ListNetworksAsync();
 
         foreach (var network in networks)
         {
@@ -98,11 +95,26 @@ public class DockerCleanup
     /// </summary>
     internal static bool IsStaleNetwork(IDictionary<string, string> labels, string ownPidNamespace, Func<int, bool> isProcessAlive)
     {
-        return labels.TryGetValue("ilmarinen.test.pid", out var pidText)
-            && int.TryParse(pidText, out var pid)
-            && labels.TryGetValue("ilmarinen.test.pidns", out var pidNamespace)
-            && pidNamespace == ownPidNamespace
-            && !isProcessAlive(pid);
+        foreach (var prefix in OwnerLabelPrefixes)
+        {
+            if (labels.TryGetValue($"{prefix}.pid", out var pidText)
+                && int.TryParse(pidText, out var pid)
+                && labels.TryGetValue($"{prefix}.pidns", out var pidNamespace)
+                && pidNamespace == ownPidNamespace
+                && !isProcessAlive(pid))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether a network is one of ours from this namespace, and so one a run like this one will eventually clean up.</summary>
+    internal static bool IsOwnNetwork(IDictionary<string, string> labels, string? ownPidNamespace)
+    {
+        return ownPidNamespace != null
+            && OwnerLabelPrefixes.Any(prefix => labels.TryGetValue($"{prefix}.pidns", out var pidNamespace) && pidNamespace == ownPidNamespace);
     }
 
     private static bool IsProcessAlive(int pid)
@@ -152,11 +164,10 @@ public class DockerCleanup
                 totalSubnets = fallbackPoolSize;
         }
 
-        // Subtract networks that already exist and that no test run of ours will remove: everything but our own namespace's test networks
+        // Subtract networks that already exist and that no test run of ours will remove: everything but our own namespace's
         var ownPidNamespace = LinuxInterop.GetPidNamespaceId();
         var existingNetworks = await client.Networks.ListNetworksAsync();
-        var nonTestNetworks = existingNetworks.Count(n =>
-            !n.Labels.TryGetValue("ilmarinen.test.pidns", out var pidNamespace) || pidNamespace != ownPidNamespace);
+        var nonTestNetworks = existingNetworks.Count(n => !IsOwnNetwork(n.Labels, ownPidNamespace));
 
         // Reserve headroom: leave 25% of capacity or at least 4 networks for other Docker usage
         var reserved = Math.Max(4, totalSubnets / 4);
