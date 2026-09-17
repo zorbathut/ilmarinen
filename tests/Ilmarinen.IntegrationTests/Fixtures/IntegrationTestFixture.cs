@@ -141,13 +141,14 @@ public class IntegrationTestFixture : IAsyncDisposable
     public async Task WaitForWorkerReadyAsync(Guid workerId, int timeoutMs = 60000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        WorkerView? view = null;
 
         while (DateTime.UtcNow < deadline)
         {
             using var scope = _factory.Services.CreateScope();
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-            var view = await workers.GetByIdAsync(workerId);
+            view = await workers.GetByIdAsync(workerId);
             if (view != null && view.IsReady)
             {
                 return;
@@ -156,8 +157,9 @@ public class IntegrationTestFixture : IAsyncDisposable
             await Task.Delay(100);
         }
 
+        // The last thing the server knew, because "did not become Ready" alone can't tell a worker that never connected from one whose diagnostic failed.
         throw new TimeoutException(
-            $"Worker {workerId} did not become Ready within {timeoutMs}ms");
+            $"Worker {workerId} did not become Ready within {timeoutMs}ms (connected: {view?.IsConnected}, diagnostic: {view?.Diagnostic?.Status.ToString() ?? "none"} - {view?.Diagnostic?.Summary})");
     }
 
     public async Task<Guid> SubmitJobAsync(JobSubmission submission)
