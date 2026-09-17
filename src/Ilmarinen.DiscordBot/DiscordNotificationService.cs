@@ -16,6 +16,10 @@ namespace Ilmarinen.DiscordBot;
 
 public class DiscordNotificationService : BackgroundService, INotificationHandler
 {
+    // Long enough to ride out worker relaunches and the reconnects after a server restart, which briefly leave no worker available.
+    private static readonly TimeSpan WedgeGracePeriod = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan WedgePollInterval = TimeSpan.FromSeconds(30);
+
     private readonly IConfiguration _configuration;
     private readonly ILogger<DiscordNotificationService> _logger;
     private readonly IHostApplicationLifetime _lifetime;
@@ -63,7 +67,19 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
                 this,
                 new NotificationProcessorOptions { SubscriberName = _config!.SubscriberName },
                 _logger);
-            await processor.RunAsync(stoppingToken);
+
+            // The service runs for as long as the notification processor does. The wedge watch never ends on its own, so however the processor finishes, the watch is stopped and joined here.
+            using var wedgeWatchStop = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            var wedgeWatch = WatchForWedgeAsync(wedgeWatchStop.Token);
+            try
+            {
+                await processor.RunAsync(stoppingToken);
+            }
+            finally
+            {
+                wedgeWatchStop.Cancel();
+                await wedgeWatch;
+            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -212,6 +228,68 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
 
         _logger.LogInformation("Sent {Status} notification to Discord for job {JobId}",
             notification.Status, notification.JobId);
+    }
+
+    /// <summary>
+    /// Polls for queued jobs no available worker can take, posting once they have been stuck for the grace period and again once none are. Runs until cancelled: whatever fails in a pass is logged and the next pass tries again, so a flaky server or Discord can't take build notifications down with it.
+    /// </summary>
+    private async Task WatchForWedgeAsync(CancellationToken ct)
+    {
+        var tracker = new WedgeTracker(WedgeGracePeriod);
+
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(WedgePollInterval, ct);
+
+                // Only cancellation on the way out escapes. Anything else — including a client disposed underneath a request that outlived the host's shutdown timeout — is a failed pass.
+                try
+                {
+                    await CheckForWedgeAsync(tracker, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    _logger.LogError(ex, "Failed to report stuck jobs to Discord; will retry");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _logger.LogInformation("Stopped watching for stuck jobs");
+        }
+    }
+
+    private async Task CheckForWedgeAsync(WedgeTracker tracker, CancellationToken ct)
+    {
+        UnsatisfiableJobsReport report;
+        try
+        {
+            report = await _notificationClient!.GetUnsatisfiableJobsAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Could not poll for stuck jobs; the grace period starts over");
+            tracker.ObservationFailed();
+            return;
+        }
+
+        var options = new RequestOptions { CancelToken = ct };
+
+        switch (tracker.Observe(report.Jobs.Count > 0, DateTime.UtcNow))
+        {
+            case WedgeAnnouncement.Wedged:
+                await (await GetChannelAsync()).SendMessageAsync(text: RoleMention(), embed: WedgeEmbeds.Wedged(report, BuildJobUrl), options: options);
+                tracker.MarkWedgeAnnounced();
+                _logger.LogInformation("Posted stuck-jobs alert to Discord for {Count} jobs", report.Jobs.Count);
+                break;
+
+            case WedgeAnnouncement.Unwedged:
+                await (await GetChannelAsync()).SendMessageAsync(embed: WedgeEmbeds.Unwedged(), options: options);
+                tracker.MarkRecoveryAnnounced();
+                _logger.LogInformation("Posted stuck-jobs recovery to Discord");
+                break;
+        }
     }
 
     private async Task<IMessageChannel> GetChannelAsync()
