@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -121,16 +122,7 @@ public class JobScheduler
                     continue;
                 }
 
-                // One unreachable worker must not strand the jobs the rest of the fleet could still take. Its job is already marked Running against it, and is reconciled like any other undelivered job when the worker reconnects.
-                try
-                {
-                    await AssignNextJobAsync(jobs, workers, connectionId, worker.Id);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to dispatch to worker {WorkerId}; trying the next candidate", worker.Id);
-                    workers.SetReady(connectionId, false);
-                }
+                await AssignNextJobAsync(jobs, workers, connectionId, worker.Id);
             }
         }
         finally
@@ -146,7 +138,19 @@ public class JobScheduler
     {
         while (_pendingJobs.TryDequeue(out var jobId))
         {
-            var submission = await jobs.GetSubmissionAsync(jobId);
+            JobSubmission? submission;
+            try
+            {
+                submission = await jobs.GetSubmissionAsync(jobId);
+            }
+            catch (CryptographicException ex)
+            {
+                // The stored git token can't be decrypted, typically because the server key changed while the job was queued. No worker can ever run this job, and it is no fault of this one.
+                _logger.LogError(ex, "Job {JobId} has a git token that can no longer be decrypted; failing it", jobId);
+                await CompleteJobAsync(jobId, JobStatus.Failed);
+                continue;
+            }
+
             if (submission == null)
             {
                 _logger.LogError("Dequeued job {JobId} has no submission record; dropping it", jobId);
@@ -172,7 +176,16 @@ public class JobScheduler
             workers.SetReady(connectionId, false);
             _uiEvents.NotifyJobsChanged();
 
-            await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
+            // Only a failed send is the worker's fault. One unreachable worker must not strand the jobs the rest of the fleet could still take: its job is already marked Running against it, and is reconciled like any other undelivered job when the worker reconnects.
+            try
+            {
+                await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send job {JobId} to worker {WorkerId}; trying the next candidate", jobId, workerId);
+            }
+
             return;
         }
     }

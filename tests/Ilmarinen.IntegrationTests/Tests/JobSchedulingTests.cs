@@ -208,6 +208,57 @@ public class JobSchedulingTests
         Assert.That(await JobStatusAsync(job2), Is.EqualTo(JobStatus.Cancelled));
     }
 
+    public enum TokenDamage
+    {
+        // Fails authentication exactly as a changed server key does.
+        FlippedByte,
+        NotBase64,
+        TooShort
+    }
+
+    [TestCase(TokenDamage.FlippedByte)]
+    [TestCase(TokenDamage.NotBase64)]
+    [TestCase(TokenDamage.TooShort)]
+    public async Task Dispatch_QueuedJobWithUndecryptableToken_FailsItAndServesNextJob(TokenDamage damage)
+    {
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+
+        // Both jobs queue with no worker connected.
+        var poisonJob = await scheduler.EnqueueJobAsync(Submission() with { GitTokenMode = GitTokenMode.Explicit, GitToken = "token" });
+        var plainJob = await scheduler.EnqueueJobAsync(Submission());
+
+        using (var scope = _fixture.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+            var job = await db.Jobs.FirstAsync(j => j.Id == poisonJob);
+            var sealedToken = Convert.FromBase64String(job.EncryptedGitToken!);
+            sealedToken[sealedToken.Length / 2] ^= 0xFF;
+            job.EncryptedGitToken = damage switch
+            {
+                TokenDamage.FlippedByte => Convert.ToBase64String(sealedToken),
+                TokenDamage.NotBase64 => "not base64!",
+                TokenDamage.TooShort => Convert.ToBase64String(sealedToken[..4]),
+                _ => throw new ArgumentOutOfRangeException(nameof(damage))
+            };
+            await db.SaveChangesAsync();
+        }
+
+        // Two workers, so the test sees whether a job's failure takes the worker it happened on out of rotation.
+        var firstWorker = await RegisterReadyWorkerAsync("conn-undecryptable-token-a");
+        var secondWorker = await RegisterReadyWorkerAsync("conn-undecryptable-token-b");
+        await scheduler.DispatchAsync();
+
+        Assert.That(await JobStatusAsync(poisonJob), Is.EqualTo(JobStatus.Failed),
+            "a job whose token can never be decrypted can never run, so it must fail rather than sit queued");
+        Assert.That(await JobStatusAsync(plainJob), Is.EqualTo(JobStatus.Running),
+            "the workers are not at fault and must go on to take the next job");
+        Assert.That(await RunningJobCountAsync(firstWorker) + await RunningJobCountAsync(secondWorker), Is.EqualTo(1));
+
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        Assert.That(workers.GetByConnectionId("conn-undecryptable-token-a")!.IsReady || workers.GetByConnectionId("conn-undecryptable-token-b")!.IsReady, Is.True,
+            "the worker that took no job must still be ready for the next one");
+    }
+
     [Test]
     public async Task Reconnect_WorkerLostItsJob_FailsJobAndRefreshesUI()
     {

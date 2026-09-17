@@ -53,7 +53,7 @@ public class CredentialEncryptionService
     }
 
     /// <summary>
-    /// Decrypts a base64-encoded ciphertext back to plaintext.
+    /// Decrypts a base64-encoded ciphertext back to plaintext. Anything that can't be decrypted under the current key, malformed input included, throws CryptographicException, so callers can tell a bad stored value from an infrastructure failure.
     /// </summary>
     public string? Decrypt(string? encrypted)
     {
@@ -62,10 +62,19 @@ public class CredentialEncryptionService
 
         var key = _serverKey.GetEncryptionKey();
 
-        var combined = Convert.FromBase64String(encrypted);
+        byte[] combined;
+        try
+        {
+            combined = Convert.FromBase64String(encrypted);
+        }
+        catch (FormatException ex)
+        {
+            throw new CryptographicException("Invalid encrypted data: not base64.", ex);
+        }
+
         if (combined.Length < NonceSize + TagSize)
         {
-            throw new InvalidOperationException("Invalid encrypted data: too short.");
+            throw new CryptographicException("Invalid encrypted data: too short.");
         }
 
         var nonce = new byte[NonceSize];
