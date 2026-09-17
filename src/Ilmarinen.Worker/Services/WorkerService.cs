@@ -31,6 +31,7 @@ public class WorkerService : BackgroundService
     private readonly ILogger<WorkerService> _logger;
     private readonly MessageBuffer _messageBuffer = new();
     private HubConnection? _connection;
+    private BufferedHubSender? _sender;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
 
     // Single-activity gate. Job assignment and diagnostic each call TryEnter(...) and refuse if the worker is already doing the other thing.
@@ -109,6 +110,7 @@ public class WorkerService : BackgroundService
                 options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
             })
             .Build();
+        _sender = new BufferedHubSender(_connection, _messageBuffer, _logger);
 
         _connection.KeepAliveInterval = TimeSpan.FromSeconds(15);
         _connection.ServerTimeout = TimeSpan.FromSeconds(60);
@@ -432,7 +434,7 @@ public class WorkerService : BackgroundService
             _logger.LogInformation("Cannot run diagnostic: worker is busy");
             if (_lastDiagnostic != null)
             {
-                await SendReliableAsync("ReportDiagnostic", _lastDiagnostic);
+                await _sender!.SendOrBufferAsync("ReportDiagnostic", _lastDiagnostic);
                 if (CanAcceptJobs(_lastDiagnostic.Status) && !_updatePending)
                 {
                     await SendReadyIfConnectedAsync();
@@ -480,7 +482,7 @@ public class WorkerService : BackgroundService
             }
 
             _lastDiagnostic = report;
-            await SendReliableAsync("ReportDiagnostic", report);
+            await _sender!.SendOrBufferAsync("ReportDiagnostic", report);
 
             // Server flipped us not-ready before invoking the diagnostic. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready. And never ask while an update is pending — a draining worker must not attract jobs.
             if (CanAcceptJobs(report.Status) && !_updatePending)
@@ -524,7 +526,7 @@ public class WorkerService : BackgroundService
             await TryFlushLogsAsync(logCollector);
         }
 
-        await SendReliableAsync("JobCompleted", job.Id, new JobResult
+        await _sender!.SendOrBufferAsync("JobCompleted", job.Id, new JobResult
         {
             Id = job.Id,
             Status = JobStatus.Failed,
@@ -553,7 +555,7 @@ public class WorkerService : BackgroundService
                 // Keep the host from auto-suspending out from under us for as long as the job runs.
                 using var inhibitor = await _sleepInhibitor.AcquireAsync($"Ilmarinen job {job.Id}");
 
-                await SendReliableAsync("JobStarted", job.Id);
+                await _sender!.SendOrBufferAsync("JobStarted", job.Id);
 
                 var runner = new JobRunner(_config, _workspaceManager, job, _connection!, jobLogger, logCollector);
                 var runResult = await runner.ExecuteAsync(cts.Token);
@@ -605,7 +607,7 @@ public class WorkerService : BackgroundService
         }
 
         // The server's JobCompleted handler marks this worker ready and dispatches the next queued job. Sending an explicit Ready here too would double-trigger dispatch and could stack a second job on this worker.
-        var delivered = await SendReliableAsync("JobCompleted", job.Id, result);
+        var delivered = await _sender!.SendOrBufferAsync("JobCompleted", job.Id, result);
 
         // Exit only on confirmed delivery: a buffered JobCompleted dies with this process and the job would be marked Failed on relaunch. When buffered, the reconnect path replays the buffer and then performs this drain itself.
         if (_updatePending && delivered)
@@ -621,32 +623,6 @@ public class WorkerService : BackgroundService
         {
             _logger.LogWarning(ex, "DiscoverWorkspaces failed; continuing with empty list");
             return [];
-        }
-    }
-
-    /// <summary>
-    /// Sends a message to the server with implicit acknowledgment via InvokeAsync.
-    /// If the server is unreachable, the message is buffered for replay on reconnection.
-    /// Returns whether the message was actually delivered, as opposed to buffered.
-    /// </summary>
-    private async Task<bool> SendReliableAsync(string method, params object[] args)
-    {
-        if (_connection?.State != HubConnectionState.Connected)
-        {
-            _messageBuffer.Enqueue(new BufferedMessage { Method = method, Args = args });
-            return false;
-        }
-
-        try
-        {
-            await _connection.InvokeCoreAsync(method, args);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to send {Method}, buffering for replay", method);
-            _messageBuffer.Enqueue(new BufferedMessage { Method = method, Args = args });
-            return false;
         }
     }
 
