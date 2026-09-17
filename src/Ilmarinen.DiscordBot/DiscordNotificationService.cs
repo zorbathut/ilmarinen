@@ -23,6 +23,7 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
     private IlmarinenNotificationClient? _notificationClient;
     private DiscordBotConfig? _config;
     private ulong _channelId;
+    private string? _jobLinkBaseUrl;
     private bool _isReady;
 
     public DiscordNotificationService(
@@ -114,6 +115,17 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
                 return false;
             }
 
+            // serverUrl may legitimately be null here: ILMARINEN_SERVER_URL can supply the connection address instead, and only links need this one.
+            var linkBaseUrl = _config.PublicUrl ?? _config.ServerUrl;
+            if (!string.IsNullOrWhiteSpace(linkBaseUrl) && Uri.IsWellFormedUriString(linkBaseUrl.TrimEnd('/'), UriKind.Absolute))
+            {
+                _jobLinkBaseUrl = linkBaseUrl.TrimEnd('/');
+            }
+            else
+            {
+                _logger.LogWarning("Messages will carry no job links: base URL '{BaseUrl}' is not a valid absolute URI. Set PublicUrl in config to a valid URL", linkBaseUrl);
+            }
+
             _logger.LogInformation("Loaded Discord bot configuration from {ConfigPath}", configPath);
             return true;
         }
@@ -173,16 +185,7 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
         var isSuccess = notification.Status == JobStatus.Success;
         var color = isSuccess ? Color.Green : Color.Red;
         var title = isSuccess ? "Build Succeeded" : "Build Failed";
-        var baseUrl = _config!.PublicUrl ?? _config.ServerUrl;
-        string? jobUrl = null;
-        if (!string.IsNullOrWhiteSpace(baseUrl) && Uri.IsWellFormedUriString(baseUrl.TrimEnd('/'), UriKind.Absolute))
-        {
-            jobUrl = $"{baseUrl.TrimEnd('/')}/jobs/{notification.JobId}";
-        }
-        else
-        {
-            _logger.LogWarning("Cannot generate job URL: base URL '{BaseUrl}' is not a valid absolute URI. Set PublicUrl in config to a valid URL", baseUrl);
-        }
+        var jobUrl = BuildJobUrl(notification.JobId);
 
         var embed = new EmbedBuilder()
             .WithTitle(title)
@@ -214,6 +217,11 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
 
         _logger.LogInformation("Sent {Status} notification to Discord for job {JobId}",
             notification.Status, notification.JobId);
+    }
+
+    private string? BuildJobUrl(Guid jobId)
+    {
+        return _jobLinkBaseUrl != null ? $"{_jobLinkBaseUrl}/jobs/{jobId}" : null;
     }
 
     private static string FormatDuration(TimeSpan duration)
