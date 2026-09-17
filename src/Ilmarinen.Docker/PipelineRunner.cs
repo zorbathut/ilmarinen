@@ -547,14 +547,10 @@ public class PipelineRunner : IDisposable
 
             try
             {
-                // Execute the action and capture output. When cancelled, we stop the container which kills all processes inside it.
+                // When cancelled, kill the container, which kills every process in it and so ends the step's action.
                 using var reg = cancellationToken.Register(() =>
                 {
-                    // Fire-and-forget: stopping the container kills the entire process tree
-                    _ = _client.Containers.StopContainerAsync(containerId, new ContainerStopParameters
-                    {
-                        WaitBeforeKillSeconds = 5
-                    });
+                    _ = KillContainerOnCancelAsync(containerId);
                 });
 
                 await step.Action(context);
@@ -566,16 +562,7 @@ public class PipelineRunner : IDisposable
         }
         finally
         {
-            // Stop and remove container. Best-effort: a failure here means a leaked container, so leave a breadcrumb.
-            try
-            {
-                await _client.Containers.StopContainerAsync(containerId, new ContainerStopParameters());
-            }
-            catch (Exception ex)
-            {
-                WriteInfo($"Warning: failed to stop container {containerId[..12]}: {ex.Message}");
-            }
-
+            // Force-remove the container, which kills it outright. Don't stop it gracefully first: SIGTERM reaches only the container's PID 1, never the processes the step exec'd, so a graceful stop gives nothing a chance to clean up and just waits out its timeout. Best-effort: a failure here means a leaked container, so leave a breadcrumb.
             try
             {
                 await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true });
@@ -584,6 +571,19 @@ public class PipelineRunner : IDisposable
             {
                 WriteInfo($"Warning: failed to remove container {containerId[..12]}: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>Fire-and-forget from the cancellation callback, which can't await, so a failed kill has to report itself: otherwise the cancel silently doesn't happen.</summary>
+    private async Task KillContainerOnCancelAsync(string containerId)
+    {
+        try
+        {
+            await _client.Containers.KillContainerAsync(containerId, new ContainerKillParameters());
+        }
+        catch (Exception ex)
+        {
+            WriteInfo($"Warning: failed to kill container {containerId[..12]} on cancel: {ex.Message}");
         }
     }
 
