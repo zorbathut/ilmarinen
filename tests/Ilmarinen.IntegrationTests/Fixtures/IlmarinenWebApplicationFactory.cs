@@ -6,10 +6,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
-using System.Net.Sockets;
-using System.Net;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using System;
@@ -23,6 +22,9 @@ namespace Ilmarinen.IntegrationTests.Fixtures;
 /// </summary>
 public class IlmarinenWebApplicationFactory : IAsyncDisposable
 {
+    // Ports are picked below Linux's ephemeral range (32768–60999), which port-0 binds (e.g. AgentApiServer) and Docker's published-port allocator draw from; a restarting server re-binds its old ports, and anything drawing from that pool could claim one in the gap. Reserving each port until its factory is disposed keeps the other fixtures in this process off it too.
+    private static readonly HashSet<int> PortsReserved = [];
+
     private readonly TestPostgresContainer _postgres = new();
 
     private WebApplication? _app;
@@ -59,13 +61,13 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         _artifactPath = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-artifacts-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_artifactPath);
 
-        // Retry with fresh ports on bind failures (parallel tests can race on port allocation)
+        // Retry with fresh ports on bind failures (another process may hold one)
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                _publicPort = GetAvailablePort();
-                _workerPort = GetAvailablePort();
+                _publicPort = AllocatePort();
+                _workerPort = AllocatePort();
                 await StartServerAsync();
                 break;
             }
@@ -77,6 +79,7 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
                     await _app.DisposeAsync();
                     _app = null;
                 }
+                ReleasePorts();
             }
         }
     }
@@ -95,7 +98,7 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
 
         WorkerBundlePath = newWorkerBundlePath;
 
-        // Same ports, so the reconnecting worker finds us — retry with delay rather than fresh ports, accepting the small window where a parallel test grabs them.
+        // Same ports, so the reconnecting worker finds us — retry with delay rather than fresh ports, accepting the small window where another process grabs them.
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -177,13 +180,28 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         return client;
     }
 
-    private static int GetAvailablePort()
+    private static int AllocatePort()
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        lock (PortsReserved)
+        {
+            while (true)
+            {
+                var port = Random.Shared.Next(20000, 32768);
+                if (PortsReserved.Add(port))
+                {
+                    return port;
+                }
+            }
+        }
+    }
+
+    private void ReleasePorts()
+    {
+        lock (PortsReserved)
+        {
+            PortsReserved.Remove(_publicPort);
+            PortsReserved.Remove(_workerPort);
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -193,6 +211,7 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
             await _app.StopAsync();
             await _app.DisposeAsync();
         }
+        ReleasePorts();
         await _postgres.DisposeAsync();
 
         // Clean up artifact storage
