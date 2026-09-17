@@ -246,6 +246,9 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
     {
         _logger.LogInformation("Stopping Discord notification service...");
 
+        // Cancel and wait for ExecuteAsync first: it uses both clients until it returns, and disposing them underneath it fails whatever send or poll is in flight.
+        await base.StopAsync(cancellationToken);
+
         if (_discordClient != null)
         {
             await _discordClient.StopAsync();
@@ -253,7 +256,5 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
         }
 
         _notificationClient?.Dispose();
-
-        await base.StopAsync(cancellationToken);
     }
 }
