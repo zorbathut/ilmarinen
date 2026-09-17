@@ -135,7 +135,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits until the worker is connected, has run its startup diagnostic, and is Ready.
+    /// Waits until the worker is connected, has reported its diagnostic, and is Ready.
     /// Default timeout includes time for the diagnostic to pull alpine and run a container.
     /// </summary>
     public async Task WaitForWorkerReadyAsync(Guid workerId, int timeoutMs = 60000)

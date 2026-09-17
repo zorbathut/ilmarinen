@@ -116,6 +116,20 @@ public class WorkerDiagnosticGatingTests
     }
 
     [Test]
+    public async Task DiagnosticReRunOnWorkerRestart()
+    {
+        var stub = new StubDiagnostic(DiagnosticStatus.Healthy, "stub healthy");
+
+        await _fixture.StartWorkerAsync(stub, waitForReady: true);
+        Assert.That(stub.CallCount, Is.EqualTo(1));
+
+        await _fixture.StopWorkerAsync(preserveIdentity: true);
+        await _fixture.RestartWorkerAsync();
+
+        Assert.That(stub.CallCount, Is.EqualTo(2), "a fresh worker process has no cached diagnostic, so it must run one before it can be Ready");
+    }
+
+    [Test]
     public async Task DiagnosticNotReRunOnReconnect()
     {
         var stub = new StubDiagnostic(DiagnosticStatus.Healthy, "stub healthy");
@@ -123,13 +137,11 @@ public class WorkerDiagnosticGatingTests
         var workerId = await _fixture.StartWorkerAsync(stub, waitForReady: true);
         Assert.That(stub.CallCount, Is.EqualTo(1));
 
-        // Force a reconnect by stopping and restarting the worker (preserving identity).
-        await _fixture.StopWorkerAsync(preserveIdentity: true);
-        await _fixture.RestartWorkerAsync();
+        // The restarted server starts with no in-memory connection or Ready state, so Ready can only come from this same worker process having reconnected.
+        await _fixture.RestartServerAsync(null);
+        await _fixture.WaitForWorkerReadyAsync(workerId, timeoutMs: 90000);
 
-        // After restart, the worker is a fresh process — it WILL re-run the diagnostic. This test instead validates the cached-replay path: stop+restart with preserved identity is restart, not reconnect. (A within-process reconnect is hard to force in a unit test because SignalR's auto-reconnect is bound to actual transport drops.) So this test really verifies that *fresh* startup runs the diagnostic exactly once.
-        Assert.That(stub.CallCount, Is.EqualTo(2),
-            "fresh worker process re-runs diagnostic; in-process reconnects use the cached value");
+        Assert.That(stub.CallCount, Is.EqualTo(1), "a reconnecting worker must replay its cached diagnostic, not run a new one");
     }
 
     private async Task WaitForDiagnosticAsync(Guid workerId, DiagnosticStatus expected, int timeoutMs = 10000)
