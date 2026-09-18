@@ -434,7 +434,7 @@ public class WorkerService : BackgroundService
             _logger.LogInformation("Cannot run diagnostic: worker is busy");
             if (_lastDiagnostic != null)
             {
-                await _sender!.SendOrBufferAsync("ReportDiagnostic", _lastDiagnostic);
+                await SendDiagnosticIfConnectedAsync(_lastDiagnostic);
                 if (CanAcceptJobs(_lastDiagnostic.Status) && !_updatePending)
                 {
                     await SendReadyIfConnectedAsync();
@@ -482,7 +482,7 @@ public class WorkerService : BackgroundService
             }
 
             _lastDiagnostic = report;
-            await _sender!.SendOrBufferAsync("ReportDiagnostic", report);
+            await SendDiagnosticIfConnectedAsync(report);
 
             // Server flipped us not-ready before invoking the diagnostic. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready. And never ask while an update is pending — a draining worker must not attract jobs.
             if (CanAcceptJobs(report.Status) && !_updatePending)
@@ -643,6 +643,26 @@ public class WorkerService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not send Ready; the next reconnect re-derives it");
+        }
+    }
+
+    /// <summary>
+    /// A report is derived state that the worker re-pushes whenever it re-syncs, so one that can't be sent now is dropped rather than buffered: replayed after a reconnect, it would land on top of a newer report and undo it.
+    /// </summary>
+    private async Task SendDiagnosticIfConnectedAsync(DiagnosticReport report)
+    {
+        if (_connection?.State != HubConnectionState.Connected)
+        {
+            return;
+        }
+
+        try
+        {
+            await _connection.SendAsync("ReportDiagnostic", report);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not send diagnostic report; the next reconnect re-pushes it");
         }
     }
 
