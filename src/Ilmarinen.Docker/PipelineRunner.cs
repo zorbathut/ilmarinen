@@ -64,6 +64,9 @@ public class PipelineRunner : IDisposable
     /// <summary>
     /// Write informational message to both console and log output callback.
     /// </summary>
+    /// <summary>The Docker network this run's containers share, once it has one. For tests that need to look at what the run left behind.</summary>
+    internal string? NetworkName { get; private set; }
+
     private void WriteInfo(string message)
     {
         Console.WriteLine(message);
@@ -75,6 +78,7 @@ public class PipelineRunner : IDisposable
         var branch = await GetGitBranch();
         var commit = await GetGitCommit();
         var networkName = $"ilmarinen-{Guid.NewGuid():N}";
+        NetworkName = networkName;
         var runId = Guid.CreateVersion7();
 
         // Set up artifact saver (use custom if provided, otherwise save to local filesystem)
@@ -500,6 +504,8 @@ public class PipelineRunner : IDisposable
             }
         }
 
+        await RemoveContainersLeftOnNetworkAsync(name);
+
         try
         {
             await _client.Networks.DeleteNetworkAsync(name);
@@ -507,6 +513,40 @@ public class PipelineRunner : IDisposable
         catch (Exception ex)
         {
             WriteInfo($"Warning: failed to remove network {name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Clears out whatever is still attached to the job's network. A step that was cancelled never got to stop the services and nested containers it started — the shell that would have done it died with the step container — and they would otherwise outlive the job and keep its network undeletable.
+    /// </summary>
+    private async Task RemoveContainersLeftOnNetworkAsync(string name)
+    {
+        try
+        {
+            var network = await _client.Networks.InspectNetworkAsync(name);
+
+            foreach (var container in network.Containers)
+            {
+                // The worker's own container attaches itself in Docker-in-Docker; it outlives the job by definition, and the disconnect above should already have taken it off.
+                if (container.Key == _workerContainerId)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await _client.Containers.RemoveContainerAsync(container.Key,
+                        new ContainerRemoveParameters { Force = true, RemoveVolumes = true });
+                }
+                catch (Exception ex)
+                {
+                    WriteInfo($"Warning: failed to remove container {container.Key[..12]} left on network {name}: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteInfo($"Warning: could not check network {name} for leftover containers: {ex.Message}");
         }
     }
 

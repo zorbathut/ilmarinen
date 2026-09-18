@@ -42,6 +42,78 @@ public class PipelineRunnerTeardownTests
         Assert.That(events.Where(e => e.Action == "kill").Select(e => e.Actor.Attributes["signal"]), Is.Not.Empty.And.All.EqualTo("9"), "the container should be killed with SIGKILL and nothing else");
     }
 
+    [Test]
+    public async Task RunAsync_Cancelled_RemovesWhatTheStepLeftOnItsNetwork()
+    {
+        var serviceName = $"svc-{Guid.NewGuid():N}";
+        var workDir = Path.Combine(Path.GetTempPath(), $"ilmarinen-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+
+        try
+        {
+            var scriptPath = Path.Combine(workDir, "service.csx");
+            await File.WriteAllTextAsync(scriptPath, $$"""
+                Step("cancel-me")
+                    .Image("docker:cli")
+                    .Run(async ctx => {
+                        await ctx.StartService("redis:alpine", "{{serviceName}}");
+                        await ctx.Shell("touch /workspace/started");
+                        await ctx.Run("alpine:latest", "sleep", "300");
+                    });
+                """);
+
+            var scriptResult = await PipelineScript.LoadAsync(scriptPath);
+            using var runner = new PipelineRunner(workDir: workDir);
+            using var runCts = new CancellationTokenSource();
+            var run = runner.RunAsync(scriptResult.Steps, runCts.Token);
+
+            var startedPath = Path.Combine(workDir, "started");
+            var deadline = DateTime.UtcNow + Cap;
+            while (!File.Exists(startedPath))
+            {
+                Assert.That(run.IsCompleted, Is.False, "the step should still be sleeping when it gets cancelled");
+                Assert.That(DateTime.UtcNow, Is.LessThan(deadline), "the step never started its service");
+                await Task.Delay(100);
+            }
+            await runCts.CancelAsync();
+            await run.WaitAsync(Cap);
+
+            // The step container is killed on cancel, so the shell that would have stopped the service died with it.
+            Assert.That(await ServiceContainersAsync(serviceName), Is.Empty, "a cancelled step's services must not outlive the job");
+            Assert.That(await NetworkExistsAsync(runner.NetworkName!), Is.False, "nothing left on the network means the network goes too");
+        }
+        finally
+        {
+            Directory.Delete(workDir, recursive: true);
+        }
+    }
+
+    private static async Task<bool> NetworkExistsAsync(string name)
+    {
+        using var client = DockerClientFactory.Create();
+        var networks = await client.Networks.ListNetworksAsync(new NetworksListParameters
+        {
+            Filters = new Dictionary<string, IDictionary<string, bool>>
+            {
+                ["name"] = new Dictionary<string, bool> { [name] = true }
+            }
+        });
+        return networks.Any(n => n.Name == name);
+    }
+
+    private static async Task<IList<ContainerListResponse>> ServiceContainersAsync(string serviceName)
+    {
+        using var client = DockerClientFactory.Create();
+        return await client.Containers.ListContainersAsync(new ContainersListParameters
+        {
+            All = true,
+            Filters = new Dictionary<string, IDictionary<string, bool>>
+            {
+                ["name"] = new Dictionary<string, bool> { [serviceName] = true }
+            }
+        });
+    }
+
     /// <summary>Runs a one-step pipeline whose shell writes the container's ID (its hostname) to the workspace, and returns the daemon's kill, stop and destroy events for that container once it has been destroyed.</summary>
     private static async Task<IReadOnlyList<Message>> RunWatchingStepContainerAsync(string shell, bool cancelOnceStarted)
     {
