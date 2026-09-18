@@ -371,42 +371,19 @@ public class WorkerService : BackgroundService
             return;
         }
 
-        // First connect ever: run the diagnostic. Subsequent reconnects re-push the cached result so the server reconstructs its state without re-running (and without the per-reconnect cost of an image pull / container run).
-        if (_lastDiagnostic == null)
+        // First connect ever: run the diagnostic, which reports its own result and readiness. Subsequent reconnects re-push the cached result so the server reconstructs its state without re-running (and without the per-reconnect cost of an image pull / container run).
+        var cached = _lastDiagnostic;
+        if (cached == null)
         {
-            _logger.LogInformation("Running startup diagnostic...");
-            try
-            {
-                _lastDiagnostic = await _diagnostic.RunAsync(_config.WorkerContainerId, _stoppingToken);
-                _logger.LogInformation("Startup diagnostic: {Status} - {Summary}",
-                    _lastDiagnostic.Status, _lastDiagnostic.Summary);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Diagnostic itself threw — treating as Unhealthy");
-                _lastDiagnostic = new DiagnosticReport
-                {
-                    Status = DiagnosticStatus.Unhealthy,
-                    Summary = $"Diagnostic threw: {ex.Message}",
-                    Steps = [],
-                    CheckedAt = DateTime.UtcNow
-                };
-            }
+            await ExecuteDiagnosticAsync(DiagnosticTrigger.Automatic);
+            return;
         }
 
-        await _connection!.SendAsync("ReportDiagnostic", _lastDiagnostic);
+        await _connection!.SendAsync("ReportDiagnostic", cached);
 
-        if (CanAcceptJobs(_lastDiagnostic.Status))
+        if (CanAcceptJobs(cached.Status))
         {
-            if (_lastDiagnostic.Status == DiagnosticStatus.Degraded)
-            {
-                _logger.LogWarning("Worker is functional but degraded: {Summary}", _lastDiagnostic.Summary);
-            }
             await _connection!.SendAsync("Ready");
-        }
-        else
-        {
-            _logger.LogWarning("Worker is online but not functional: {Summary}", _lastDiagnostic.Summary);
         }
     }
 
@@ -422,16 +399,16 @@ public class WorkerService : BackgroundService
     private Task OnRunDiagnostic()
     {
         // Fire-and-forget so the SignalR dispatch loop stays unblocked.
-        _ = ExecuteDiagnosticAsync();
+        _ = ExecuteDiagnosticAsync(DiagnosticTrigger.Operator);
         return Task.CompletedTask;
     }
 
-    private async Task ExecuteDiagnosticAsync()
+    private async Task ExecuteDiagnosticAsync(DiagnosticTrigger trigger)
     {
-        if (!TryEnterActivity(WorkerActivity.RunningDiagnostic, jobId: null, out _, out _))
+        if (!TryEnterActivity(WorkerActivity.RunningDiagnostic, jobId: null, out var blockingActivity, out var blockingJobId))
         {
             // Race: a job arrived (or was already running) before the worker received the RunDiagnostic request. The server marked us not-ready preparing to fire the diagnostic, but a job was already in-flight. Re-push the cached report so the UI doesn't sit on stale "Running" or pre-click state, and re-publish ready-on-healthy so the worker can pick up more jobs.
-            _logger.LogInformation("Cannot run diagnostic: worker is busy");
+            _logger.LogInformation("Cannot run diagnostic: worker is {Activity}{JobId}", blockingActivity, blockingJobId != null ? $" ({blockingJobId})" : "");
             if (_lastDiagnostic != null)
             {
                 await SendDiagnosticIfConnectedAsync(_lastDiagnostic);
@@ -440,15 +417,19 @@ public class WorkerService : BackgroundService
                     await SendReadyIfConnectedAsync();
                 }
             }
+            else
+            {
+                _logger.LogWarning("Worker has no diagnostic to report yet; it stays not-ready until it can run one");
+            }
             return;
         }
 
         try
         {
-            // The "Running" placeholder is a transient UI hint; don't buffer it. If the connection is dropped while it's queued, replaying it later (after the real result has already arrived) would briefly clobber the final report with a stale "Running" status.
+            // The "Running" placeholder is a transient UI hint, and only answers an operator who just asked: shown for a diagnostic nobody asked for, it would keep painting an unhealthy worker as busy and grey out the button that reruns it. Don't buffer it either — replaying it after the real report has landed would clobber a final status with a stale "Running".
             try
             {
-                if (_connection?.State == HubConnectionState.Connected)
+                if (trigger == DiagnosticTrigger.Operator && _connection?.State == HubConnectionState.Connected)
                 {
                     await _connection.SendAsync("ReportDiagnostic", new DiagnosticReport
                     {
@@ -463,6 +444,8 @@ public class WorkerService : BackgroundService
             {
                 _logger.LogDebug(ex, "Could not push Running placeholder; will push final report when ready");
             }
+
+            _logger.LogInformation("Running diagnostic...");
 
             DiagnosticReport report;
             try
@@ -481,13 +464,22 @@ public class WorkerService : BackgroundService
                 };
             }
 
+            _logger.LogInformation("Diagnostic: {Status} - {Summary}", report.Status, report.Summary);
             _lastDiagnostic = report;
             await SendDiagnosticIfConnectedAsync(report);
 
-            // Server flipped us not-ready before invoking the diagnostic. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready. And never ask while an update is pending — a draining worker must not attract jobs.
+            // An operator-initiated run finds the server has already flipped us not-ready. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready. And never ask while an update is pending — a draining worker must not attract jobs.
             if (CanAcceptJobs(report.Status) && !_updatePending)
             {
+                if (report.Status == DiagnosticStatus.Degraded)
+                {
+                    _logger.LogWarning("Worker is functional but degraded: {Summary}", report.Summary);
+                }
                 await SendReadyIfConnectedAsync();
+            }
+            else if (!CanAcceptJobs(report.Status))
+            {
+                _logger.LogWarning("Worker is online but not functional: {Summary}", report.Summary);
             }
         }
         finally
@@ -735,6 +727,13 @@ public class WorkerService : BackgroundService
         _logger.LogInformation("Discovered host workspace path: {HostPath} -> {ContainerPath}", hostPath, _config.WorkspacePath);
         return (hostPath, containerId);
     }
+}
+
+/// <summary>Who asked for a diagnostic. An operator is waiting for an answer to a click; anything else runs on the worker's own initiative.</summary>
+internal enum DiagnosticTrigger
+{
+    Operator,
+    Automatic
 }
 
 internal enum WorkerActivity
