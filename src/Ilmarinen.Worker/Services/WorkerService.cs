@@ -443,20 +443,7 @@ public class WorkerService : BackgroundService
         try
         {
             // Replay buffered messages first so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
-            while (_messageBuffer.TryPeek(out var msg))
-            {
-                try
-                {
-                    await _connection!.InvokeCoreAsync(msg!.Method, msg.Args);
-                    _messageBuffer.TryDequeue(out _);
-                }
-                catch (Exception ex)
-                {
-                    // Throw rather than return: a quiet return would leave a connected-but-unsynced worker (never Ready, never draining) that nothing retries, and would reset the handshake-failure counter as if this sync had succeeded.
-                    _logger.LogWarning(ex, "Failed to replay {Method}, will retry on next reconnect", msg!.Method);
-                    throw;
-                }
-            }
+            await _messageBuffer.ReplayAsync(msg => _connection!.InvokeCoreAsync(msg.Method, msg.Args), _logger);
 
             // Reconcile state with server
             currentJob = CurrentJobId;
