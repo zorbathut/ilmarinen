@@ -149,6 +149,20 @@ public class WorkerDiagnosticGatingTests
         Assert.That(stub.CallCount, Is.EqualTo(1), "a reconnecting worker must replay its cached diagnostic, not run a new one");
     }
 
+    // Nothing else re-runs a diagnostic: the worker caches the result for the life of the process, and only an operator can ask for another. A worker that started during a DNS outage or a daemon restart would sit out of the fleet until someone noticed it.
+    [Test]
+    public async Task UnhealthyDiagnostic_IsRetried_AndTheWorkerReadiesItself()
+    {
+        var stub = new StubDiagnosticFailingOnce("synthetic failure for test");
+
+        var workerId = await _fixture.StartWorkerAsync(_ => stub, waitForReady: false);
+        await WaitForDiagnosticAsync(workerId, expected: DiagnosticStatus.Unhealthy);
+
+        await _fixture.WaitForWorkerReadyAsync(workerId);
+
+        Assert.That(stub.CallCount, Is.EqualTo(2), "the worker should have rerun the diagnostic on its own, exactly once");
+    }
+
     private async Task<DiagnosticReport> WaitForDiagnosticReportAsync(Guid workerId, int timeoutMs = 60000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
@@ -181,6 +195,31 @@ public class WorkerDiagnosticGatingTests
         }
         throw new TimeoutException(
             $"Worker {workerId} diagnostic did not reach {expected} within {timeoutMs}ms");
+    }
+
+    private class StubDiagnosticFailingOnce : IWorkerDiagnostic
+    {
+        private readonly string _summary;
+        private int _callCount;
+
+        public StubDiagnosticFailingOnce(string summary)
+        {
+            _summary = summary;
+        }
+
+        public int CallCount => _callCount;
+
+        public Task<DiagnosticReport> RunAsync(string? workerContainerId, CancellationToken ct)
+        {
+            var call = Interlocked.Increment(ref _callCount);
+            return Task.FromResult(new DiagnosticReport
+            {
+                Status = call == 1 ? DiagnosticStatus.Unhealthy : DiagnosticStatus.Healthy,
+                Summary = call == 1 ? _summary : "recovered",
+                Steps = [],
+                CheckedAt = DateTime.UtcNow
+            });
+        }
     }
 
     private class StubDiagnostic : IWorkerDiagnostic

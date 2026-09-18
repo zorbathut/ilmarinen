@@ -35,11 +35,14 @@ public class WorkerService : BackgroundService
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
 
     // Single-activity gate. Job assignment and diagnostic each call TryEnter(...) and refuse if the worker is already doing the other thing.
+    private static readonly TimeSpan RetryPollInterval = TimeSpan.FromSeconds(5);
+
     private readonly object _activityLock = new();
     private WorkerActivity _activity = WorkerActivity.Idle;
     private Guid? _currentJobId;
 
-    private DiagnosticReport? _lastDiagnostic;
+    // Read by the retry loop while the SignalR dispatch thread writes it.
+    private volatile DiagnosticReport? _lastDiagnostic;
     private CancellationToken _stoppingToken;
 
     // True once an authenticated server has told us it serves a different bundle than the one we run. Only meaningful in launcher mode (BundleHash set).
@@ -155,6 +158,8 @@ public class WorkerService : BackgroundService
 
         _logger.LogInformation("Worker {WorkerId} connected and ready", _workerId);
 
+        var diagnosticRetries = RetryUnhealthyDiagnosticAsync(stoppingToken);
+
         // Heartbeat loop — also handles manual reconnection when auto-reconnect gives up
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -202,6 +207,56 @@ public class WorkerService : BackgroundService
                 _logger.LogError(ex, "Heartbeat failed");
             }
         }
+
+        await diagnosticRetries;
+    }
+
+    /// <summary>
+    /// Re-runs a diagnostic that came back unhealthy. Nothing else will: the result is cached for the life of the process, and only an operator clicking the button asks for another — so a worker that started while DNS was down, or while the Docker daemon was restarting, stays out of the fleet until someone notices it.
+    /// </summary>
+    private async Task RetryUnhealthyDiagnosticAsync(CancellationToken stoppingToken)
+    {
+        var consecutiveFailures = 0;
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (!ShouldRetryDiagnostic())
+                {
+                    // Nothing to retry now. The count resets so that a worker coming back from an outage waits seconds rather than minutes for its first attempt.
+                    consecutiveFailures = 0;
+                    await Task.Delay(RetryPollInterval, stoppingToken);
+                    continue;
+                }
+
+                var delay = DiagnosticPolicy.Jitter(DiagnosticPolicy.RetryDelay(consecutiveFailures + 1));
+                await Task.Delay(delay, stoppingToken);
+
+                // Re-checked after the wait: an operator may have run one, or the worker may have gone offline or started draining. The count only advances when an attempt actually happens, or a long outage would back the worker off to the ceiling without ever trying.
+                if (!ShouldRetryDiagnostic())
+                {
+                    continue;
+                }
+
+                consecutiveFailures++;
+                _logger.LogInformation("Rerunning the diagnostic that left this worker out of the fleet (attempt {Attempt})", consecutiveFailures);
+                await ExecuteDiagnosticAsync(DiagnosticTrigger.Automatic);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Diagnostic retry failed");
+            }
+        }
+    }
+
+    private bool ShouldRetryDiagnostic()
+    {
+        return DiagnosticPolicy.ShouldRetry(_lastDiagnostic, _connection?.State == HubConnectionState.Connected, _updatePending);
     }
 
     private async Task ConnectWithRetryAsync(CancellationToken ct)
@@ -381,19 +436,10 @@ public class WorkerService : BackgroundService
 
         await _connection!.SendAsync("ReportDiagnostic", cached);
 
-        if (CanAcceptJobs(cached.Status))
+        if (DiagnosticPolicy.CanAcceptJobs(cached.Status))
         {
             await _connection!.SendAsync("Ready");
         }
-    }
-
-    /// <summary>
-    /// Degraded means the capability checks passed but the diagnostic left something behind, so the worker can
-    /// still run jobs. Stated as an allowlist so the transient Running placeholder is never mistaken for readiness.
-    /// </summary>
-    private static bool CanAcceptJobs(DiagnosticStatus status)
-    {
-        return status == DiagnosticStatus.Healthy || status == DiagnosticStatus.Degraded;
     }
 
     private Task OnRunDiagnostic()
@@ -412,7 +458,7 @@ public class WorkerService : BackgroundService
             if (_lastDiagnostic != null)
             {
                 await SendDiagnosticIfConnectedAsync(_lastDiagnostic);
-                if (CanAcceptJobs(_lastDiagnostic.Status) && !_updatePending)
+                if (DiagnosticPolicy.CanAcceptJobs(_lastDiagnostic.Status) && !_updatePending)
                 {
                     await SendReadyIfConnectedAsync();
                 }
@@ -475,7 +521,7 @@ public class WorkerService : BackgroundService
             await SendDiagnosticIfConnectedAsync(report);
 
             // An operator-initiated run finds the server has already flipped us not-ready. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready. And never ask while an update is pending — a draining worker must not attract jobs.
-            if (CanAcceptJobs(report.Status) && !_updatePending)
+            if (DiagnosticPolicy.CanAcceptJobs(report.Status) && !_updatePending)
             {
                 if (report.Status == DiagnosticStatus.Degraded)
                 {
@@ -483,7 +529,7 @@ public class WorkerService : BackgroundService
                 }
                 await SendReadyIfConnectedAsync();
             }
-            else if (!CanAcceptJobs(report.Status))
+            else if (!DiagnosticPolicy.CanAcceptJobs(report.Status))
             {
                 _logger.LogWarning("Worker is online but not functional: {Summary}", report.Summary);
             }
