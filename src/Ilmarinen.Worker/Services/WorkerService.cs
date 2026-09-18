@@ -259,9 +259,6 @@ public class WorkerService : BackgroundService
     /// <summary>
     /// Re-runs a diagnostic that came back unhealthy. Nothing else will: the result is cached for the life of the process, and only an operator clicking the button asks for another — so a worker that started while DNS was down, or while the Docker daemon was restarting, stays out of the fleet until someone notices it.
     /// </summary>
-    /// <summary>
-    /// Re-runs a diagnostic that came back unhealthy. Nothing else will: the result is cached for the life of the process, and only an operator clicking the button asks for another — so a worker that started while DNS was down, or while the Docker daemon was restarting, stays out of the fleet until someone notices it.
-    /// </summary>
     private async Task RetryUnhealthyDiagnosticAsync(CancellationToken stoppingToken)
     {
         var consecutiveFailures = 0;
@@ -464,7 +461,8 @@ public class WorkerService : BackgroundService
                 "Server does not expect job {JobId} (expected {ExpectedJobId}), aborting",
                 currentJob, response.ExpectedJobId);
             OnCancelJob(currentJob.Value.ToString());
-            _messageBuffer.Clear();
+
+            // What is left in the buffer was enqueued during this sync — the replay above drained everything older. It is the aborted job's last log output, which is worth keeping: the next sync delivers it, and the server persists chunks for a job that has already finished.
             return;
         }
 

@@ -85,11 +85,6 @@ public class MessageBuffer
         }
     }
 
-    public void Clear()
-    {
-        while (_messages.TryDequeue(out _)) { }
-    }
-
     /// <summary>Takes the next message without sending it. Nothing in the worker needs this — it is how tests read what was buffered.</summary>
     public bool TryDequeue(out BufferedMessage? message)
     {
