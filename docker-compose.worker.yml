@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: src/Ilmarinen.Worker/Dockerfile
+    # A worker stopped mid-job cancels it, kills the step containers and reports the result before exiting; Docker's 10s default would SIGKILL it partway, orphaning the containers and leaving the job Running. Must exceed the worker's own shutdown budget (WorkerShutdownTimeout in src/Ilmarinen.Worker/Program.cs).
+    stop_grace_period: 30s
     environment:
       ILMARINEN_SERVER_URL: http://server:8081
       # Set after registering a worker via the server UI or POST /api/workers

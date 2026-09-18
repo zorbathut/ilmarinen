@@ -34,6 +34,10 @@ public class WorkerService : BackgroundService
     private BufferedHubSender? _sender;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
 
+    // Everything the worker has to finish before the process may exit: a job tearing its containers down, or a rejection telling the server about work it can't take. Entries clear themselves, so this stays the size of what is actually in flight.
+    private readonly ConcurrentDictionary<long, Task> _inFlight = new();
+    private long _inFlightSequence;
+
     // Single-activity gate. Job assignment and diagnostic each call TryEnter(...) and refuse if the worker is already doing the other thing.
     private static readonly TimeSpan RetryPollInterval = TimeSpan.FromSeconds(5);
 
@@ -210,8 +214,48 @@ public class WorkerService : BackgroundService
         }
 
         await diagnosticRetries;
+        await DrainInFlightWorkAsync();
     }
 
+    private void TrackInFlight(Task work)
+    {
+        var key = Interlocked.Increment(ref _inFlightSequence);
+        _inFlight[key] = work;
+        _ = work.ContinueWith(_ => _inFlight.TryRemove(key, out _), TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Waits for work the stop signal just cancelled to tear itself down and report. Best effort: the host's shutdown
+    /// timeout bounds it, and a sync stuck against an unreachable server can run that out, because the worker's hub
+    /// calls don't take the stopping token.
+    /// </summary>
+    private async Task DrainInFlightWorkAsync()
+    {
+        // Looped rather than a single snapshot: a job assigned in the shutdown window is refused, and that refusal is itself work that has to reach the server. It terminates because nothing new is accepted once the stopping token is set.
+        while (true)
+        {
+            var pending = _inFlight.Values.Where(work => !work.IsCompleted).ToList();
+            if (pending.Count == 0)
+            {
+                return;
+            }
+
+            _logger.LogInformation("Waiting for {Count} job task(s) to finish before shutting down", pending.Count);
+            try
+            {
+                await Task.WhenAll(pending);
+            }
+            catch (Exception ex)
+            {
+                // Nothing else observes these tasks, so a fault here would otherwise vanish.
+                _logger.LogError(ex, "A job faulted while the worker was shutting down");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Re-runs a diagnostic that came back unhealthy. Nothing else will: the result is cached for the life of the process, and only an operator clicking the button asks for another — so a worker that started while DNS was down, or while the Docker daemon was restarting, stays out of the fleet until someone notices it.
+    /// </summary>
     /// <summary>
     /// Re-runs a diagnostic that came back unhealthy. Nothing else will: the result is cached for the life of the process, and only an operator clicking the button asks for another — so a worker that started while DNS was down, or while the Docker daemon was restarting, stays out of the fleet until someone notices it.
     /// </summary>
@@ -554,14 +598,21 @@ public class WorkerService : BackgroundService
 
     private Task OnJobAssigned(JobAssignment job)
     {
+        // The connection outlives the stop signal so a job in flight can report itself, which leaves a window where the server still sees us ready. Taking work now would run it on an already-cancelled token; refuse it outright so it reads as a failure the server can retry rather than a job nobody ever hears about again.
+        if (_stoppingToken.IsCancellationRequested)
+        {
+            TrackInFlight(RejectJobAsync(job, "the worker is shutting down"));
+            return Task.CompletedTask;
+        }
+
         if (!TryEnterActivity(WorkerActivity.RunningJob, job.Id, out var blockingActivity, out var blockingJobId))
         {
-            _ = RejectBusyJobAsync(job, blockingActivity, blockingJobId);
+            TrackInFlight(RejectBusyJobAsync(job, blockingActivity, blockingJobId));
             return Task.CompletedTask;
         }
 
         // Return immediately so the SignalR dispatch loop stays unblocked (otherwise CancelJob messages can't be delivered while a job is running)
-        _ = ExecuteJobAsync(job);
+        TrackInFlight(ExecuteJobAsync(job));
         return Task.CompletedTask;
     }
 
@@ -571,17 +622,25 @@ public class WorkerService : BackgroundService
         {
             // The server redelivered the job we're already running. Don't write into its live log stream — a second collector for the same job would restart sequence numbers and collide with the running one's chunks.
             _logger.LogWarning("Job {JobId} assigned but it is already running on this worker. Reporting failure.", job.Id);
-        }
-        else
-        {
-            var logCollector = new LogCollector(job.Id, _sender!, _logger);
-            var jobLogger = new LoggerTee(_logger, logCollector);
-            jobLogger.LogWarning(
-                "Job {JobId} assigned but worker is busy (current activity: {Activity}). Reporting failure.",
-                job.Id, blockingActivity);
-            await logCollector.FlushAsync();
+            await ReportRejectionAsync(job);
+            return;
         }
 
+        await RejectJobAsync(job, $"the worker is busy (current activity: {blockingActivity})");
+    }
+
+    private async Task RejectJobAsync(JobAssignment job, string reason)
+    {
+        var logCollector = new LogCollector(job.Id, _sender!, _logger);
+        var jobLogger = new LoggerTee(_logger, logCollector);
+        jobLogger.LogWarning("Job {JobId} assigned but {Reason}. Reporting failure.", job.Id, reason);
+        await logCollector.FlushAsync();
+
+        await ReportRejectionAsync(job);
+    }
+
+    private async Task ReportRejectionAsync(JobAssignment job)
+    {
         await _sender!.SendOrBufferAsync("JobCompleted", job.Id, new JobResult
         {
             Id = job.Id,
@@ -599,8 +658,11 @@ public class WorkerService : BackgroundService
         var jobKey = job.Id.ToString();
 
         jobLogger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
-        using var cts = new CancellationTokenSource();
-        _runningJobs[jobKey] = cts;
+
+        // Two tokens. CancelJob trips the first; the job runs on the second, which the host's shutdown trips as well — otherwise a SIGTERM mid-job leaves the step container running with nothing left to tear it down.
+        using var cancel = new CancellationTokenSource();
+        using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token, _stoppingToken);
+        _runningJobs[jobKey] = cancel;
 
         // Use try/finally to guarantee activity-state cleanup. If a catch handler itself throws (e.g. WorkspaceManager.DiscoverWorkspaces failing during shutdown), we would otherwise leave _activity stuck at RunningJob and refuse all future work.
         JobResult result;
@@ -614,9 +676,10 @@ public class WorkerService : BackgroundService
                 await _sender!.SendOrBufferAsync("JobStarted", job.Id);
 
                 var runner = new JobRunner(_config, _workspaceManager, job, _sender!, jobLogger, logCollector);
-                var runResult = await runner.ExecuteAsync(cts.Token);
+                var runResult = await runner.ExecuteAsync(jobCts.Token);
 
-                var status = cts.IsCancellationRequested ? JobStatus.Cancelled : runResult.Status;
+                // A pipeline that ran to the end reports what it actually did, even if the worker is on its way out by now.
+                var status = cancel.IsCancellationRequested ? JobStatus.Cancelled : runResult.Status;
 
                 result = runResult with
                 {
@@ -628,15 +691,24 @@ public class WorkerService : BackgroundService
                 jobLogger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
                 await logCollector.FlushAsync();
             }
-            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            catch (OperationCanceledException) when (jobCts.IsCancellationRequested)
             {
-                jobLogger.LogInformation("Job {JobId} was cancelled", job.Id);
+                // Cancelled means a person asked for it. A job the worker dropped because its host is going down is a failure, and reporting it as one now is what keeps it from sitting Running until a reconnect that may never come.
+                var abandoned = !cancel.IsCancellationRequested;
+                if (abandoned)
+                {
+                    jobLogger.LogWarning("Job {JobId} abandoned: the worker is shutting down", job.Id);
+                }
+                else
+                {
+                    jobLogger.LogInformation("Job {JobId} was cancelled", job.Id);
+                }
                 await logCollector.FlushAsync();
 
                 result = new JobResult
                 {
                     Id = job.Id,
-                    Status = JobStatus.Cancelled,
+                    Status = abandoned ? JobStatus.Failed : JobStatus.Cancelled,
                     Duration = DateTime.UtcNow - startTime,
                     Workspaces = SafeDiscoverWorkspaces()
                 };
@@ -744,6 +816,9 @@ public class WorkerService : BackgroundService
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        // First: this signals the stopping token and waits for ExecuteAsync, which cancels the running job and waits for it to report. The connection has to outlive that, or the job it just killed would have no way to say so.
+        await base.StopAsync(cancellationToken);
+
         if (_connection != null)
         {
             try
@@ -758,8 +833,6 @@ public class WorkerService : BackgroundService
             }
             catch (ObjectDisposedException) { }
         }
-
-        await base.StopAsync(cancellationToken);
     }
 
     /// <summary>

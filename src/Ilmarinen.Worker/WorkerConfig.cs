@@ -7,6 +7,16 @@ namespace Ilmarinen.Worker;
 public class WorkerConfig
 {
     /// <summary>
+    /// How long a stopping worker gets to cancel its job, tear down its containers and report the result before the
+    /// host stops waiting and the containers are orphaned.
+    ///
+    /// It has to fit inside every grace period upstream, because the shortest one wins: the launcher SIGKILLs the
+    /// worker 25s after forwarding SIGTERM, and the deployments give Docker 30s (worker compose) and 40s (launcher
+    /// compose) before it does the same. Raising this means raising those in the same commit.
+    /// </summary>
+    public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(20);
+
+    /// <summary>
     /// SignalR hub URL (worker port, typically 8081).
     /// </summary>
     public required string ServerUrl { get; init; }

@@ -415,10 +415,10 @@ public class IntegrationTestFixture : IAsyncDisposable
 
         if (_workerHost != null)
         {
-            // RunAsync disposes the host when the worker stops itself (e.g. the update drain), so both calls may face a disposed host.
+            // RunAsync disposes the host when the worker stops itself (e.g. the update drain), so both calls may face a disposed host. The wait matches the worker's own ShutdownTimeout: cut shorter, a worker stopped mid-job would be killed before it could tear its containers down, which is the thing these tests are checking.
             try
             {
-                await _workerHost.StopAsync(TimeSpan.FromSeconds(5));
+                await _workerHost.StopAsync(TimeSpan.FromSeconds(30));
             }
             catch (ObjectDisposedException) { }
             try

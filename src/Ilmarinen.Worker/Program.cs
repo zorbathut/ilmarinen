@@ -26,6 +26,8 @@ var config = new WorkerConfig
 
 var builder = Host.CreateApplicationBuilder(args);
 
+builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = WorkerConfig.ShutdownTimeout);
+
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()

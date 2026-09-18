@@ -1,8 +1,10 @@
 using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
+using Ilmarinen.Server.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System;
@@ -32,14 +34,19 @@ public class JobDurabilityTests
         await _fixture.DisposeAsync();
     }
 
+    // A worker that is shutting down can't finish what it is running, and it still has a connection to say so. Left to
+    // reconciliation the job sits Running until the worker comes back — and never resolves at all if it doesn't.
+    // (A connection that merely drops is a different case: the job keeps running and completes, which
+    // StaleBundle_BusyWorker_FinishesJobThenDrains_AndQueuedJobIsNotDispatched covers by restarting the server mid-job.)
     [Test]
-    public async Task Worker_Disconnect_JobStaysRunning()
+    public async Task Worker_Shutdown_MidJob_FailsTheJobItCannotFinish()
     {
         _repo.AddFile("pipeline.csx", """
             Step("slow")
                 .Image("alpine:latest")
                 .Run(async ctx => {
-                    await ctx.Exec("sleep", "30");
+                    await ctx.Exec("touch", "/workspace/step-started");
+                    await ctx.Exec("sleep", "60");
                 });
             """);
         _repo.Commit("Add slow pipeline");
@@ -53,16 +60,34 @@ public class JobDurabilityTests
             ScriptPath = "pipeline.csx"
         });
 
-        // Wait until the job is running
         await _fixture.WaitForJobStatusAsync(jobId, JobStatus.Running);
+        await WaitForStepToStartAsync(jobId);
 
-        // Disconnect the worker
         await _fixture.StopWorkerAsync(preserveIdentity: true);
 
-        // Job should still be Running, not Failed
         var job = await _fixture.GetJobAsync(jobId);
-        Assert.That(job.Status, Is.EqualTo(JobStatus.Running),
-            "Job should stay Running when worker disconnects, not be marked Failed");
+        Assert.That(job.Status, Is.EqualTo(JobStatus.Failed),
+            "a worker shutting down should report the job it killed, not leave it Running for a reconnect that may never come");
+    }
+
+    /// <summary>
+    /// Waits until the step container is genuinely up and running, by watching for the marker the pipeline above makes
+    /// inside the workspace it shares with the host. Job status only says the worker accepted the job, which it does
+    /// well before there is a container to tear down.
+    /// </summary>
+    private async Task WaitForStepToStartAsync(Guid jobId, int timeoutMs = 60000)
+    {
+        var marker = Path.Combine(_fixture.WorkerWorkspacePath!, jobId.ToString(), "step-started");
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (File.Exists(marker))
+            {
+                return;
+            }
+            await Task.Delay(200);
+        }
+        throw new TimeoutException($"Job {jobId} never started its step within {timeoutMs}ms (no {marker})");
     }
 
     [Test]
@@ -117,104 +142,78 @@ public class JobDurabilityTests
             "Worker should be ready for new jobs after reconnecting");
     }
 
+    // The backstop for a worker that died without reporting: it comes back not knowing about the job, and the server has
+    // to decide the job is lost rather than leave it Running forever. Driven through the hub, because a worker that
+    // stops gracefully now reports the job itself and never reaches this path.
     [Test]
-    public async Task Worker_Reconnect_NoJob_OrphanFailed()
+    public async Task Reconnect_WithoutTheJobTheServerExpects_FailsIt()
     {
-        _repo.AddFile("pipeline.csx", """
-            Step("slow")
-                .Image("alpine:latest")
-                .Run(async ctx => {
-                    await ctx.Exec("sleep", "30");
-                });
-            """);
-        _repo.Commit("Add slow pipeline");
+        var (hub, workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("orphan-worker", "conn-orphan", new FakeHubCallerClients());
+        var jobId = await SubmitAsync();
+        await _fixture.StartJobOnWorkerAsync(jobId, workerId);
 
-        await _fixture.StartWorkerAsync();
+        var response = await hub.Reconnect(new WorkerReconnect { RunningJobId = null });
 
-        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
-        {
-            RepoUrl = _repo.Url,
-            Ref = "master",
-            ScriptPath = "pipeline.csx"
-        });
-
-        // Wait until the job is running
-        await _fixture.WaitForJobStatusAsync(jobId, JobStatus.Running);
-
-        // Full stop — worker loses its running job state
-        await _fixture.StopWorkerAsync(preserveIdentity: true);
-
-        // Restart worker — it has no _currentJobId, so it will report null. The server should detect the orphaned job and mark it failed.
-        await _fixture.RestartWorkerAsync();
-
-        // The job should be failed because the worker reconnected without it
-        var job = await _fixture.WaitForJobCompletionAsync(jobId, timeoutMs: 30000);
-        Assert.That(job.Status, Is.EqualTo(JobStatus.Failed),
-            "Orphaned job should be marked Failed when worker reconnects without it");
+        Assert.That(response.ExpectedJobId, Is.EqualTo(jobId), "the server should say what it still expects, so a worker that does hold the job keeps it");
+        Assert.That((await _fixture.GetJobAsync(jobId)).Status, Is.EqualTo(JobStatus.Failed));
     }
 
+    // The same reconnect from a worker that *is* still running the job must leave it alone.
     [Test]
-    public async Task Cancel_WhileWorkerDisconnected()
+    public async Task Reconnect_StillHoldingTheJob_LeavesItRunning()
     {
-        _repo.AddFile("pipeline.csx", """
-            Step("slow")
-                .Image("alpine:latest")
-                .Run(async ctx => {
-                    await ctx.Exec("sleep", "30");
-                });
-            """);
-        _repo.Commit("Add slow pipeline");
+        var (hub, workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("holding-worker", "conn-holding", new FakeHubCallerClients());
+        var jobId = await SubmitAsync();
+        await _fixture.StartJobOnWorkerAsync(jobId, workerId);
 
-        await _fixture.StartWorkerAsync();
+        await hub.Reconnect(new WorkerReconnect { RunningJobId = jobId });
 
-        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        Assert.That((await _fixture.GetJobAsync(jobId)).Status, Is.EqualTo(JobStatus.Running));
+    }
+
+    private async Task<Guid> SubmitAsync()
+    {
+        return await _fixture.SubmitJobAsync(new JobSubmission
         {
             RepoUrl = _repo.Url,
             Ref = "master",
             ScriptPath = "pipeline.csx"
         });
+    }
 
-        // Wait until the job is running
-        await _fixture.WaitForJobStatusAsync(jobId, JobStatus.Running);
+    /// <summary>A job left Running by a worker that is registered but not connected — what a killed or partitioned worker leaves behind.</summary>
+    private async Task<Guid> StartJobOnUnreachableWorkerAsync()
+    {
+        using var scope = _fixture.Services.CreateScope();
+        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
+        var workerId = (await registration.RegisterWorkerAsync("unreachable-worker")).WorkerId;
 
-        // Disconnect the worker
-        await _fixture.StopWorkerAsync(preserveIdentity: true);
+        var jobId = await SubmitAsync();
+        await _fixture.StartJobOnWorkerAsync(jobId, workerId);
+        return jobId;
+    }
 
-        // Cancel the job while worker is disconnected
+    // A worker that vanished without a word — killed, powered off, partitioned — leaves its job Running with nobody to
+    // report it. The operator must not have to wait for that worker to come back to get rid of the job.
+    [Test]
+    public async Task Cancel_WhileWorkerUnreachable_TakesEffectImmediately()
+    {
+        var jobId = await StartJobOnUnreachableWorkerAsync();
+
         var cancelled = await _fixture.CancelJobAsync(jobId);
-        Assert.That(cancelled, Is.True, "Should be able to cancel a job while worker is disconnected");
+        Assert.That(cancelled, Is.True);
 
         var job = await _fixture.GetJobAsync(jobId);
-        Assert.That(job.Status, Is.EqualTo(JobStatus.Cancelled),
-            "Job should be Cancelled immediately without waiting for worker");
+        Assert.That(job.Status, Is.EqualTo(JobStatus.Cancelled));
     }
 
     [Test]
-    public async Task Cancel_WhileWorkerDisconnected_NotifiesSubscribers()
+    public async Task Cancel_WhileWorkerUnreachable_NotifiesSubscribers()
     {
         var subscriber = await _fixture.RegisterSubscriberAsync(
             new SubscriberRegistration { Name = "cancel-signal-test" });
 
-        _repo.AddFile("pipeline.csx", """
-            Step("slow")
-                .Image("alpine:latest")
-                .Run(async ctx => {
-                    await ctx.Exec("sleep", "30");
-                });
-            """);
-        _repo.Commit("Add slow pipeline");
-
-        await _fixture.StartWorkerAsync();
-
-        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
-        {
-            RepoUrl = _repo.Url,
-            Ref = "master",
-            ScriptPath = "pipeline.csx"
-        });
-        await _fixture.WaitForJobStatusAsync(jobId, JobStatus.Running);
-
-        await _fixture.StopWorkerAsync(preserveIdentity: true);
+        var jobId = await StartJobOnUnreachableWorkerAsync();
 
         var cancelled = await _fixture.CancelJobAsync(jobId);
         Assert.That(cancelled, Is.True);

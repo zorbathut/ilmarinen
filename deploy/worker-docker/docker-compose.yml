@@ -11,6 +11,8 @@ services:
       context: ../..
       dockerfile: src/Ilmarinen.Worker/Dockerfile
     restart: unless-stopped
+    # A worker stopped mid-job cancels it, kills the step containers and reports the result before exiting; Docker's 10s default would SIGKILL it partway, orphaning the containers and leaving the job Running. Must exceed the worker's own shutdown budget (WorkerShutdownTimeout in src/Ilmarinen.Worker/Program.cs).
+    stop_grace_period: 30s
     environment:
       # Must include the server's *worker* port (8081 by default), not the public one.
       ILMARINEN_SERVER_URL: ${ILMARINEN_SERVER_URL:?set ILMARINEN_SERVER_URL in .env (see .env.example)}

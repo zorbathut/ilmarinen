@@ -52,6 +52,9 @@ public class TestWorkerBuilder
 
         var builder = Host.CreateApplicationBuilder();
 
+        // The same budget production runs on, so a test worker stopped mid-job drains exactly as the real one does.
+        builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = WorkerConfig.ShutdownTimeout);
+
         // Quiet logging for tests
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
