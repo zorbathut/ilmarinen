@@ -436,7 +436,7 @@ public class WorkerService : BackgroundService
 
         await _connection!.SendAsync("ReportDiagnostic", cached);
 
-        if (DiagnosticPolicy.CanAcceptJobs(cached.Status))
+        if (DiagnosticStatusPolicy.CanAcceptJobs(cached.Status))
         {
             await _connection!.SendAsync("Ready");
         }
@@ -458,7 +458,7 @@ public class WorkerService : BackgroundService
             if (_lastDiagnostic != null)
             {
                 await SendDiagnosticIfConnectedAsync(_lastDiagnostic);
-                if (DiagnosticPolicy.CanAcceptJobs(_lastDiagnostic.Status) && !_updatePending)
+                if (DiagnosticStatusPolicy.CanAcceptJobs(_lastDiagnostic.Status) && !_updatePending)
                 {
                     await SendReadyIfConnectedAsync();
                 }
@@ -521,7 +521,7 @@ public class WorkerService : BackgroundService
             await SendDiagnosticIfConnectedAsync(report);
 
             // An operator-initiated run finds the server has already flipped us not-ready. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready. And never ask while an update is pending — a draining worker must not attract jobs.
-            if (DiagnosticPolicy.CanAcceptJobs(report.Status) && !_updatePending)
+            if (DiagnosticStatusPolicy.CanAcceptJobs(report.Status) && !_updatePending)
             {
                 if (report.Status == DiagnosticStatus.Degraded)
                 {
@@ -529,7 +529,7 @@ public class WorkerService : BackgroundService
                 }
                 await SendReadyIfConnectedAsync();
             }
-            else if (!DiagnosticPolicy.CanAcceptJobs(report.Status))
+            else if (!DiagnosticStatusPolicy.CanAcceptJobs(report.Status))
             {
                 _logger.LogWarning("Worker is online but not functional: {Summary}", report.Summary);
             }
