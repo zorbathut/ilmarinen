@@ -452,6 +452,12 @@ public class WorkerService : BackgroundService
             {
                 report = await _diagnostic.RunAsync(_config.WorkerContainerId, _stoppingToken);
             }
+            catch (OperationCanceledException) when (_stoppingToken.IsCancellationRequested)
+            {
+                // Shutting down is not a verdict on the host, and recording one would leave the server holding a bogus Unhealthy that outlives the disconnect.
+                _logger.LogInformation("Diagnostic cancelled by shutdown");
+                return;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Diagnostic threw");
