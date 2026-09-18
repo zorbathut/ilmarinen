@@ -20,6 +20,9 @@ public class WorkerRepository
     // In-memory mapping of SignalR connection ID to worker ID
     private readonly ConcurrentDictionary<string, Guid> _connectionToWorker = new();
 
+    // The reverse direction, which is also the rule that a worker has exactly one live connection: authenticating on a new one supersedes whatever it held before.
+    private readonly ConcurrentDictionary<Guid, string> _workerToConnection = new();
+
     // In-memory set of connection IDs that are ready for work
     private readonly ConcurrentDictionary<string, bool> _readyWorkers = new();
 
@@ -37,6 +40,11 @@ public class WorkerRepository
         _scopeFactory = scopeFactory;
     }
 
+    /// <summary>
+    /// Records an authenticated connection, superseding any the worker still held. A connection can be half-open for as
+    /// long as the SignalR client timeout: left in the maps, it stays a dispatch candidate, and a job handed to it is
+    /// never delivered and never reconciled — the worker is connected, so nothing reconnects to correct it.
+    /// </summary>
     public async Task ConnectAsync(string connectionId, Guid workerId, string? ipAddress)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -56,6 +64,28 @@ public class WorkerRepository
         await db.SaveChangesAsync();
 
         _connectionToWorker[connectionId] = workerId;
+
+        // One atomic swap that hands back what it replaced, so exactly one connection ends up mapped. The new mapping goes in before the old one comes out, so the worker is never momentarily unmapped. Two connections authenticating at once resolve to whichever lands second rather than to the newer of the two — self-correcting, since the loser's next hub call fails authentication and it re-syncs.
+        string? superseded = null;
+        _workerToConnection.AddOrUpdate(workerId, connectionId, (_, existing) =>
+        {
+            superseded = existing;
+            return connectionId;
+        });
+
+        if (superseded != null && superseded != connectionId)
+        {
+            ForgetConnection(superseded);
+        }
+    }
+
+    /// <summary>Drops everything keyed by a connection that is no longer the worker's. Leaves the reverse mapping alone: it already points at whatever replaced this one.</summary>
+    private void ForgetConnection(string connectionId)
+    {
+        _connectionToWorker.TryRemove(connectionId, out _);
+        _readyWorkers.TryRemove(connectionId, out _);
+        _workerWorkspaces.TryRemove(connectionId, out _);
+        _connectionBundleHashes.TryRemove(connectionId, out _);
     }
 
     public async Task<byte[]?> GetWorkerPublicKeyAsync(Guid workerId)
@@ -76,6 +106,9 @@ public class WorkerRepository
 
         if (_connectionToWorker.TryRemove(connectionId, out var workerId))
         {
+            // Only if this connection is still the worker's. A superseded connection disconnects after the one that replaced it has already been recorded, and unmapping the worker there would read as offline while it is connected and working.
+            _workerToConnection.TryRemove(new KeyValuePair<Guid, string>(workerId, connectionId));
+
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
@@ -130,7 +163,6 @@ public class WorkerRepository
     /// </summary>
     public async Task<IReadOnlyList<(string ConnectionId, WorkerPriority Priority)>> GetReadyWorkersByPriorityAsync()
     {
-        // A reconnecting worker can transiently hold two connection IDs, so index rather than Add — an arbitrary one of them wins, as before.
         var candidates = new Dictionary<Guid, string>();
         foreach (var (connectionId, _) in _readyWorkers)
         {
@@ -263,12 +295,8 @@ public class WorkerRepository
 
     public string? FindConnectionIdByWorkerId(Guid workerId)
     {
-        foreach (var (connectionId, id) in _connectionToWorker)
-        {
-            if (id == workerId)
-                return connectionId;
-        }
-        return null;
+        _workerToConnection.TryGetValue(workerId, out var connectionId);
+        return connectionId;
     }
 
     public async Task<WorkerView?> GetByIdAsync(Guid id)

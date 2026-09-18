@@ -149,4 +149,46 @@ public class WorkerConnectionTests
         var completedJob = await _fixture.WaitForJobCompletionAsync(jobId);
         Assert.That(completedJob.Status, Is.EqualTo(JobStatus.Success));
     }
+
+    // A worker whose connection dropped without the server noticing reauthenticates on a new one while the old is still
+    // half-open. Dispatch used to be able to pick either, and a job handed to the dead one is never delivered and never
+    // reconciled — the worker is already connected, so nothing ever reconnects to correct it.
+    [Test]
+    public async Task Worker_Reauthenticating_LeavesOnlyItsNewestConnectionDispatchable()
+    {
+        using var scope = _fixture.Services.CreateScope();
+        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
+        var workerId = (await registration.RegisterWorkerAsync("reconnecting-worker")).WorkerId;
+
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        await workers.ConnectAsync("conn-stale", workerId, ipAddress: null);
+        workers.SetReady("conn-stale", true);
+
+        await workers.ConnectAsync("conn-live", workerId, ipAddress: null);
+        workers.SetReady("conn-live", true);
+
+        Assert.That(workers.GetByConnectionId("conn-stale"), Is.Null, "the superseded connection must not still resolve to the worker");
+        Assert.That(workers.FindConnectionIdByWorkerId(workerId), Is.EqualTo("conn-live"));
+
+        var candidates = await workers.GetReadyWorkersByPriorityAsync();
+        Assert.That(candidates.Count, Is.EqualTo(1));
+        Assert.That(candidates[0].ConnectionId, Is.EqualTo("conn-live"));
+    }
+
+    // The evicted connection's disconnect arrives later and must not unmap the connection that replaced it.
+    [Test]
+    public async Task Worker_StaleConnectionDisconnecting_DoesNotUnmapTheLiveOne()
+    {
+        using var scope = _fixture.Services.CreateScope();
+        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
+        var workerId = (await registration.RegisterWorkerAsync("late-disconnect-worker")).WorkerId;
+
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        await workers.ConnectAsync("conn-stale", workerId, ipAddress: null);
+        await workers.ConnectAsync("conn-live", workerId, ipAddress: null);
+
+        await workers.SetDisconnectedAsync("conn-stale");
+
+        Assert.That(workers.FindConnectionIdByWorkerId(workerId), Is.EqualTo("conn-live"));
+    }
 }
