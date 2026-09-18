@@ -1,5 +1,6 @@
 using Docker.DotNet.Models;
 using Docker.DotNet;
+using System.Net;
 using Ilmarinen.Execution;
 using Ilmarinen.Models;
 using System.Collections.Generic;
@@ -327,9 +328,15 @@ public class DockerJobContext : IJobContext
                 if (result.Success)
                     return;
             }
-            catch
+            catch (DockerApiException ex) when (ex.StatusCode == HttpStatusCode.Conflict || ex.StatusCode == HttpStatusCode.NotFound)
             {
-                // Ignore and retry
+                // The step container is gone, so no health check will ever run from it again — a cancelled job would otherwise sit here until the timeout.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // A health check that can't run yet is normal while the service is starting; a service that never comes up ends at the timeout below.
+                _onOutput?.Invoke("m", $"Health check for {url} could not run, retrying: {ex.Message}\n");
             }
 
             await Task.Delay(1000);
