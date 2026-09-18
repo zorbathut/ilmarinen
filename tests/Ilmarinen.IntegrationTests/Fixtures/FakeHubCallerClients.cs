@@ -32,6 +32,7 @@ public sealed class FakeHubCallerClients : IHubCallerClients<IWorkerClient>
 
     public sealed class RecordingWorkerClient : IWorkerClient
     {
+        public int DiagnosticRequests { get; private set; }
         public List<JobAssignment> Assignments { get; } = [];
 
         public Task AssignJob(JobAssignment assignment)
@@ -52,6 +53,12 @@ public sealed class FakeHubCallerClients : IHubCallerClients<IWorkerClient>
 
         public Task RunDiagnostic()
         {
+            return Task.CompletedTask;
+        }
+
+        public Task RecheckHost()
+        {
+            DiagnosticRequests++;
             return Task.CompletedTask;
         }
     }

@@ -327,6 +327,14 @@ public class WorkerHub : Hub<IWorkerClient>
             return;
         }
 
+        // A failed job is the only evidence the server gets that a host has gone bad, and the worker can't tell a red build from a dead daemon — the diagnostic can. Hold the worker back until it answers: if the host is fine it readies itself a second later, and if it isn't, the gate above keeps it out until it recovers. A cancel says nothing about the host, and a success is its own proof.
+        if (result.Status == JobStatus.Failed)
+        {
+            _logger.LogInformation("Worker {WorkerId} failed job {JobId}; re-checking its host before giving it more work", worker.Id, jobId);
+            await Clients.Caller.RecheckHost();
+            return;
+        }
+
         workers.SetReady(Context.ConnectionId, true);
         await scheduler.DispatchAsync();
     }

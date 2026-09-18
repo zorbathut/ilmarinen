@@ -98,6 +98,45 @@ public class WorkerReadinessGatingTests
         Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False);
     }
 
+    // The failure may be the host rather than the build, and the worker can't tell the difference — only a fresh
+    // diagnostic can. Until it answers, this worker takes no more work.
+    [Test]
+    public async Task JobCompleted_Failed_AsksForAFreshDiagnosticInsteadOfTakingMoreWork()
+    {
+        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
+        var jobId = await StartJobAsync();
+
+        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Failed));
+
+        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False, "a worker that just failed a job must not be handed the next one before its host is re-checked");
+        Assert.That(_clients.CallerClient.DiagnosticRequests, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task JobCompleted_Success_ReadiesTheWorkerWithoutADiagnostic()
+    {
+        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
+        var jobId = await StartJobAsync();
+
+        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Success));
+
+        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.True);
+        Assert.That(_clients.CallerClient.DiagnosticRequests, Is.EqualTo(0), "a job that worked is its own proof that the host works");
+    }
+
+    // A person cancelling a job says nothing about the host it was running on.
+    [Test]
+    public async Task JobCompleted_Cancelled_ReadiesTheWorkerWithoutADiagnostic()
+    {
+        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
+        var jobId = await StartJobAsync();
+
+        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Cancelled));
+
+        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.True);
+        Assert.That(_clients.CallerClient.DiagnosticRequests, Is.EqualTo(0));
+    }
+
     private async Task<Guid> StartJobAsync()
     {
         var jobId = await _fixture.SubmitJobAsync(new JobSubmission

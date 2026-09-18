@@ -163,6 +163,52 @@ public class WorkerDiagnosticGatingTests
         Assert.That(stub.CallCount, Is.EqualTo(2), "the worker should have rerun the diagnostic on its own, exactly once");
     }
 
+    // The host can break after the startup diagnostic passed — a daemon that dies, a disk that fills. Nothing used to
+    // notice: the worker was marked ready again after every job, so it would take the whole queue and fail all of it.
+    [Test]
+    public async Task WorkerWhoseHostBreaksAfterStarting_StopsTakingWork()
+    {
+        using var repo = new TestGitRepository();
+        repo.AddFile("failing.csx", """
+            Step("fail")
+                .Image("alpine:latest")
+                .Run(async ctx => {
+                    await ctx.Exec("false");
+                });
+            """);
+        repo.Commit("Add failing pipeline");
+
+        var stub = new StubDiagnosticHealthyOnce("the host broke after the worker started");
+        var workerId = await _fixture.StartWorkerAsync(_ => stub, waitForReady: true);
+
+        var failingJob = await SubmitAsync(repo);
+        var queuedJob = await SubmitAsync(repo);
+
+        var completed = await _fixture.WaitForJobCompletionAsync(failingJob);
+        Assert.That(completed.Status, Is.EqualTo(JobStatus.Failed));
+
+        // The failure sends the worker back to its own diagnostic, which now reports the broken host.
+        await WaitForDiagnosticAsync(workerId, expected: DiagnosticStatus.Unhealthy, timeoutMs: 30000);
+
+        using var scope = _fixture.Services.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        Assert.That((await workers.GetByIdAsync(workerId))!.IsReady, Is.False);
+
+        // Long enough to cover the dispatch a ready worker would have triggered. The retry loop keeps re-running the diagnostic underneath, and the stub keeps failing, so the worker stays out however long this waits.
+        await Task.Delay(3000);
+        Assert.That((await _fixture.GetJobAsync(queuedJob)).Status, Is.EqualTo(JobStatus.Queued), "the rest of the queue must not be fed to a worker whose host is broken");
+    }
+
+    private async Task<Guid> SubmitAsync(TestGitRepository repo)
+    {
+        return await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            RepoUrl = repo.Url,
+            Ref = "master",
+            ScriptPath = "failing.csx"
+        });
+    }
+
     private async Task<DiagnosticReport> WaitForDiagnosticReportAsync(Guid workerId, int timeoutMs = 60000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
@@ -195,6 +241,29 @@ public class WorkerDiagnosticGatingTests
         }
         throw new TimeoutException(
             $"Worker {workerId} diagnostic did not reach {expected} within {timeoutMs}ms");
+    }
+
+    private class StubDiagnosticHealthyOnce : IWorkerDiagnostic
+    {
+        private readonly string _summary;
+        private int _callCount;
+
+        public StubDiagnosticHealthyOnce(string summary)
+        {
+            _summary = summary;
+        }
+
+        public Task<DiagnosticReport> RunAsync(string? workerContainerId, CancellationToken ct)
+        {
+            var call = Interlocked.Increment(ref _callCount);
+            return Task.FromResult(new DiagnosticReport
+            {
+                Status = call == 1 ? DiagnosticStatus.Healthy : DiagnosticStatus.Unhealthy,
+                Summary = call == 1 ? "stub healthy" : _summary,
+                Steps = [],
+                CheckedAt = DateTime.UtcNow
+            });
+        }
     }
 
     private class StubDiagnosticFailingOnce : IWorkerDiagnostic

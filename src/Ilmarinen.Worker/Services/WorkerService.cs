@@ -122,6 +122,7 @@ public class WorkerService : BackgroundService
         _connection.On<string>("CancelJob", OnCancelJob);
         _connection.On<string>("DeleteWorkspace", OnDeleteWorkspace);
         _connection.On("RunDiagnostic", OnRunDiagnostic);
+        _connection.On("RecheckHost", OnRecheckHost);
 
         _connection.Reconnecting += _ =>
         {
@@ -450,6 +451,13 @@ public class WorkerService : BackgroundService
     {
         // Fire-and-forget so the SignalR dispatch loop stays unblocked.
         _ = ExecuteDiagnosticAsync(DiagnosticTrigger.Operator);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The server asking whether this host is still fit for work, typically after a job failed on it. Same diagnostic, no operator waiting on it.</summary>
+    private Task OnRecheckHost()
+    {
+        _ = ExecuteDiagnosticAsync(DiagnosticTrigger.Automatic);
         return Task.CompletedTask;
     }
 
