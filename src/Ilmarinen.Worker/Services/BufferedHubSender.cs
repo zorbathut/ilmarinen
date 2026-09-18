@@ -17,6 +17,7 @@ public class BufferedHubSender
     private readonly MessageBuffer _buffer;
     private readonly ILogger _logger;
     private int _failing;
+    private int _overflowing;
 
     public BufferedHubSender(HubConnection connection, MessageBuffer buffer, ILogger logger)
     {
@@ -32,7 +33,7 @@ public class BufferedHubSender
     {
         if (_connection.State != HubConnectionState.Connected)
         {
-            _buffer.Enqueue(new BufferedMessage { Method = method, Args = args });
+            Buffer(method, args);
             return false;
         }
 
@@ -40,6 +41,7 @@ public class BufferedHubSender
         {
             await _connection.InvokeCoreAsync(method, args);
             Interlocked.Exchange(ref _failing, 0);
+            Interlocked.Exchange(ref _overflowing, 0);
             return true;
         }
         catch (Exception ex)
@@ -54,8 +56,22 @@ public class BufferedHubSender
                 _logger.LogDebug(ex, "Failed to send {Method}, buffering for replay", method);
             }
 
-            _buffer.Enqueue(new BufferedMessage { Method = method, Args = args });
+            Buffer(method, args);
             return false;
+        }
+    }
+
+    private void Buffer(string method, object[] args)
+    {
+        if (_buffer.Enqueue(new BufferedMessage { Method = method, Args = args }))
+        {
+            return;
+        }
+
+        // Once per outage, not once per dropped message: the latch clears on the next send that gets through.
+        if (Interlocked.Exchange(ref _overflowing, 1) == 0)
+        {
+            _logger.LogWarning("Outgoing message buffer is full at {Max} messages; dropping the oldest, so some of this outage's log output will be missing", MessageBuffer.MaxMessages);
         }
     }
 }
