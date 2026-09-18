@@ -44,8 +44,21 @@ public class Commands
                 return 0;
             }
 
+            // Cancel on Ctrl-C so the run tears its step container and network down (otherwise the process dies mid-step and leaves both behind).
+            using var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) =>
+            {
+                if (!cts.IsCancellationRequested)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("Cancelling — running cleanup...");
+                    e.Cancel = true;
+                    cts.Cancel();
+                }
+            };
+
             using var runner = new PipelineRunner();
-            var success = await runner.RunAsync(scriptResult.Steps);
+            var success = await runner.RunAsync(scriptResult.Steps, cts.Token);
 
             return success ? 0 : 1;
         }
