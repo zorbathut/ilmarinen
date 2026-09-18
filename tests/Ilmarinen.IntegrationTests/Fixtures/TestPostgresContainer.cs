@@ -43,6 +43,9 @@ public class TestPostgresContainer : IAsyncDisposable
     public async Task StartAsync()
     {
         var pid = Environment.ProcessId;
+        // A PID means nothing outside its own namespace, so the watchdog below matches on both: two runs in containers on one daemon see the same small PIDs and would otherwise reap each other's containers.
+        var pidNamespace = Ilmarinen.Docker.LinuxInterop.GetPidNamespaceId();
+        var ownerFilters = $"--filter label=ilmarinen.test.pid={pid}" + (pidNamespace != null ? $" --filter 'label=ilmarinen.test.pidns={pidNamespace}'" : "");
 
         await PullImageIfNeededAsync();
 
@@ -51,10 +54,7 @@ public class TestPostgresContainer : IAsyncDisposable
         var response = await _client.Containers.CreateContainerAsync(new CreateContainerParameters
         {
             Image = PostgresImage,
-            Labels = new Dictionary<string, string>
-            {
-                ["ilmarinen.test.pid"] = pid.ToString()
-            },
+            Labels = OwnerLabels(pid, pidNamespace),
             Env =
             [
                 $"POSTGRES_DB={Database}",
@@ -93,7 +93,7 @@ public class TestPostgresContainer : IAsyncDisposable
         Process.Start(new ProcessStartInfo
         {
             FileName = "setsid",
-            Arguments = $"-f /bin/sh -c \"while kill -0 {pid} 2>/dev/null; do sleep 1; done; docker rm -f $(docker ps -aq --filter label=ilmarinen.test.pid={pid}) 2>/dev/null; docker network rm $(docker network ls -q --filter label=ilmarinen.test.pid={pid}) 2>/dev/null\" </dev/null >/dev/null 2>&1",
+            Arguments = $"-f /bin/sh -c \"while kill -0 {pid} 2>/dev/null; do sleep 1; done; docker rm -f $(docker ps -aq {ownerFilters}) 2>/dev/null; docker network rm $(docker network ls -q {ownerFilters}) 2>/dev/null\" </dev/null >/dev/null 2>&1",
             UseShellExecute = false,
             CreateNoWindow = true
         });
@@ -133,6 +133,16 @@ public class TestPostgresContainer : IAsyncDisposable
         }
 
         throw new TimeoutException($"PostgreSQL container did not become ready within {timeout}");
+    }
+
+    private static Dictionary<string, string> OwnerLabels(int pid, string? pidNamespace)
+    {
+        var labels = new Dictionary<string, string> { ["ilmarinen.test.pid"] = pid.ToString() };
+        if (pidNamespace != null)
+        {
+            labels["ilmarinen.test.pidns"] = pidNamespace;
+        }
+        return labels;
     }
 
     private async Task PullImageIfNeededAsync()
