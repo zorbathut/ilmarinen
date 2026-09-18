@@ -226,7 +226,7 @@ public class JobDurabilityTests
     }
 
     [Test]
-    public async Task Worker_Reconnect_CancelledJob_WorkerAborts()
+    public async Task Worker_Restart_AfterJobCancelledWhileDown_TakesNewWork()
     {
         _repo.AddFile("pipeline.csx", """
             Step("slow")
@@ -261,7 +261,7 @@ public class JobDurabilityTests
 
         await _fixture.CancelJobAsync(jobId);
 
-        // Reconnect — the server should tell the worker to abort the cancelled job
+        // A restarted worker is a fresh process with no job to abort; the server tells it so, and what matters is that it goes back to work.
         await _fixture.RestartWorkerAsync();
 
         // Worker should become ready and able to take new jobs
@@ -274,14 +274,11 @@ public class JobDurabilityTests
 
         var newJob = await _fixture.WaitForJobCompletionAsync(newJobId);
         Assert.That(newJob.Status, Is.EqualTo(JobStatus.Success),
-            "Worker should process new jobs after aborting a cancelled job on reconnect");
+            "a worker whose job was cancelled while it was down should take new work");
     }
 
     /// <summary>
-    /// If a job was cancelled while the worker was disconnected, but the worker
-    /// had actually already completed it, the real outcome should win.
-    /// Tests the status transition rules directly since the full end-to-end
-    /// requires an in-process connection drop that's hard to simulate.
+    /// If a job was cancelled while the worker was out of touch, but the worker had actually already completed it, the real outcome wins. Drives the status transition through the repository rather than a real worker: what's under test is the transition rule, not the reporting path.
     /// </summary>
     [Test]
     public async Task CancelledJob_CanBeOverriddenByRealCompletion()
@@ -306,12 +303,12 @@ public class JobDurabilityTests
 
         await _fixture.WaitForJobStatusAsync(jobId, JobStatus.Running);
 
-        // Simulate: cancel arrives at server while worker is disconnected
+        // The cancel a worker out of touch would never have heard about
         await _fixture.CancelJobAsync(jobId);
         var cancelled = await _fixture.GetJobAsync(jobId);
         Assert.That(cancelled.Status, Is.EqualTo(JobStatus.Cancelled));
 
-        // Simulate: worker's buffered completion replays — real Success overrides Cancelled
+        // The completion that worker had already earned, arriving late
         using var scope = _fixture.Services.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<Ilmarinen.Server.Services.JobRepository>();
         await jobs.UpdateStatusAsync(jobId, JobStatus.Success);
