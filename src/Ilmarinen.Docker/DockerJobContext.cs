@@ -1,3 +1,4 @@
+using Docker.DotNet.Models;
 using Docker.DotNet;
 using Ilmarinen.Execution;
 using Ilmarinen.Models;
@@ -296,7 +297,7 @@ public class DockerJobContext : IJobContext
         var containerId = result.Stdout.Trim();
         _serviceContainerIds.Add(containerId);
 
-        return new DockerServiceHandle(_client, containerId, containerName, this);
+        return new DockerServiceHandle(containerId, containerName, this);
     }
 
     public async Task WaitForHealthy(string url, TimeSpan? timeout = null)
@@ -371,9 +372,17 @@ public class DockerJobContext : IJobContext
 
     internal async Task StopServiceAsync(string containerId)
     {
-        // Best effort cleanup - use TryShell to avoid throwing
-        await TryShell($"docker stop {containerId}");
-        await TryShell($"docker rm {containerId}");
+        // Removed from the host rather than by exec'ing docker inside the step container, which is already dead by the time a cancelled step cleans up — its services would outlive the job. Force, because a service's PID 1 need not answer SIGTERM, and with its volumes, or an image that declares one (redis, postgres) leaves an anonymous volume behind every run.
+        try
+        {
+            await _client.Containers.RemoveContainerAsync(containerId,
+                new ContainerRemoveParameters { Force = true, RemoveVolumes = true });
+        }
+        catch (DockerContainerNotFoundException)
+        {
+            // Already gone, which is where this was heading anyway.
+        }
+
         _serviceContainerIds.Remove(containerId);
     }
 
@@ -385,9 +394,10 @@ public class DockerJobContext : IJobContext
             {
                 await StopServiceAsync(id);
             }
-            catch
+            catch (Exception ex)
             {
-                // Best effort cleanup
+                // Best effort: a leaked service container is better than a step that fails in its own teardown.
+                _onOutput?.Invoke("m", $"Warning: failed to remove service container {id[..12]}: {ex.Message}\n");
             }
         }
     }
@@ -395,15 +405,13 @@ public class DockerJobContext : IJobContext
 
 internal class DockerServiceHandle : IServiceHandle
 {
-    private readonly DockerClient _client;
     private readonly string _containerId;
     private readonly DockerJobContext _context;
 
     public string Name { get; }
 
-    public DockerServiceHandle(DockerClient client, string containerId, string name, DockerJobContext context)
+    public DockerServiceHandle(string containerId, string name, DockerJobContext context)
     {
-        _client = client;
         _containerId = containerId;
         Name = name;
         _context = context;
