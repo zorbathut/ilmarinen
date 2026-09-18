@@ -1,5 +1,6 @@
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
@@ -47,14 +48,34 @@ public class LogStreamService
 
         _subscriptionService.NotifyLogChunk(broadcast);
 
-        // 2. Buffer for persistence
-        var buffer = _buffers.GetOrAdd(chunk.JobId, _ => new LogBuffer());
+        // 2. Buffer for persistence, unless there is nothing left to batch with.
+        if (!_buffers.TryGetValue(chunk.JobId, out var buffer))
+        {
+            // No buffer means either the job's first chunk or one that arrived after the job finished and its buffer was dropped — a worker replaying what it couldn't send while disconnected. Completing a job is what flushes its buffer, and for the second case that has already happened, so nothing would ever come back for this chunk. Write it straight out, and don't leave a buffer behind that nothing will flush either.
+            if (await HasJobFinishedAsync(chunk.JobId))
+            {
+                await PersistAsync(chunk.JobId, [chunk]);
+                return;
+            }
+
+            buffer = _buffers.GetOrAdd(chunk.JobId, _ => new LogBuffer());
+        }
+
         buffer.Add(chunk);
 
         if (buffer.ShouldFlush(BufferFlushBytes, BufferFlushMs))
         {
             await FlushBufferAsync(chunk.JobId, buffer);
         }
+    }
+
+    private async Task<bool> HasJobFinishedAsync(Guid jobId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        var job = await jobs.GetAsync(jobId);
+        return job != null && job.Status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled;
     }
 
     /// <summary>
@@ -93,7 +114,11 @@ public class LogStreamService
 
     private async Task FlushBufferAsync(Guid jobId, LogBuffer buffer)
     {
-        var chunks = buffer.Drain();
+        await PersistAsync(jobId, buffer.Drain());
+    }
+
+    private async Task PersistAsync(Guid jobId, List<LogChunk> chunks)
+    {
         if (chunks.Count == 0) return;
 
         try
