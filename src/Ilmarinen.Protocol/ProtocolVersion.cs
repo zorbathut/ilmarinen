@@ -14,11 +14,13 @@ namespace Ilmarinen.Protocol;
 /// </summary>
 public static class ProtocolVersion
 {
+    // Shared types live in the Ilmarinen.Protocol namespace and reach the hash through the requests and responses that
+    // carry them. Don't seed that namespace: it would pull in every helper that happens to sit beside them and make the
+    // hash — which locks out every worker when it moves — depend on code that never crosses the wire.
     private static readonly string[] SeedNamespaces =
     [
         "Ilmarinen.Protocol.Requests",
-        "Ilmarinen.Protocol.Responses",
-        "Ilmarinen.Protocol.Shared"
+        "Ilmarinen.Protocol.Responses"
     ];
 
     /// <summary>
