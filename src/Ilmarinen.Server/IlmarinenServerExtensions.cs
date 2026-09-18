@@ -15,6 +15,7 @@ public static class IlmarinenServerExtensions
     public static IServiceCollection AddIlmarinenServer(this IServiceCollection services)
     {
         services.AddControllers();
+        // Left at the default MaximumParallelInvocationsPerClient of 1, which the worker protocol depends on: a worker reports its diagnostic and then asks to be marked ready, and replays its buffer and then reconciles, each as a pair whose order only holds because the hub dispatches one invocation per connection at a time.
         services.AddSignalR();
 
         services.AddSingleton<CredentialEncryptionService>();

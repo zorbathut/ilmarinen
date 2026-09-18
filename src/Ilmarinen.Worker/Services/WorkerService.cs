@@ -381,7 +381,14 @@ public class WorkerService : BackgroundService
     {
         await Authenticate();
 
-        // Replay buffered messages first so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
+        // Ahead of anything the server might act on. A replayed JobCompleted marks this worker ready again, so the server has to know whether we can take that work before it decides — otherwise a worker benched by a failed diagnostic is handed the next job the moment it reconnects.
+        var cached = _lastDiagnostic;
+        if (cached != null)
+        {
+            await _connection!.SendAsync("ReportDiagnostic", cached);
+        }
+
+        // Replay buffered messages next so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
         while (_messageBuffer.TryPeek(out var msg))
         {
             try
@@ -426,15 +433,12 @@ public class WorkerService : BackgroundService
             return;
         }
 
-        // First connect ever: run the diagnostic, which reports its own result and readiness. Subsequent reconnects re-push the cached result so the server reconstructs its state without re-running (and without the per-reconnect cost of an image pull / container run).
-        var cached = _lastDiagnostic;
+        // First connect ever: run the diagnostic, which reports its own result and readiness. Subsequent reconnects re-push the cached result (above) so the server reconstructs its state without re-running, and without the per-reconnect cost of an image pull / container run.
         if (cached == null)
         {
             await ExecuteDiagnosticAsync(DiagnosticTrigger.Automatic);
             return;
         }
-
-        await _connection!.SendAsync("ReportDiagnostic", cached);
 
         if (DiagnosticStatusPolicy.CanAcceptJobs(cached.Status))
         {
