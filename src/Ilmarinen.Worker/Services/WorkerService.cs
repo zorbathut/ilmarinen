@@ -34,6 +34,9 @@ public class WorkerService : BackgroundService
     private BufferedHubSender? _sender;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
 
+    // Held while a job's result is reported and while a reconnect reconciles state, so the two can't interleave. See ReportCompletionAsync.
+    private readonly SemaphoreSlim _syncLock = new(1, 1);
+
     // Everything the worker has to finish before the process may exit: a job tearing its containers down, or a rejection telling the server about work it can't take. Entries clear themselves, so this stays the size of what is actually in flight.
     private readonly ConcurrentDictionary<long, Task> _inFlight = new();
     private long _inFlightSequence;
@@ -433,28 +436,39 @@ public class WorkerService : BackgroundService
             await _connection!.SendAsync("ReportDiagnostic", cached);
         }
 
-        // Replay buffered messages next so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
-        while (_messageBuffer.TryPeek(out var msg))
+        // Replaying the buffer and reconciling are one step: a job reporting itself in the middle would be refused as unauthenticated, land back in the buffer after the replay had passed it, and then be contradicted by a Reconnect that says no job is running. Authentication stays outside the lock — it is the part a finishing job has to be able to wait for.
+        Guid? currentJob;
+        ReconnectResponse response;
+        await _syncLock.WaitAsync();
+        try
         {
-            try
+            // Replay buffered messages first so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
+            while (_messageBuffer.TryPeek(out var msg))
             {
-                await _connection!.InvokeCoreAsync(msg!.Method, msg.Args);
-                _messageBuffer.TryDequeue(out _);
+                try
+                {
+                    await _connection!.InvokeCoreAsync(msg!.Method, msg.Args);
+                    _messageBuffer.TryDequeue(out _);
+                }
+                catch (Exception ex)
+                {
+                    // Throw rather than return: a quiet return would leave a connected-but-unsynced worker (never Ready, never draining) that nothing retries, and would reset the handshake-failure counter as if this sync had succeeded.
+                    _logger.LogWarning(ex, "Failed to replay {Method}, will retry on next reconnect", msg!.Method);
+                    throw;
+                }
             }
-            catch (Exception ex)
-            {
-                // Throw rather than return: a quiet return would leave a connected-but-unsynced worker (never Ready, never draining) that nothing retries, and would reset the handshake-failure counter as if this sync had succeeded.
-                _logger.LogWarning(ex, "Failed to replay {Method}, will retry on next reconnect", msg!.Method);
-                throw;
-            }
-        }
 
-        // Reconcile state with server
-        var currentJob = CurrentJobId;
-        var response = await _connection!.InvokeAsync<ReconnectResponse>("Reconnect", new WorkerReconnect
+            // Reconcile state with server
+            currentJob = CurrentJobId;
+            response = await _connection!.InvokeAsync<ReconnectResponse>("Reconnect", new WorkerReconnect
+            {
+                RunningJobId = currentJob
+            });
+        }
+        finally
         {
-            RunningJobId = currentJob
-        });
+            _syncLock.Release();
+        }
 
         // If we're running a job the server doesn't expect, abort it. This happens when the job was cancelled or failed while we were disconnected.
         if (currentJob != null && response.ExpectedJobId != currentJob)
@@ -727,20 +741,44 @@ public class WorkerService : BackgroundService
                 };
             }
         }
+        catch
+        {
+            // Only reachable if a catch handler above threw — a log write, a workspace scan. The result is lost either way, but the worker must not be left stuck at RunningJob refusing all future work. On every other path ReportCompletionAsync leaves the activity, and it must not be left a second time: by the time it returns, the next job may already have claimed the slot.
+            ExitActivity();
+            throw;
+        }
         finally
         {
-            // Clear activity BEFORE notifying the server so that when the server marks us ready and immediately assigns the next job, our state machine accepts it. Done in finally so we don't leak the activity flag if a catch handler throws.
             _runningJobs.TryRemove(jobKey, out _);
-            ExitActivity();
         }
 
-        // The server's JobCompleted handler marks this worker ready and dispatches the next queued job. Sending an explicit Ready here too would double-trigger dispatch and could stack a second job on this worker.
-        var delivered = await _sender!.SendOrBufferAsync("JobCompleted", job.Id, result);
+        var delivered = await ReportCompletionAsync(job.Id, result);
 
         // Exit only on confirmed delivery: a buffered JobCompleted dies with this process and the job would be marked Failed on relaunch. When buffered, the reconnect path replays the buffer and then performs this drain itself.
         if (_updatePending && delivered)
         {
             RequestUpdateExit("job finished on a stale bundle");
+        }
+    }
+
+    /// <summary>
+    /// Leaves the activity and reports the result as one indivisible step. A reconnect's reconciliation reads the activity to decide whether this worker still holds its job; run between the two, it finds a worker with no job and no result yet, and the server fails a job that had in fact just finished — permanently, since Failed is final.
+    ///
+    /// Clearing the activity is also what lets the state machine accept the next job, which the server assigns the moment this report lands, so it has to happen before the report rather than after.
+    /// </summary>
+    private async Task<bool> ReportCompletionAsync(Guid jobId, JobResult result)
+    {
+        await _syncLock.WaitAsync();
+        try
+        {
+            ExitActivity();
+
+            // The server's JobCompleted handler marks this worker ready and dispatches the next queued job. Sending an explicit Ready here too would double-trigger dispatch and could stack a second job on this worker.
+            return await _sender!.SendOrBufferAsync("JobCompleted", jobId, result);
+        }
+        finally
+        {
+            _syncLock.Release();
         }
     }
 
