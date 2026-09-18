@@ -573,7 +573,7 @@ public class PipelineRunner : IDisposable
             // Force-remove the container, which kills it outright. Don't stop it gracefully first: SIGTERM reaches only the container's PID 1, never the processes the step exec'd, so a graceful stop gives nothing a chance to clean up and just waits out its timeout. Best-effort: a failure here means a leaked container, so leave a breadcrumb.
             try
             {
-                await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true });
+                await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true, RemoveVolumes = true });
             }
             catch (Exception ex)
             {
