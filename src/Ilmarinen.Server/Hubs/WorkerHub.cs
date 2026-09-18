@@ -162,6 +162,19 @@ public class WorkerHub : Hub<IWorkerClient>
             return;
         }
 
+        var worker = workers.GetByConnectionId(Context.ConnectionId);
+        if (worker == null)
+        {
+            _logger.LogWarning("Rejected Ready from unauthenticated connection {ConnectionId}", Context.ConnectionId);
+            throw new HubException("Worker not authenticated.");
+        }
+
+        if (IsBenchedByDiagnostic(workers, worker.Id, out var status))
+        {
+            _logger.LogWarning("Ignoring Ready from worker {WorkerId}: its last diagnostic was {Status}", worker.Id, status);
+            return;
+        }
+
         workers.SetReady(Context.ConnectionId, true);
         _uiEvents.NotifyWorkersChanged();
         _logger.LogInformation("Worker ready: {ConnectionId}", Context.ConnectionId);
@@ -176,6 +189,19 @@ public class WorkerHub : Hub<IWorkerClient>
     {
         var connectionBundle = workers.GetBundleHash(connectionId);
         return connectionBundle != null && _bundles.CurrentHash != null && connectionBundle != _bundles.CurrentHash;
+    }
+
+    /// <summary>
+    /// Whether the worker's own last diagnostic says it can't run jobs. A worker that has never reported one is not
+    /// presumed broken — on every worker path the report precedes the Ready, so an absent report means an old build
+    /// rather than a failed check, and refusing it would bench a worker with no way back.
+    /// </summary>
+    private static bool IsBenchedByDiagnostic(WorkerRepository workers, Guid workerId, out DiagnosticStatus status)
+    {
+        var diagnostic = workers.GetDiagnostic(workerId);
+        status = diagnostic?.Status ?? DiagnosticStatus.Unknown;
+
+        return diagnostic != null && !DiagnosticStatusPolicy.CanAcceptJobs(diagnostic.Status);
     }
 
     /// <summary>
@@ -292,6 +318,12 @@ public class WorkerHub : Hub<IWorkerClient>
         if (HasStaleBundle(workers, Context.ConnectionId))
         {
             _logger.LogInformation("Worker {WorkerId} completed job {JobId} on a stale bundle; draining for bundle update", worker.Id, jobId);
+            return;
+        }
+
+        if (IsBenchedByDiagnostic(workers, worker.Id, out var status))
+        {
+            _logger.LogWarning("Worker {WorkerId} finished job {JobId} but its last diagnostic was {Status}; leaving it out of the fleet", worker.Id, jobId, status);
             return;
         }
 

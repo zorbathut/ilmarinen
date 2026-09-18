@@ -98,6 +98,42 @@ public class IntegrationTestFixture : IAsyncDisposable
     }
 
     /// <summary>
+    /// Registers a worker without running one, and hands back a hub bound to a connection recorded as its own. For the
+    /// server-side rules — readiness gating, reconnect reconciliation — which are otherwise reachable only by
+    /// orchestrating a real worker into the right state, slowly and with a race in it.
+    /// </summary>
+    public async Task<(Ilmarinen.Server.Hubs.WorkerHub Hub, Guid WorkerId)> CreateHubForRegisteredWorkerAsync(string name, string connectionId, FakeHubCallerClients clients)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
+        var workerId = (await registration.RegisterWorkerAsync(name)).WorkerId;
+
+        var workers = _factory.Services.GetRequiredService<WorkerRepository>();
+        await workers.ConnectAsync(connectionId, workerId, ipAddress: null);
+
+        var hub = new Ilmarinen.Server.Hubs.WorkerHub(
+            _factory.Services.GetRequiredService<IServiceScopeFactory>(),
+            _factory.Services.GetRequiredService<ServerKeyService>(),
+            _factory.Services.GetRequiredService<WorkerBundleService>(),
+            _factory.Services.GetRequiredService<UIEventService>(),
+            _factory.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ilmarinen.Server.Hubs.WorkerHub>>())
+        {
+            Context = new FakeHubCallerContext(connectionId),
+            Clients = clients
+        };
+
+        return (hub, workerId);
+    }
+
+    /// <summary>Marks a job Running against a worker, the state a dispatch would leave it in.</summary>
+    public async Task StartJobOnWorkerAsync(Guid jobId, Guid workerId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        await jobs.UpdateStatusAsync(jobId, JobStatus.Running, workerId);
+    }
+
+    /// <summary>
     /// Waits until the worker has connected and authenticated (does not require Ready).
     /// Useful for tests of the not-ready path.
     /// </summary>
