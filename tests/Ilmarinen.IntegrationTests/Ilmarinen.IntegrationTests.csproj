@@ -31,6 +31,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Ilmarinen.Cli\Ilmarinen.Cli.csproj" />
     <ProjectReference Include="..\..\src\Ilmarinen.Server\Ilmarinen.Server.csproj" />
     <ProjectReference Include="..\..\src\Ilmarinen.Worker\Ilmarinen.Worker.csproj" />
     <ProjectReference Include="..\..\src\Ilmarinen.WorkerLauncher\Ilmarinen.WorkerLauncher.csproj" />

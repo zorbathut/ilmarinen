@@ -1,4 +1,6 @@
+using Cocona.Application;
 using Cocona;
+using Ilmarinen.Cli;
 using Ilmarinen.Docker;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
@@ -15,7 +17,7 @@ using System;
 
 CoconaLiteApp.Run<Commands>(args);
 
-public class Commands
+internal class Commands
 {
     /// <summary>Run a pipeline locally (default command)</summary>
     [Command("run")]
@@ -219,6 +221,101 @@ public class Commands
         var jobId = result!.Id;
         Console.WriteLine($"Job submitted: {serverUrl}/jobs/{jobId}");
         return 0;
+    }
+
+    /// <summary>Stream a job's log until it finishes; exit 0 if the job succeeded, 3 if it failed, 4 if it was cancelled, 2 if it could not be followed, 130 if interrupted. Interrupting stops following but leaves the job running</summary>
+    [Command("follow")]
+    public async Task<int> Follow(
+        [FromService] ICoconaAppContextAccessor contextAccessor,
+        [Option('s', Description = "Server URL")] string server,
+        [Argument(Description = "Job ID")] Guid jobId)
+    {
+        var serverUrl = NormalizeServerUrl(server);
+        if (serverUrl == null)
+        {
+            return 1;
+        }
+
+        return await FollowJobAsync(serverUrl, jobId, contextAccessor.Current!.CancellationToken);
+    }
+
+    /// <summary>Idle time between feed reads while following. Output that arrives in bulk is read back to back; this only bounds how late a quiet job's next line or its completion is noticed.</summary>
+    private static readonly TimeSpan FollowPollInterval = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>Long enough to ride out a server redeploy, short enough that a reader blocked on a dead server finds out.</summary>
+    private static readonly TimeSpan FollowGiveUpAfter = TimeSpan.FromMinutes(2);
+
+    /// <param name="interrupted">Cocona's own token, cancelled on Ctrl-C and on SIGTERM — the latter being what a supervising tool sends when it gives up waiting.</param>
+    private static async Task<int> FollowJobAsync(string serverUrl, Guid jobId, CancellationToken interrupted)
+    {
+        var logUrl = $"{serverUrl}/api/jobs/{jobId}/logs/raw";
+
+        using var http = new HttpClient { BaseAddress = new Uri(serverUrl + "/") };
+
+        // Worker meta lines share stderr with the job's own, so a terminal shows them dimmed; a redirected stream gets the text untouched.
+        var dimMeta = !Console.IsErrorRedirected;
+
+        var follower = new JobLogFollower(
+            http,
+            jobId,
+            FollowPollInterval,
+            FollowGiveUpAfter,
+            entry => WriteLogEntry(entry, dimMeta),
+            status =>
+            {
+                // The final status gets its own summary line below.
+                if (status is not (JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled))
+                {
+                    Console.Error.WriteLine($"Job {jobId}: {status}");
+                }
+            },
+            warning => Console.Error.WriteLine($"Warning: {warning}"));
+
+        try
+        {
+            var status = await follower.FollowAsync(interrupted);
+            Console.Error.WriteLine($"Job {jobId} finished: {status} — full log: {logUrl}");
+
+            return status switch
+            {
+                JobStatus.Success => 0,
+                JobStatus.Failed => 3,
+                JobStatus.Cancelled => 4,
+                _ => throw new InvalidOperationException($"Follow ended on non-terminal status {status}")
+            };
+        }
+        catch (OperationCanceledException) when (interrupted.IsCancellationRequested)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"Stopped following job {jobId}; the job itself was not cancelled. Full log: {logUrl}");
+            return 130;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error following job {jobId}: {ex.Message}");
+            if (Environment.GetEnvironmentVariable("DEBUG") != null)
+            {
+                Console.Error.WriteLine(ex.StackTrace);
+            }
+
+            return 2;
+        }
+    }
+
+    private static void WriteLogEntry(LogEntry entry, bool dimMeta)
+    {
+        switch (entry.Type)
+        {
+            case "o":
+                Console.Out.Write(entry.Data);
+                break;
+            case "e":
+                Console.Error.Write(entry.Data);
+                break;
+            default:
+                Console.Error.Write(dimMeta ? $"\u001b[2m{entry.Data}\u001b[0m" : entry.Data);
+                break;
+        }
     }
 
     /// <summary>The server URL without a trailing slash, or null — after saying why — when it isn't an absolute http(s) URL. A bare "host:port" parses as a URL whose scheme is the host, so the scheme has to be checked too.</summary>
