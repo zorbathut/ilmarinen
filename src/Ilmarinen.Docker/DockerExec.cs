@@ -26,6 +26,12 @@ internal static class DockerExec
         using var multiplexed = await client.Exec.StartAndAttachContainerExecAsync(execCreate.ID, false);
 
         var buffer = new byte[4096];
+        var chars = new char[Encoding.UTF8.GetMaxCharCount(buffer.Length)];
+
+        // One decoder per stream, carrying state across reads: a read ends wherever the buffer fills, which can be partway through a multi-byte character.
+        var stdoutDecoder = Encoding.UTF8.GetDecoder();
+        var stderrDecoder = Encoding.UTF8.GetDecoder();
+
         while (true)
         {
             var result = await multiplexed.ReadOutputAsync(buffer, 0, buffer.Length, default);
@@ -34,8 +40,23 @@ internal static class DockerExec
                 break;
             }
 
-            var chunk = Encoding.UTF8.GetString(buffer, 0, result.Count);
-            await onChunk(result.Target == MultiplexedStream.TargetStream.StandardOut, chunk);
+            var isStdout = result.Target == MultiplexedStream.TargetStream.StandardOut;
+            var decoder = isStdout ? stdoutDecoder : stderrDecoder;
+            var count = decoder.GetChars(buffer, 0, result.Count, chars, 0, flush: false);
+            if (count > 0)
+            {
+                await onChunk(isStdout, new string(chars, 0, count));
+            }
+        }
+
+        // Whatever a stream ended partway through is malformed, and comes out as a replacement character rather than not at all.
+        foreach (var (isStdout, decoder) in new[] { (true, stdoutDecoder), (false, stderrDecoder) })
+        {
+            var count = decoder.GetChars(buffer, 0, 0, chars, 0, flush: true);
+            if (count > 0)
+            {
+                await onChunk(isStdout, new string(chars, 0, count));
+            }
         }
 
         var inspect = await client.Exec.InspectContainerExecAsync(execCreate.ID);
