@@ -182,6 +182,57 @@ public class Commands
         return 0;
     }
 
+    /// <summary>Trigger a registered pipeline</summary>
+    [Command("trigger")]
+    public async Task<int> Trigger(
+        [Option('s', Description = "Server URL")] string server,
+        [Argument(Description = "Pipeline ID")] Guid pipelineId,
+        [Option("ref", Description = "Git ref (defaults to the pipeline's own)")] string? gitRef = null,
+        [Option("min-worker-priority", Description = "Only run on workers of at least this priority")] WorkerPriority? minWorkerPriority = null)
+    {
+        var serverUrl = NormalizeServerUrl(server);
+        if (serverUrl == null)
+        {
+            return 1;
+        }
+
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        using var http = new HttpClient();
+        await CheckProtocolAsync(http, serverUrl, jsonOptions);
+
+        var trigger = new PipelineTrigger
+        {
+            Ref = gitRef,
+            MinWorkerPriority = minWorkerPriority
+        };
+
+        var response = await http.PostAsJsonAsync($"{serverUrl}/api/pipelines/{pipelineId}/trigger", trigger);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            await WriteErrorAsync(response);
+            return 1;
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<JobSubmissionResult>(jsonOptions);
+        var jobId = result!.Id;
+        Console.WriteLine($"Job submitted: {serverUrl}/jobs/{jobId}");
+        return 0;
+    }
+
+    /// <summary>The server URL without a trailing slash, or null — after saying why — when it isn't an absolute http(s) URL. A bare "host:port" parses as a URL whose scheme is the host, so the scheme has to be checked too.</summary>
+    private static string? NormalizeServerUrl(string server)
+    {
+        if (Uri.TryCreate(server, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+        {
+            return server.TrimEnd('/');
+        }
+
+        Console.Error.WriteLine($"Server URL must be an absolute http:// or https:// URL, not '{server}'.");
+        return null;
+    }
+
     /// <summary>Warns, without failing the command, when the server's protocol differs from this CLI's or can't be checked.</summary>
     private static async Task CheckProtocolAsync(HttpClient http, string server, JsonSerializerOptions jsonOptions)
     {
