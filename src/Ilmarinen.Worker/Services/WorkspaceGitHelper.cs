@@ -9,8 +9,6 @@ namespace Ilmarinen.Worker.Services;
 /// </summary>
 public static class WorkspaceGitHelper
 {
-    private const string SourceRemote = "ilmarinen-source";
-
     /// <summary>
     /// Clones <paramref name="source"/> (a local mirror) into <paramref name="path"/> and checks out <paramref name="commitSha"/>, leaving a self-contained repository whose origin is <paramref name="repoUrl"/>.
     /// </summary>
@@ -57,39 +55,24 @@ public static class WorkspaceGitHelper
     }
 
     /// <summary>
-    /// Updates a persistent workspace's remote-tracking branches and tags from <paramref name="source"/> (a local mirror), leaving <c>origin</c> naming the real repository.
+    /// Updates a persistent workspace's remote-tracking branches and tags from <paramref name="mirrorPath"/>, leaving <c>origin</c> naming the real repository.
     /// </summary>
-    public static void FetchIntoWorkspace(string path, string source)
+    /// <exception cref="MirrorDamagedException">Thrown if the fetch fails and the mirror fails its own check too.</exception>
+    /// <exception cref="GitCommandException">Thrown if the fetch fails on the workspace's own state.</exception>
+    public static void FetchIntoWorkspace(string path, string mirrorPath)
     {
-        using var repo = new Repository(path);
+        // This is git's own fetch, not libgit2's: libgit2 fetching from a local path packs everything the wanted refs reach regardless of what the workspace already has, which on a large repository costs as much as a clone, where git negotiates and transfers only what's missing.
 
-        // The persistent workspace is a cache; the remote is authoritative. Force-fetch all branches and tags (the leading `+` overwrites local refs on non-fast-forward updates), and prune anything deleted on the remote.
-        var refSpecs = new[]
-        {
-            "+refs/heads/*:refs/remotes/origin/*",
-            "+refs/tags/*:refs/tags/*",
-        };
-        var fetchOptions = new FetchOptions
-        {
-            Prune = true,
-            // libgit2 only honours an explicit `+refs/tags/*:refs/tags/*` refspec when TagFetchMode is also set; without this, force-overwriting a diverged local tag silently no-ops.
-            TagFetchMode = TagFetchMode.All,
-        };
-
-        // Removing the remote also deletes the refs its configured refspec maps to, so that must stay its own refs/remotes/ilmarinen-source rather than origin's
-        if (repo.Network.Remotes[SourceRemote] != null)
-        {
-            repo.Network.Remotes.Remove(SourceRemote);
-        }
-
-        repo.Network.Remotes.Add(SourceRemote, source);
+        // The persistent workspace is a cache; the remote is authoritative. Force-fetch all branches and tags (the leading `+` overwrites local refs on non-fast-forward updates), and prune anything deleted on the remote. Submodules a step checked out are the step's business, and maintenance would repack the whole repository during the job.
         try
         {
-            Commands.Fetch(repo, SourceRemote, refSpecs, fetchOptions, null);
+            GitCli.Run(path, "fetch", "--quiet", "--prune", "--no-recurse-submodules", "--no-auto-maintenance", "--no-write-fetch-head", mirrorPath, "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*");
         }
-        finally
+        catch (GitCommandException ex)
         {
-            repo.Network.Remotes.Remove(SourceRemote);
+            // A fetch also fails on the workspace's own state, such as a ref lock a killed step left behind, which a new mirror wouldn't fix
+            GitMirror.Verify(mirrorPath, ex);
+            throw;
         }
     }
 

@@ -187,7 +187,7 @@ public class JobRunner
 
         if (Directory.Exists(workDir))
         {
-            // Only the fetch reads the mirror; the reset and checkout fail on the workspace's own state, which a new mirror wouldn't change
+            // Only the fetch reads the mirror; the reset and checkout fail on the workspace's own state, which a new mirror wouldn't change, and the fetch itself only blames the mirror once the mirror fails its own check
             _logger.LogInformation("Reusing existing workspace at {WorkDir}", workDir);
             WorkspaceGitHelper.ResetWorkspace(workDir, _job.RepoUrl);
             await ReadingMirrorAsync(() =>

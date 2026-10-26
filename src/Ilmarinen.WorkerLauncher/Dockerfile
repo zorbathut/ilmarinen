@@ -9,7 +9,7 @@ RUN dotnet publish src/Ilmarinen.WorkerLauncher/Ilmarinen.WorkerLauncher.csproj 
 
 FROM mcr.microsoft.com/dotnet/runtime:9.0
 
-# The worker child process runs inside this container, so it needs everything the worker image has: the Docker CLI to spawn job containers, and git for LibGit2Sharp.
+# The worker child process runs inside this container, so it needs everything the worker image has: the Docker CLI to spawn job containers, and git for the fetch into persistent workspaces.
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \

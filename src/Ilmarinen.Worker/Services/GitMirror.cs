@@ -120,11 +120,26 @@ public static class GitMirror
     }
 
     /// <summary>
-    /// Whether <paramref name="ex"/>, thrown while reading the mirror's own objects, means the mirror is damaged. Anything libgit2 fails at there is, except being handed a malformed ref name.
+    /// Whether <paramref name="ex"/>, thrown while reading the mirror's own objects, means the mirror is damaged. Anything libgit2 fails at there is, except being handed a malformed ref name, and so is a mirror that failed <see cref="Verify"/>.
     /// </summary>
     public static bool IsDamage(Exception ex)
     {
-        return ex is LibGit2SharpException and not InvalidSpecificationException and not AmbiguousSpecificationException;
+        return ex is MirrorDamagedException || ex is LibGit2SharpException and not InvalidSpecificationException and not AmbiguousSpecificationException;
+    }
+
+    /// <summary>
+    /// Checks every object in the mirror, throwing <see cref="MirrorDamagedException"/> (wrapping <paramref name="failure"/>, what prompted the check) if any is missing or corrupt. Costs seconds on a large repository, so it's for diagnosing a failure, not for every job.
+    /// </summary>
+    public static void Verify(string mirrorPath, Exception failure)
+    {
+        try
+        {
+            GitCli.Run(mirrorPath, "fsck", "--no-dangling", "--no-progress");
+        }
+        catch (GitCommandException check)
+        {
+            throw new MirrorDamagedException($"The mirror at '{mirrorPath}' is damaged: {check.Message}", failure);
+        }
     }
 
     /// <summary>

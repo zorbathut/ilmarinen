@@ -1,4 +1,5 @@
 using Ilmarinen.Worker.Services;
+using LibGit2Sharp;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
 using System.IO;
@@ -128,7 +129,7 @@ public class WorkspaceGitHelperTests
 
         Prepare(c2);
 
-        using var repo = new LibGit2Sharp.Repository(_workspaceDir);
+        using var repo = new Repository(_workspaceDir);
         Assert.That(repo.Network.Remotes.Select(r => r.Name), Is.EqualTo(new[] { "origin" }));
         Assert.That(repo.Refs.Select(r => r.CanonicalName).Where(n => n.StartsWith("refs/remotes/") && !n.StartsWith("refs/remotes/origin/")), Is.Empty);
         Assert.That(LookupRemoteBranch(_workspaceDir, "master"), Is.EqualTo(c2));
@@ -152,6 +153,76 @@ public class WorkspaceGitHelperTests
             "Stale tag should be pruned when removed on the remote.");
     }
 
+    [Test]
+    public void UpdatedWorkspace_MissingMirror_IsMirrorDamage()
+    {
+        InitRemote();
+        var c1 = WriteAndCommit(_remoteDir, "file.txt", "v1");
+        Prepare(c1);
+
+        var ex = Assert.Throws<MirrorDamagedException>(() => WorkspaceGitHelper.FetchIntoWorkspace(_workspaceDir, Path.Combine(_root, "no-such-mirror")));
+
+        Assert.That(GitMirror.IsDamage(ex!), Is.True);
+    }
+
+    /// <summary>A step killed mid-git leaves its lock behind; that's the workspace's problem, and rebuilding the mirror for it would only cost a full clone and fail again.</summary>
+    [Test]
+    public void UpdatedWorkspace_StaleRefLock_IsNotMirrorDamage()
+    {
+        InitRemote();
+        var c1 = WriteAndCommit(_remoteDir, "file.txt", "v1");
+        Prepare(c1);
+        File.WriteAllText(Path.Combine(_workspaceDir, ".git", "refs", "remotes", "origin", "master.lock"), "");
+        var c2 = WriteAndCommit(_remoteDir, "file.txt", "v2");
+
+        var ex = Assert.Catch(() => Prepare(c2));
+
+        Assert.That(ex, Is.TypeOf<GitCommandException>());
+        Assert.That(GitMirror.IsDamage(ex!), Is.False);
+    }
+
+    /// <summary>Hooks in the workspace were written by a step, and must not run inside the worker.</summary>
+    [Test]
+    public void UpdatedWorkspace_DoesNotRunHooksAStepPlanted()
+    {
+        Assume.That(OperatingSystem.IsWindows(), Is.False, "hooks need an executable shell script");
+        InitRemote();
+        var c1 = WriteAndCommit(_remoteDir, "file.txt", "v1");
+        Prepare(c1);
+        var marker = Path.Combine(_root, "hook-ran");
+        var hook = Path.Combine(_workspaceDir, ".git", "hooks", "reference-transaction");
+        Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
+        File.WriteAllText(hook, $"#!/bin/sh\ntouch '{marker}'\n");
+        File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var c2 = WriteAndCommit(_remoteDir, "file.txt", "v2");
+
+        Prepare(c2);
+
+        Assert.That(File.Exists(marker), Is.False);
+        Assert.That(File.ReadAllText(Path.Combine(_workspaceDir, "file.txt")), Is.EqualTo("v2"));
+    }
+
+    /// <summary>libgit2 fetching from a local path re-sends everything the refs reach, which on a large repository costs as much as a clone; an update must carry only what's new.</summary>
+    [Test]
+    public void UpdatedWorkspace_TransfersOnlyWhatIsNew()
+    {
+        InitRemote();
+        for (var i = 0; i < 150; i++)
+        {
+            File.WriteAllText(Path.Combine(_remoteDir, $"file{i}.txt"), $"content {i}");
+        }
+        var c1 = CommitAll(_remoteDir);
+        Prepare(c1);
+        var before = ObjectFiles(_workspaceDir);
+        var c2 = WriteAndCommit(_remoteDir, "file0.txt", "changed");
+
+        Prepare(c2);
+
+        var added = ObjectFiles(_workspaceDir).Except(before).ToList();
+        Assert.That(added.Where(f => f.EndsWith(".pack")), Is.Empty, string.Join("\n", added));
+        Assert.That(added, Has.Count.LessThanOrEqualTo(3), "the new commit, its tree and its blob");
+    }
+
     /// <summary>The first run of a workspace clones it from the mirror and later runs update it from there, as a job does.</summary>
     private void Prepare(string sha)
     {
@@ -166,6 +237,20 @@ public class WorkspaceGitHelperTests
         {
             WorkspaceGitHelper.CloneWorkspace(mirror, _workspaceDir, _remoteDir, sha);
         }
+    }
+
+    private static string CommitAll(string repoPath)
+    {
+        using var repo = new Repository(repoPath);
+        Commands.Stage(repo, "*");
+        var sig = new Signature("Test", "test@example.com", DateTimeOffset.UtcNow);
+        return repo.Commit("add everything", sig, sig).Sha;
+    }
+
+    private static string[] ObjectFiles(string workDir)
+    {
+        var objects = Path.Combine(workDir, ".git", "objects");
+        return Directory.GetFiles(objects, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(objects, f)).ToArray();
     }
 
     private void InitRemote()

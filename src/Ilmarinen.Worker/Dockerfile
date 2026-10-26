@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# Install git (needed by LibGit2Sharp)
+# Install git: the worker runs its fetch into persistent workspaces (LibGit2Sharp needs no binary)
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
