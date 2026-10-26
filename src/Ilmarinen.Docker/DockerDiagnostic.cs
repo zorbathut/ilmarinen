@@ -384,7 +384,7 @@ public class DockerDiagnostic : IAsyncDisposable
                 "wget -qO- --header=\"Authorization: Bearer $ILMARINEN_TOKEN\" \"$ILMARINEN_API/api/ping\""
             ]);
 
-            if (exitCode != 0 || !stdout.Contains("\"ok\""))
+            if (exitCode != 0 || stdout.Trim() != "ok")
             {
                 var hint = _workerContainerId != null
                     ? "Container in Docker-in-Docker could not reach the agent API server on the worker container. The bridge network attach may have failed, or the worker's container ID is not resolvable."

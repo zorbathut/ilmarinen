@@ -143,105 +143,52 @@ public class PipelineRunner : IDisposable
         API="${ILMARINEN_API}"
         TOKEN="${ILMARINEN_TOKEN}"
 
-        # Response bodies land in a file rather than a variable: command substitution strips trailing newlines, and the body is the value.
-        BODY=$(mktemp)
-        trap 'rm -f "$BODY"' EXIT
-
-        # Detect HTTP client. http <url> [json] sends a GET, or a POST of the JSON, leaves the response body in $BODY, and returns 0 for a 2xx response, 2 for any other response, 1 for none at all.
+        # Detect HTTP client. http <url> [json] sends a GET, or a POST of the JSON, and leaves the response body in $BODY and the client's own complaints in $ERR. It returns 0 for a 2xx response, 2 for an error response whose body is the server's reason, and 1 for anything else.
         if command -v curl >/dev/null 2>&1; then
             http() {
                 if [ $# -gt 1 ]; then
-                    _code=$(curl -s -o "$BODY" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1") || return 1
+                    _code=$(curl -sS -o "$BODY" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1" 2>"$ERR") || return 1
                 else
-                    _code=$(curl -s -o "$BODY" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$1") || return 1
+                    _code=$(curl -sS -o "$BODY" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$1" 2>"$ERR") || return 1
                 fi
                 case "$_code" in
                     2??) return 0 ;;
-                    000) return 1 ;;
                     *) return 2 ;;
                 esac
             }
-            http_get() { curl -s -H "Authorization: Bearer $TOKEN" "$1"; }
-            http_post() { curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1"; }
         elif command -v wget >/dev/null 2>&1; then
-            # wget reports no status, and busybox's keeps no body for an error response, so a failure that left no body counts as no response.
+            # wget keeps no body for an error response, so whatever $BODY holds after a failure is a truncated success and must not be shown. The server puts its reason in the status line instead, which busybox wget reports even under -q.
             http() {
-                _rc=0
                 if [ $# -gt 1 ]; then
-                    wget -q -O "$BODY" --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null || _rc=$?
+                    wget -q -O "$BODY" --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>"$ERR" || return 1
                 else
-                    wget -q -O "$BODY" --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null || _rc=$?
+                    wget -q -O "$BODY" --header="Authorization: Bearer $TOKEN" "$1" 2>"$ERR" || return 1
                 fi
-                [ "$_rc" -eq 0 ] && return 0
-                [ -s "$BODY" ] && return 2
-                return 1
-            }
-            http_get() {
-                _rc=0; _body=$(wget -qO- --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null) || _rc=$?
-                if [ -z "$_body" ] && [ "$_rc" -ne 0 ]; then return "$_rc"; fi
-                printf '%s' "$_body"
-            }
-            http_post() {
-                _rc=0; _body=$(wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null) || _rc=$?
-                if [ -z "$_body" ] && [ "$_rc" -ne 0 ]; then return "$_rc"; fi
-                printf '%s' "$_body"
             }
         else
             echo "Error: Neither wget nor curl found" >&2
             exit 1
         fi
 
-        # Extract JSON string value: json_str '{"k":"v"}' 'k' -> v
-        json_str() { echo "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 | sed 's/\\n/\n/g'; }
-        # Extract JSON number value: json_num '{"k":123}' 'k' -> 123
-        json_num() { echo "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\([0-9-]*\).*/\1/p' | head -1; }
-        # Check if JSON has a field
-        json_has() { echo "$1" | grep -q "\"$2\""; }
-
         # Escape a value for embedding in a JSON string literal: backslash, quote, newline, CR, tab. Other control characters are not escaped and will be rejected by the server's JSON parser — a loud 4xx over silent corruption. awk reads line-by-line, so a trailing newline on the value is dropped — fine for command arguments. The &-based gsub replacement is deliberate: it means the same thing in POSIX awks (busybox, mawk) and gawk, whereas backslash-only replacements differ between them.
         json_escape() {
             printf '%s' "$1" | awk 'BEGIN{ORS=""} NR>1{printf "\\n"} {gsub(/[\\"]/,"\\\\&"); gsub(/\r/,"\\r"); gsub(/\t/,"\\t"); print}'
         }
 
-        # Handle structured error responses
-        handle_error() {
-            local result="$1"
-            local default_exit="${2:-1}"
-
-            if json_has "$result" "error"; then
-                local error_msg=$(json_str "$result" "error")
-                local exit_code=$(json_num "$result" "exitCode")
-                local stderr_out=$(json_str "$result" "stderr")
-                local exception_type=$(json_str "$result" "exceptionType")
-                local nesting_depth=$(json_num "$result" "nestingDepth")
-
-                echo "=== ilmarinen error ===" >&2
-                [ -n "$exception_type" ] && echo "Type: $exception_type" >&2
-                [ -n "$nesting_depth" ] && [ "$nesting_depth" -gt 1 ] 2>/dev/null && echo "Nesting depth: $nesting_depth" >&2
-                echo "Error: $error_msg" >&2
-                if [ -n "$stderr_out" ]; then
-                    echo "--- stderr ---" >&2
-                    printf '%s\n' "$stderr_out" >&2
-                    echo "--- end stderr ---" >&2
-                fi
-                echo "=======================" >&2
-
-                [ -n "$exit_code" ] && [ "$exit_code" != "0" ] && return "$exit_code"
-                return "$default_exit"
-            fi
-            return 0
-        }
-
-        # api <url> [json]: an http request that ends the command unless it succeeded, reporting why.
+        # api <url> [json]: an http request that ends the command unless it succeeded, reporting why. The response lands in a file rather than a variable — command substitution strips trailing newlines, and the body is the value — made on first use so that commands which never call the API don't need a writable TMPDIR.
+        BODY=""
+        ERR=""
         api() {
-            _rc=0; http "$@" || _rc=$?
-            [ "$_rc" -eq 0 ] && return 0
-            if [ "$_rc" -eq 2 ]; then
-                handle_error "$(cat "$BODY")" || exit $?
-                echo "Error: API request failed: $1" >&2
-                exit 1
+            if [ -z "$BODY" ]; then
+                BODY=$(mktemp) && ERR=$(mktemp) || { echo "Error: ilmarinen-agent needs a writable TMPDIR" >&2; exit 1; }
+                trap 'rm -f "$BODY" "$ERR"' EXIT
             fi
-            echo "Error: Cannot reach API server" >&2
+            _rc=0; http "$@" || _rc=$?
+            case "$_rc" in
+                0) return 0 ;;
+                2) { printf 'Error: '; cat "$BODY"; echo; } >&2 ;;
+                *) { echo "Error: API request failed: $1"; cat "$ERR"; } >&2 ;;
+            esac
             exit 1
         }
 
@@ -267,16 +214,14 @@ public class PipelineRunner : IDisposable
             info)
                 shift
                 [ -z "$1" ] && { echo "Usage: ilmarinen-agent info <branch|commit>" >&2; exit 1; }
-                result=$(http_get "${API}/api/info/$1") || { echo "Error: Cannot reach API server" >&2; exit 1; }
-                handle_error "$result" || exit $?
-                json_str "$result" "value"
+                api "${API}/api/info/$1"
+                cat "$BODY"; echo
                 ;;
             secret)
                 shift
                 [ "$1" != "get" ] || [ -z "$2" ] && { echo "Usage: ilmarinen-agent secret get <name>" >&2; exit 1; }
-                result=$(http_get "${API}/api/secret/$2") || { echo "Error: Cannot reach API server" >&2; exit 1; }
-                handle_error "$result" || exit $?
-                printf '%s' "$(json_str "$result" "value")"
+                api "${API}/api/secret/$2"
+                cat "$BODY"
                 ;;
             run)
                 shift
@@ -294,7 +239,7 @@ public class PipelineRunner : IDisposable
                 api "${API}/api/run-command" "{\"image\":\"$(json_escape "$image")\",\"command\":$cmd}"
                 run_command=$(cat "$BODY")
                 # exec replaces the shell, so the exit trap won't get the chance.
-                rm -f "$BODY"
+                rm -f "$BODY" "$ERR"
                 exec sh -c "$run_command"
                 ;;
             build)
@@ -351,14 +296,8 @@ public class PipelineRunner : IDisposable
                 [ -n "$build_args" ] && payload="$payload,\"buildArgs\":{$build_args}"
                 payload="$payload}"
 
-                result=$(http_post "${API}/api/build" "$payload") || { echo "Error: Cannot reach API server" >&2; exit 1; }
-
-                if json_has "$result" "error"; then
-                    handle_error "$result"
-                    exit $?
-                fi
-
-                json_str "$result" "reference"
+                api "${API}/api/build" "$payload"
+                cat "$BODY"; echo
                 ;;
             *)
                 echo "Unknown command: $1" >&2

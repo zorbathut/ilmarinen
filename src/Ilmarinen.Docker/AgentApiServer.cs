@@ -2,9 +2,7 @@ using Ilmarinen.Execution;
 using Ilmarinen.Models;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net;
-using System.Text.Json.Serialization;
 using System.Text.Json;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,6 +13,8 @@ namespace Ilmarinen.Docker;
 
 /// <summary>
 /// HTTP API server that exposes IJobContext methods to the injected agent CLI.
+///
+/// Requests are JSON, but every response is plain text: a value on success, a message with a non-2xx status on failure. The agent is a POSIX shell script with no JSON parser to lean on, and decoding JSON strings by hand in sed mangles them.
 /// </summary>
 public class AgentApiServer : IAsyncDisposable
 {
@@ -104,8 +104,7 @@ public class AgentApiServer : IAsyncDisposable
             var authHeader = request.Headers["Authorization"];
             if (authHeader != $"Bearer {_token}")
             {
-                response.StatusCode = 401;
-                await WriteJsonResponse(response, new { error = "Unauthorized" });
+                await WriteErrorResponse(response, 401, "Unauthorized");
                 return;
             }
 
@@ -115,14 +114,13 @@ public class AgentApiServer : IAsyncDisposable
             // Ping is available without a job context — used by the diagnostic to verify a container can reach the agent API server (the most common DinD networking failure mode).
             if (method == "GET" && path == "/api/ping")
             {
-                await WriteJsonResponse(response, new { status = "ok" });
+                await WriteTextResponse(response, "ok");
                 return;
             }
 
             if (_currentContext == null)
             {
-                response.StatusCode = 503;
-                await WriteJsonResponse(response, new { error = "No active context" });
+                await WriteErrorResponse(response, 503, "No active context");
                 return;
             }
 
@@ -137,33 +135,17 @@ public class AgentApiServer : IAsyncDisposable
                 await HandleInfo(request, response, path["/api/info/".Length..]);
             else
             {
-                response.StatusCode = 404;
-                await WriteJsonResponse(response, new { error = "Not found" });
+                await WriteErrorResponse(response, 404, "Not found");
             }
         }
         catch (CommandException ex)
         {
-            response.StatusCode = 422; // Unprocessable Entity - command ran but failed
-            await WriteJsonResponse(response, new ErrorResponse(
-                ex.Message,
-                ex.GetType().Name,
-                ex.ExitCode,
-                ex.Stdout,
-                ex.Stderr,
-                null,
-                null));
+            // Unprocessable Entity - command ran but failed
+            await WriteErrorResponse(response, 422, ex.Message);
         }
         catch (Exception ex)
         {
-            response.StatusCode = 500;
-            await WriteJsonResponse(response, new ErrorResponse(
-                ex.Message,
-                ex.GetType().Name,
-                null,
-                null,
-                null,
-                null,
-                null));
+            await WriteErrorResponse(response, 500, $"{ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
@@ -185,7 +167,7 @@ public class AgentApiServer : IAsyncDisposable
         var body = await ReadJsonBody<BuildRequest>(request);
         var image = await _currentContext!.BuildImage(body.Dockerfile, body.Tag, body.Context, body.BuildArgs);
 
-        await WriteJsonResponse(response, new { reference = image.Reference });
+        await WriteTextResponse(response, image.Reference);
     }
 
     private async Task HandleSecret(HttpListenerRequest request, HttpListenerResponse response, string name)
@@ -193,12 +175,11 @@ public class AgentApiServer : IAsyncDisposable
         try
         {
             var value = _currentContext!.Secret(name);
-            await WriteJsonResponse(response, new { value });
+            await WriteTextResponse(response, value);
         }
         catch (InvalidOperationException ex)
         {
-            response.StatusCode = 404;
-            await WriteJsonResponse(response, new { error = ex.Message });
+            await WriteErrorResponse(response, 404, ex.Message);
         }
     }
 
@@ -213,12 +194,11 @@ public class AgentApiServer : IAsyncDisposable
 
         if (value == null)
         {
-            response.StatusCode = 404;
-            await WriteJsonResponse(response, new { error = $"Unknown info key: {key}" });
+            await WriteErrorResponse(response, 404, $"Unknown info key: {key}");
             return;
         }
 
-        await WriteJsonResponse(response, new { value });
+        await WriteTextResponse(response, value);
     }
 
     private static async Task<T> ReadJsonBody<T>(HttpListenerRequest request)
@@ -237,14 +217,29 @@ public class AgentApiServer : IAsyncDisposable
         await response.OutputStream.WriteAsync(buffer);
     }
 
-    private static async Task WriteJsonResponse(HttpListenerResponse response, object data)
+    /// <summary>
+    /// The message is the body, for curl; a one-line form of it is also the status line's reason phrase, since wget keeps no body for an error response but does report the status line.
+    /// </summary>
+    private static async Task WriteErrorResponse(HttpListenerResponse response, int statusCode, string message)
     {
-        var json = JsonSerializer.Serialize(data, JsonOptions);
-        var buffer = Encoding.UTF8.GetBytes(json);
-        response.ContentType = "application/json";
-        response.ContentLength64 = buffer.Length;
-        await response.OutputStream.WriteAsync(buffer);
+        response.StatusCode = statusCode;
+
+        // A reason phrase is one line of printable ASCII.
+        var reason = new StringBuilder();
+        foreach (var c in message)
+        {
+            reason.Append(c is >= ' ' and <= '~' ? c : c is '\n' or '\r' or '\t' ? ' ' : '?');
+            if (reason.Length >= MaxReasonPhraseLength)
+            {
+                break;
+            }
+        }
+
+        response.StatusDescription = reason.ToString();
+        await WriteTextResponse(response, message);
     }
+
+    private const int MaxReasonPhraseLength = 200;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -277,19 +272,7 @@ public class AgentApiServer : IAsyncDisposable
         _cts.Dispose();
     }
 
-    // Request/Response DTOs
+    // Request DTOs
     private record RunRequest(string Image, string[]? Command);
     private record BuildRequest(string Dockerfile, string? Tag, string? Context, Dictionary<string, string>? BuildArgs);
-
-    /// <summary>
-    /// Structured error response for API errors.
-    /// </summary>
-    private record ErrorResponse(
-        [property: JsonPropertyName("error")] string Error,
-        [property: JsonPropertyName("exceptionType")] string? ExceptionType,
-        [property: JsonPropertyName("exitCode")] int? ExitCode,
-        [property: JsonPropertyName("stdout")] string? Stdout,
-        [property: JsonPropertyName("stderr")] string? Stderr,
-        [property: JsonPropertyName("nestingDepth")] int? NestingDepth,
-        [property: JsonPropertyName("containerChain")] string[]? ContainerChain);
 }

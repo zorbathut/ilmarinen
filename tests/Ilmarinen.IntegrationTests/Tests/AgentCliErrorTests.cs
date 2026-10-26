@@ -30,11 +30,11 @@ public class AgentCliErrorTests
     }
 
     [Test]
-    public async Task AgentCli_ApiErrors_ReportsStructuredErrorDetails()
+    public async Task AgentCli_ApiErrors_ReportTheServersReason()
     {
-        // The agent CLI (ilmarinen-agent) communicates with the API server via HTTP. When the API returns an error (404, 422, etc.), the CLI must surface the structured error details — not silently swallow them via set -e or curl -f.
+        // The agent CLI (ilmarinen-agent) communicates with the API server via HTTP. When the API returns an error (404, 422, etc.), the CLI must surface the server's reason — not silently swallow it via set -e, or replace it with a generic failure. docker:cli has only busybox wget, which is the harder of the agent's two HTTP paths to get a reason out of.
         //
-        // Each sub-test calls an agent CLI command that triggers an API error, then asserts that: (a) exit code is non-zero, (b) stderr contains error details. If error details are lost (silent failure), the step throws and the job fails.
+        // Each sub-test calls an agent CLI command that triggers an API error, then asserts that: (a) exit code is non-zero, (b) stderr carries the server's reason. If it is lost, the step throws and the job fails.
         _repo.AddFile("pipeline.csx", """
             Step("test-error-reporting")
                 .Image("docker:cli")
@@ -43,22 +43,22 @@ public class AgentCliErrorTests
                     var r = await ctx.TryShell("ilmarinen-agent info badkey");
                     if (r.ExitCode == 0)
                         throw new Exception("info: expected non-zero exit for invalid key");
-                    if (string.IsNullOrWhiteSpace(r.Stderr))
-                        throw new Exception($"info: error details lost (exit {r.ExitCode}, stderr empty)");
+                    if (!r.Stderr.Contains("badkey"))
+                        throw new Exception($"info: server's reason lost (exit {r.ExitCode}, stderr: {r.Stderr})");
 
                     // Test 2: secret not found → API returns 404
                     r = await ctx.TryShell("ilmarinen-agent secret get nonexistent_secret");
                     if (r.ExitCode == 0)
                         throw new Exception("secret: expected non-zero exit for missing secret");
-                    if (string.IsNullOrWhiteSpace(r.Stderr))
-                        throw new Exception($"secret: error details lost (exit {r.ExitCode}, stderr empty)");
+                    if (!r.Stderr.Contains("nonexistent_secret"))
+                        throw new Exception($"secret: server's reason lost (exit {r.ExitCode}, stderr: {r.Stderr})");
 
                     // Test 3: build with missing Dockerfile → API returns 422
                     r = await ctx.TryShell("ilmarinen-agent build -f /nonexistent/Dockerfile");
                     if (r.ExitCode == 0)
                         throw new Exception("build: expected non-zero exit for missing Dockerfile");
-                    if (string.IsNullOrWhiteSpace(r.Stderr))
-                        throw new Exception($"build: error details lost (exit {r.ExitCode}, stderr empty)");
+                    if (!r.Stderr.Contains("/nonexistent/Dockerfile"))
+                        throw new Exception($"build: server's reason lost (exit {r.ExitCode}, stderr: {r.Stderr})");
                 });
             """);
         _repo.Commit("Add agent CLI error reporting test");
@@ -72,6 +72,6 @@ public class AgentCliErrorTests
 
         var completedJob = await _fixture.WaitForJobCompletionAsync(jobId);
         Assert.That(completedJob.Status, Is.EqualTo(JobStatus.Success),
-            "Agent CLI should report structured error details instead of failing silently");
+            "Agent CLI should report the server's reason instead of failing silently");
     }
 }
