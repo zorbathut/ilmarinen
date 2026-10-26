@@ -1,4 +1,3 @@
-using Ilmarinen.Execution;
 using Ilmarinen.Models;
 using System.Collections.Generic;
 using System.IO;
@@ -127,8 +126,8 @@ public class AgentApiServer : IAsyncDisposable
             // Route requests
             if (method == "POST" && path == "/api/run-command")
                 await HandleRunCommand(request, response);
-            else if (method == "POST" && path == "/api/build")
-                await HandleBuild(request, response);
+            else if (method == "POST" && path == "/api/build-command")
+                await HandleBuildCommand(request, response);
             else if (method == "GET" && path.StartsWith("/api/secret/"))
                 await HandleSecret(request, response, path["/api/secret/".Length..]);
             else if (method == "GET" && path.StartsWith("/api/info/"))
@@ -137,11 +136,6 @@ public class AgentApiServer : IAsyncDisposable
             {
                 await WriteErrorResponse(response, 404, "Not found");
             }
-        }
-        catch (CommandException ex)
-        {
-            // Unprocessable Entity - command ran but failed
-            await WriteErrorResponse(response, 422, ex.Message);
         }
         catch (Exception ex)
         {
@@ -162,12 +156,13 @@ public class AgentApiServer : IAsyncDisposable
         await WriteTextResponse(response, _currentContext!.BuildDockerRunCommand(ImageRef.From(body.Image), body.Command ?? []));
     }
 
-    private async Task HandleBuild(HttpListenerRequest request, HttpListenerResponse response)
+    /// <summary>
+    /// The docker build command line for the agent to run in the step, as with <see cref="HandleRunCommand"/>: run there, the build streams its progress to the caller and exits with docker's own code, and there is no request held open for however long it takes.
+    /// </summary>
+    private async Task HandleBuildCommand(HttpListenerRequest request, HttpListenerResponse response)
     {
         var body = await ReadJsonBody<BuildRequest>(request);
-        var image = await _currentContext!.BuildImage(body.Dockerfile, body.Tag, body.Context, body.BuildArgs);
-
-        await WriteTextResponse(response, image.Reference);
+        await WriteTextResponse(response, DockerJobContext.BuildAgentBuildCommand(body.Dockerfile, body.Tag, body.Context ?? ".", body.BuildArgs));
     }
 
     private async Task HandleSecret(HttpListenerRequest request, HttpListenerResponse response, string name)

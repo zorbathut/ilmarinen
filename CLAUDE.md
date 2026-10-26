@@ -224,7 +224,7 @@ Each container receives:
 - `/usr/local/bin/ilmarinen-agent` shell script for CLI commands
 - `ILMARINEN_API` and `ILMARINEN_TOKEN` environment variables
 
-`ilmarinen-agent run` asks the API for the composed `docker run` command line (`POST /api/run-command`) and runs it in the step itself, so the nested container's output is the step's own.
+`ilmarinen-agent run` and `build` ask the API for the composed `docker run` / `docker build` command line (`POST /api/run-command`, `/api/build-command`) and run it in the step itself, so its output and exit code are the step's own. The other agent endpoints answer in plain text: the value on success, a message with a non-2xx status on failure.
 
 ### IJobContext Interface
 

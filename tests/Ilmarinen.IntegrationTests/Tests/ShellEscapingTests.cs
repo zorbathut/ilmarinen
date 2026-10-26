@@ -122,6 +122,25 @@ public class ShellEscapingTests
         Assert.That(argv, Is.EqualTo(new[] { "-z", "db", "5432" }));
     }
 
+    [Test]
+    public async Task BuildAgentBuildCommand_Success_PrintsOnlyTheTagOnStdout()
+    {
+        var (exitCode, stdout, stderr) = await RunWithStubAsync(DockerJobContext.BuildAgentBuildCommand("Dockerfile", "repo/img:v1", ".", null), "docker", "printf 'build progress\\n'");
+
+        Assert.That(exitCode, Is.EqualTo(0), stderr);
+        Assert.That(stdout, Is.EqualTo("repo/img:v1\n"));
+        Assert.That(stderr, Does.Contain("build progress"), "docker's own output still reaches the caller, on stderr");
+    }
+
+    [Test]
+    public async Task BuildAgentBuildCommand_DockerFails_ExitsWithItsCodeAndNoTag()
+    {
+        var (exitCode, stdout, _) = await RunWithStubAsync(DockerJobContext.BuildAgentBuildCommand("Dockerfile", "repo/img:v1", ".", null), "docker", "exit 3");
+
+        Assert.That(exitCode, Is.EqualTo(3));
+        Assert.That(stdout, Is.Empty);
+    }
+
     private static string ValueAfter(string[] argv, string flag)
     {
         var index = Array.IndexOf(argv, flag);
@@ -134,19 +153,25 @@ public class ShellEscapingTests
     /// </summary>
     private static async Task<string[]> ArgvThroughShellAsync(string command, string program)
     {
+        var (exitCode, stdout, stderr) = await RunWithStubAsync(command, program, "for a in \"$@\"; do printf '%s\\0' \"$a\"; done");
+
+        Assert.That(exitCode, Is.EqualTo(0), stderr);
+        return SplitNulTerminated(stdout);
+    }
+
+    /// <summary>Evaluates <paramref name="command"/> through a real /bin/sh with a stub <paramref name="program"/> on PATH whose body is <paramref name="stubBody"/>.</summary>
+    private static async Task<(int exitCode, string stdout, string stderr)> RunWithStubAsync(string command, string program, string stubBody)
+    {
         var stubDir = Path.Combine(Path.GetTempPath(), $"ilmarinen-stub-{Guid.NewGuid():N}");
         Directory.CreateDirectory(stubDir);
         try
         {
             var stubPath = Path.Combine(stubDir, program);
-            await File.WriteAllTextAsync(stubPath, "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\0' \"$a\"; done\n");
+            await File.WriteAllTextAsync(stubPath, $"#!/bin/sh\n{stubBody}\n");
             File.SetUnixFileMode(stubPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
 
             var env = new Dictionary<string, string> { ["PATH"] = stubDir + ":" + Environment.GetEnvironmentVariable("PATH") };
-            var (exitCode, stdout, stderr) = await RunShAsync(command, env);
-
-            Assert.That(exitCode, Is.EqualTo(0), stderr);
-            return SplitNulTerminated(stdout);
+            return await RunShAsync(command, env);
         }
         finally
         {

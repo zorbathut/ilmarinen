@@ -32,7 +32,7 @@ public class AgentCliErrorTests
     [Test]
     public async Task AgentCli_ApiErrors_ReportTheServersReason()
     {
-        // The agent CLI (ilmarinen-agent) communicates with the API server via HTTP. When the API returns an error (404, 422, etc.), the CLI must surface the server's reason — not silently swallow it via set -e, or replace it with a generic failure. docker:cli has only busybox wget, which is the harder of the agent's two HTTP paths to get a reason out of.
+        // The agent CLI (ilmarinen-agent) communicates with the API server via HTTP. When the API returns an error (404, 503, etc.), the CLI must surface the server's reason — not silently swallow it via set -e, or replace it with a generic failure. docker:cli has only busybox wget, which is the harder of the agent's two HTTP paths to get a reason out of.
         //
         // Each sub-test calls an agent CLI command that triggers an API error, then asserts that: (a) exit code is non-zero, (b) stderr carries the server's reason. If it is lost, the step throws and the job fails.
         _repo.AddFile("pipeline.csx", """
@@ -53,12 +53,12 @@ public class AgentCliErrorTests
                     if (!r.Stderr.Contains("nonexistent_secret"))
                         throw new Exception($"secret: server's reason lost (exit {r.ExitCode}, stderr: {r.Stderr})");
 
-                    // Test 3: build with missing Dockerfile → API returns 422
+                    // Test 3: build with missing Dockerfile → docker build itself fails
                     r = await ctx.TryShell("ilmarinen-agent build -f /nonexistent/Dockerfile");
                     if (r.ExitCode == 0)
                         throw new Exception("build: expected non-zero exit for missing Dockerfile");
-                    if (!r.Stderr.Contains("/nonexistent/Dockerfile"))
-                        throw new Exception($"build: server's reason lost (exit {r.ExitCode}, stderr: {r.Stderr})");
+                    if (!r.Stderr.Contains("/nonexistent"))
+                        throw new Exception($"build: docker's reason lost (exit {r.ExitCode}, stderr: {r.Stderr})");
                 });
             """);
         _repo.Commit("Add agent CLI error reporting test");

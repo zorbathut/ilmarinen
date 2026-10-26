@@ -148,13 +148,27 @@ public class DockerJobContext : IJobContext
 
     public async Task<ImageRef> BuildImage(string dockerfile, string? tag = null, string? context = null, IDictionary<string, string>? buildArgs = null)
     {
-        var imageTag = tag ?? $"ilmarinen-build:{Guid.NewGuid():N}";
+        var imageTag = tag ?? GenerateBuildTag();
 
         // Use docker build via exec in the container (requires docker socket mount)
         // Shell throws ShellException on failure
         await Shell(BuildDockerBuildCommand(dockerfile, imageTag, context ?? ".", buildArgs));
 
         return ImageRef.From(imageTag);
+    }
+
+    private static string GenerateBuildTag()
+    {
+        return $"ilmarinen-build:{Guid.NewGuid():N}";
+    }
+
+    /// <summary>
+    /// The command `ilmarinen-agent build` runs in the step: docker's output goes to stderr so that stdout carries only the image reference, which is what callers capture, and docker's exit code is the command's.
+    /// </summary>
+    internal static string BuildAgentBuildCommand(string dockerfile, string? tag, string context, IDictionary<string, string>? buildArgs)
+    {
+        var imageTag = tag ?? GenerateBuildTag();
+        return $"{BuildDockerBuildCommand(dockerfile, imageTag, context, buildArgs)} >&2 && printf '%s\\n' {EscapeShellArg(imageTag)}";
     }
 
     /// <summary>

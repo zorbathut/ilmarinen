@@ -192,6 +192,15 @@ public class PipelineRunner : IDisposable
             exit 1
         }
 
+        # api_exec <url> <json>: run, in place of this script, the command line the API composed. The server knows what the command needs (the workspace's host path, the job's network, the user and docker group); running it here makes its output and exit code this command's own.
+        api_exec() {
+            api "$@"
+            _command=$(cat "$BODY")
+            # exec replaces the shell, so the exit trap won't get the chance.
+            rm -f "$BODY" "$ERR"
+            exec sh -c "$_command"
+        }
+
         case "$1" in
             --help|-h|help)
                 echo "ilmarinen-agent - In-container agent CLI"
@@ -235,12 +244,7 @@ public class PipelineRunner : IDisposable
                     cmd="$cmd\"$(json_escape "$arg")\""
                 done
                 cmd="$cmd]"
-                # The server composes the docker command line and the step runs it, so the nested container's output is this command's own.
-                api "${API}/api/run-command" "{\"image\":\"$(json_escape "$image")\",\"command\":$cmd}"
-                run_command=$(cat "$BODY")
-                # exec replaces the shell, so the exit trap won't get the chance.
-                rm -f "$BODY" "$ERR"
-                exec sh -c "$run_command"
+                api_exec "${API}/api/run-command" "{\"image\":\"$(json_escape "$image")\",\"command\":$cmd}"
                 ;;
             build)
                 shift
@@ -296,8 +300,7 @@ public class PipelineRunner : IDisposable
                 [ -n "$build_args" ] && payload="$payload,\"buildArgs\":{$build_args}"
                 payload="$payload}"
 
-                api "${API}/api/build" "$payload"
-                cat "$BODY"; echo
+                api_exec "${API}/api/build-command" "$payload"
                 ;;
             *)
                 echo "Unknown command: $1" >&2

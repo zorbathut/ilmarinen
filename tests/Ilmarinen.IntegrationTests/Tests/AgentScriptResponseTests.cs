@@ -86,13 +86,15 @@ public class AgentScriptResponseTests
         Assert.That(result.Stdout, Is.Not.Empty);
     }
 
+    /// <summary>The server answers with a command line, and what that command prints and exits with is the agent's own.</summary>
     [Test]
-    public async Task Build_PrintsTheImageReference([Values] AgentShell shell)
+    public async Task Build_RunsTheCommandTheServerComposed([Values] AgentShell shell)
     {
-        var result = await AgentScriptHarness.RunAsync(shell, 200, "ilmarinen-build:abc123", ["build", "-t", "ilmarinen-build:abc123"]);
+        var result = await AgentScriptHarness.RunAsync(shell, 200, "echo building >&2; printf '%s\\n' ilmarinen-build:abc123; exit 7", ["build", "-t", "ilmarinen-build:abc123"]);
 
-        Assert.That(result.ExitCode, Is.EqualTo(0), $"stderr: {result.Stderr}");
-        Assert.That(result.RequestPath, Is.EqualTo("/api/build"));
+        Assert.That(result.ExitCode, Is.EqualTo(7));
+        Assert.That(result.RequestPath, Is.EqualTo("/api/build-command"));
         Assert.That(result.Stdout, Is.EqualTo("ilmarinen-build:abc123\n"));
+        Assert.That(result.Stderr, Does.Contain("building"));
     }
 }

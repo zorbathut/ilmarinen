@@ -63,6 +63,17 @@ public class JobOutputFidelityTests
         Assert.That(stdout, Does.Contain("rc=3\n"), "the nested exit code should reach the step");
     }
 
+    /// <summary>Callers capture a build's stdout as the image reference, so the build's own output has to go elsewhere.</summary>
+    [Test]
+    public async Task AgentBuild_StdoutIsOnlyTheImageReference()
+    {
+        var tag = $"ilmarinen-test-build:{Guid.NewGuid():N}";
+        var (stdout, stderr) = await RunStepAsync("docker:cli", $"mkdir -p /tmp/ctx && echo 'FROM alpine:latest' > /tmp/ctx/Dockerfile && cd /tmp/ctx && rc=0 && ref=$(ilmarinen-agent build -t {tag} .) || rc=$?; docker rmi {tag} >/dev/null 2>&1; echo \"ref=[$ref]\"; exit $rc");
+
+        Assert.That(stdout, Does.Contain($"ref=[{tag}]\n"));
+        Assert.That(stderr, Does.Contain("alpine"), "the build's progress is reported, on stderr");
+    }
+
     /// <summary>Runs a one-step pipeline whose step runs <paramref name="script"/> in <paramref name="image"/>, and returns the job's logged stdout and stderr.</summary>
     private async Task<(string Stdout, string Stderr)> RunStepAsync(string image, string script)
     {
