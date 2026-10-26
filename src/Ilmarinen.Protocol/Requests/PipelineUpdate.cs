@@ -15,4 +15,7 @@ public record PipelineUpdate
 
     [EnumDataType(typeof(WorkerPriority))]
     public WorkerPriority? MinWorkerPriority { get; init; }
+
+    [EnumDataType(typeof(NotificationPolicy))]
+    public NotificationPolicy? NotificationPolicy { get; init; }
 }

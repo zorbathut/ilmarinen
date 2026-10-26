@@ -210,7 +210,7 @@ public class JobScheduler
         await _logStream.NotifyJobCompletedAsync(jobId, status);
 
         var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
-        await notifications.CreateForActiveSubscribersAsync(jobId, "JobCompleted");
+        await notifications.CreateForCompletionAsync(jobId, status);
 
         _uiEvents.NotifyJobsChanged();
     }

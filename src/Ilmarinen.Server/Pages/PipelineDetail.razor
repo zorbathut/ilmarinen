@@ -67,6 +67,16 @@
                     </select>
                 </span>
 
+                <span class="detail-label">Notifications</span>
+                <span class="detail-value">
+                    <select @bind="editNotificationPolicy">
+                        @foreach (var policy in Enum.GetValues<NotificationPolicy>())
+                        {
+                            <option value="@policy">@policy</option>
+                        }
+                    </select>
+                </span>
+
                 <span class="detail-label">Created</span>
                 <span class="detail-value">@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
             </div>
@@ -120,6 +130,9 @@
 
                     <span class="detail-label">Min Worker Priority</span>
                     <span class="detail-value">@pipeline.MinWorkerPriority</span>
+
+                    <span class="detail-label">Notifications</span>
+                    <span class="detail-value">@pipeline.NotificationPolicy</span>
 
                     @if (pipeline.LastTriggeredAt != null)
                     {
@@ -229,6 +242,7 @@ else
     private string editSchedule = "";
     private bool clearingSchedule;
     private WorkerPriority editMinWorkerPriority;
+    private NotificationPolicy editNotificationPolicy;
 
     protected override async Task OnInitializedAsync()
     {
@@ -317,6 +331,7 @@ else
         editSchedule = "";
         clearingSchedule = false;
         editMinWorkerPriority = pipeline.MinWorkerPriority;
+        editNotificationPolicy = pipeline.NotificationPolicy;
         editError = null;
         editing = true;
     }
@@ -347,7 +362,8 @@ else
                 ScriptPath = editScriptPath != pipeline.ScriptPath ? editScriptPath : null,
                 ClearSchedule = clearingSchedule,
                 Schedule = clearingSchedule ? null : ConvertScheduleToUtc(editSchedule),
-                MinWorkerPriority = editMinWorkerPriority != pipeline.MinWorkerPriority ? editMinWorkerPriority : null
+                MinWorkerPriority = editMinWorkerPriority != pipeline.MinWorkerPriority ? editMinWorkerPriority : null,
+                NotificationPolicy = editNotificationPolicy != pipeline.NotificationPolicy ? editNotificationPolicy : null
             };
 
             using var scope = ScopeFactory.CreateScope();

@@ -1,6 +1,7 @@
 using Ilmarinen.Database.Entities;
 using Ilmarinen.Database;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,8 +21,22 @@ public class NotificationRepository
         _subscribers = subscribers;
     }
 
-    public async Task CreateForActiveSubscribersAsync(Guid jobId, string eventType)
+    /// <summary>
+    /// Announces a job's completion to every active subscriber, unless its pipeline's notification policy says this outcome isn't worth announcing. The policy is read now rather than when the job was created, so muting a pipeline quiets the jobs it already has in flight; a job with no pipeline, or whose pipeline is gone, is announced.
+    /// </summary>
+    public async Task CreateForCompletionAsync(Guid jobId, JobStatus status)
     {
+        var policy = await (
+            from job in _db.Jobs
+            join pipeline in _db.Pipelines on job.PipelineId equals pipeline.Id
+            where job.Id == jobId
+            select (NotificationPolicy?)pipeline.NotificationPolicy).FirstOrDefaultAsync();
+
+        if (!PolicyAllows(policy ?? NotificationPolicy.All, status))
+        {
+            return;
+        }
+
         var now = DateTime.UtcNow;
         var activeIds = await _subscribers.GetActiveSubscriberIdsAsync();
 
@@ -32,13 +47,24 @@ public class NotificationRepository
                 Id = Guid.CreateVersion7(),
                 SubscriberId = subscriberId,
                 JobId = jobId,
-                EventType = eventType,
+                EventType = "JobCompleted",
                 CreatedAt = now
             });
         }
 
         if (activeIds.Count > 0)
             await _db.SaveChangesAsync();
+    }
+
+    private static bool PolicyAllows(NotificationPolicy policy, JobStatus status)
+    {
+        return policy switch
+        {
+            NotificationPolicy.All => true,
+            NotificationPolicy.FailuresOnly => status == JobStatus.Failed,
+            NotificationPolicy.None => false,
+            _ => throw new ArgumentOutOfRangeException(nameof(policy), policy, "Unknown notification policy")
+        };
     }
 
     public async Task<List<JobNotification>> PullAsync(Guid subscriberId, int limit = 10)

@@ -199,6 +199,9 @@ namespace Ilmarinen.Database.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("NotificationPolicy")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("RepositoryId")
                         .HasColumnType("uuid");
 
