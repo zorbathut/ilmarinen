@@ -23,7 +23,7 @@ public class WorkspaceManager
     }
 
     /// <summary>
-    /// Lists persistent workspaces with their full local paths (filters out ULID-named ephemeral dirs).
+    /// Lists persistent workspaces with their full local paths (filters out GUID-named job dirs and dot-named worker state such as the git mirrors).
     /// </summary>
     public List<WorkspaceInfo> DiscoverWorkspaces()
     {
@@ -32,7 +32,7 @@ public class WorkspaceManager
             return [];
 
         return Directory.GetDirectories(workspacePath)
-            .Where(dir => !Guid.TryParse(Path.GetFileName(dir), out _))
+            .Where(dir => !Guid.TryParse(Path.GetFileName(dir), out _) && !Path.GetFileName(dir).StartsWith('.'))
             .Select(dir => new WorkspaceInfo
             {
                 Name = Path.GetFileName(dir),

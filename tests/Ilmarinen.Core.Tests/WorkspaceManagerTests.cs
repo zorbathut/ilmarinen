@@ -53,6 +53,17 @@ public class WorkspaceManagerTests
     }
 
     [Test]
+    public void DiscoverWorkspaces_FiltersOutDotDirectories()
+    {
+        Directory.CreateDirectory(Path.Combine(_tempDir, "my-project"));
+        Directory.CreateDirectory(Path.Combine(_tempDir, ".mirrors"));
+
+        var names = _manager.DiscoverWorkspaces().Select(w => w.Name).ToList();
+
+        Assert.That(names, Is.EqualTo(new[] { "my-project" }));
+    }
+
+    [Test]
     public void DiscoverWorkspaces_FiltersOutGuidDirectories()
     {
         // GUID-named dirs are ephemeral (job IDs)
