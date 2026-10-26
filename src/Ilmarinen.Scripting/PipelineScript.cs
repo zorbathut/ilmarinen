@@ -27,23 +27,18 @@ public class PipelineScript
     {
         var fullPath = Path.GetFullPath(path);
         var scriptDir = Path.GetDirectoryName(fullPath)!;
-        var code = await File.ReadAllTextAsync(fullPath);
 
-        var globals = new ScriptGlobals();
+        return await LoadAsync(fullPath, new SourceFileResolver(searchPaths: [], baseDirectory: scriptDir));
+    }
 
-        var options = ScriptOptions.Default
-            .AddReferences(typeof(Step).Assembly)
-            .AddImports(
-                "System",
-                "System.Threading.Tasks",
-                "Ilmarinen.Models",
-                "Ilmarinen.Execution")
-            .WithFilePath(fullPath)
-            .WithSourceResolver(new SourceFileResolver(searchPaths: [], baseDirectory: scriptDir));
+    /// <summary>
+    /// Load a pipeline from the script <paramref name="sourceResolver"/> serves at <paramref name="filePath"/>, with its <c>#load</c> directives resolved by the same resolver.
+    /// </summary>
+    public static async Task<PipelineScriptResult> LoadAsync(string filePath, SourceReferenceResolver sourceResolver)
+    {
+        var code = sourceResolver.ReadText(filePath).ToString();
 
-        await CSharpScript.RunAsync(code, options, globals);
-
-        return new PipelineScriptResult(globals.Steps, globals.WorkspaceConfig);
+        return await RunAsync(code, CreateOptions().WithFilePath(filePath).WithSourceResolver(sourceResolver));
     }
 
     /// <summary>
@@ -51,15 +46,23 @@ public class PipelineScript
     /// </summary>
     public static async Task<PipelineScriptResult> LoadFromStringAsync(string code)
     {
-        var globals = new ScriptGlobals();
+        return await RunAsync(code, CreateOptions());
+    }
 
-        var options = ScriptOptions.Default
+    private static ScriptOptions CreateOptions()
+    {
+        return ScriptOptions.Default
             .AddReferences(typeof(Step).Assembly)
             .AddImports(
                 "System",
                 "System.Threading.Tasks",
                 "Ilmarinen.Models",
                 "Ilmarinen.Execution");
+    }
+
+    private static async Task<PipelineScriptResult> RunAsync(string code, ScriptOptions options)
+    {
+        var globals = new ScriptGlobals();
 
         await CSharpScript.RunAsync(code, options, globals);
 
