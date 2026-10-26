@@ -149,11 +149,22 @@ public class DockerJobContext : IJobContext
     public async Task<ImageRef> BuildImage(string dockerfile, string? tag = null, string? context = null, IDictionary<string, string>? buildArgs = null)
     {
         var imageTag = tag ?? $"ilmarinen-build:{Guid.NewGuid():N}";
-        var buildContext = context ?? ".";
 
+        // Use docker build via exec in the container (requires docker socket mount)
+        // Shell throws ShellException on failure
+        await Shell(BuildDockerBuildCommand(dockerfile, imageTag, context ?? ".", buildArgs));
+
+        return ImageRef.From(imageTag);
+    }
+
+    /// <summary>
+    /// Builds the docker build command for an image built from the workspace.
+    /// </summary>
+    internal static string BuildDockerBuildCommand(string dockerfile, string imageTag, string context, IDictionary<string, string>? buildArgs)
+    {
         // Escape paths for shell (handle spaces and special characters)
         var escapedDockerfile = EscapeShellArg(dockerfile);
-        var escapedContext = EscapeShellArg(buildContext);
+        var escapedContext = EscapeShellArg(context);
 
         // Build the --build-arg flags
         var buildArgsStr = "";
@@ -165,11 +176,7 @@ public class DockerJobContext : IJobContext
             }
         }
 
-        // Use docker build via exec in the container (requires docker socket mount)
-        // Shell throws ShellException on failure
-        await Shell($"docker build -f {escapedDockerfile} -t {imageTag}{buildArgsStr} {escapedContext}");
-
-        return ImageRef.From(imageTag);
+        return $"docker build -f {escapedDockerfile} -t {imageTag}{buildArgsStr} {escapedContext}";
     }
 
     /// <summary>
@@ -205,14 +212,13 @@ public class DockerJobContext : IJobContext
     {
         // Prefix container name with network name to avoid collisions between concurrent/stale runs
         var containerName = $"{_networkName}-{name}";
-        var portsArg = ports != null ? string.Join(" ", ports.Select(p => $"-p {p}")) : "";
-        // Connect to network so services can communicate
-        var result = await TryShell($"docker run -d --name {containerName} --network {_networkName} {portsArg} {image.Reference}");
+        var command = BuildDockerServiceCommand(image, containerName, ports);
+        var result = await TryShell(command);
 
         if (!result.Success)
         {
             throw new ShellException(
-                $"docker run -d --name {containerName} --network {_networkName} {portsArg} {image.Reference}",
+                command,
                 result.ExitCode,
                 result.Stdout,
                 result.Stderr,
@@ -225,6 +231,34 @@ public class DockerJobContext : IJobContext
         return new DockerServiceHandle(containerId, containerName, this);
     }
 
+    /// <summary>
+    /// Builds the docker command that starts a service container in the background.
+    /// </summary>
+    internal string BuildDockerServiceCommand(ImageRef image, string containerName, int[]? ports)
+    {
+        var portsArg = ports != null ? string.Join(" ", ports.Select(p => $"-p {p}")) : "";
+        // Connect to network so services can communicate
+        return $"docker run -d --name {containerName} --network {_networkName} {portsArg} {image.Reference}";
+    }
+
+    /// <summary>
+    /// Builds the command one health-check attempt runs: nc for a tcp:// URL, curl otherwise.
+    /// </summary>
+    internal static string BuildHealthCheckCommand(string url)
+    {
+        if (url.StartsWith("tcp://"))
+        {
+            // TCP health check using nc (netcat)
+            var parts = url["tcp://".Length..].Split(':');
+            var host = parts[0];
+            var port = parts.Length > 1 ? parts[1] : "80";
+            return $"nc -z {host} {port}";
+        }
+
+        // HTTP health check using curl
+        return $"curl -sf {url}";
+    }
+
     public async Task WaitForHealthy(string url, TimeSpan? timeout = null)
     {
         var actualTimeout = timeout ?? TimeSpan.FromSeconds(60);
@@ -234,20 +268,7 @@ public class DockerJobContext : IJobContext
         {
             try
             {
-                CommandResult result;
-                if (url.StartsWith("tcp://"))
-                {
-                    // TCP health check using nc (netcat)
-                    var parts = url["tcp://".Length..].Split(':');
-                    var host = parts[0];
-                    var port = parts.Length > 1 ? parts[1] : "80";
-                    result = await TryShell($"nc -z {host} {port}");
-                }
-                else
-                {
-                    // HTTP health check using curl
-                    result = await TryShell($"curl -sf {url}");
-                }
+                var result = await TryShell(BuildHealthCheckCommand(url));
 
                 if (result.Success)
                     return;
