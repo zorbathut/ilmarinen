@@ -127,7 +127,7 @@ public class DockerJobContext : IJobContext
         var groupArg = _dockerSocketGid.HasValue ? $"--group-add {_dockerSocketGid.Value} " : "";
         // Set HOME and common cache dirs to /tmp when running as non-root (no passwd entry for the UID)
         var envArg = _userSpec != null ? "-e HOME=/tmp -e DOCKER_CONFIG=/tmp/.docker " : "";
-        return $"docker run --rm {userArg}{groupArg}{envArg}-v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {EscapeShellArg(image.Reference)} {cmdStr}";
+        return $"docker run --rm {userArg}{groupArg}{envArg}-v {EscapeShellArg($"{_hostWorkDir}:/workspace")} -w /workspace --network {EscapeShellArg(_networkName)} {EscapeShellArg(image.Reference)} {cmdStr}";
     }
 
     public async Task<CommandResult> Shell(string script)
@@ -176,7 +176,7 @@ public class DockerJobContext : IJobContext
             }
         }
 
-        return $"docker build -f {escapedDockerfile} -t {imageTag}{buildArgsStr} {escapedContext}";
+        return $"docker build -f {escapedDockerfile} -t {EscapeShellArg(imageTag)}{buildArgsStr} {escapedContext}";
     }
 
     /// <summary>
@@ -238,7 +238,7 @@ public class DockerJobContext : IJobContext
     {
         var portsArg = ports != null ? string.Join(" ", ports.Select(p => $"-p {p}")) : "";
         // Connect to network so services can communicate
-        return $"docker run -d --name {containerName} --network {_networkName} {portsArg} {image.Reference}";
+        return $"docker run -d --name {EscapeShellArg(containerName)} --network {EscapeShellArg(_networkName)} {portsArg} {EscapeShellArg(image.Reference)}";
     }
 
     /// <summary>
@@ -252,11 +252,11 @@ public class DockerJobContext : IJobContext
             var parts = url["tcp://".Length..].Split(':');
             var host = parts[0];
             var port = parts.Length > 1 ? parts[1] : "80";
-            return $"nc -z {host} {port}";
+            return $"nc -z {EscapeShellArg(host)} {EscapeShellArg(port)}";
         }
 
         // HTTP health check using curl
-        return $"curl -sf {url}";
+        return $"curl -sf {EscapeShellArg(url)}";
     }
 
     public async Task WaitForHealthy(string url, TimeSpan? timeout = null)

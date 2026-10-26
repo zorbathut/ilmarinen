@@ -59,25 +59,94 @@ public class ShellEscapingTests
         const string innerScript = "false; ec=$?; true; exit $ec";
         var cmdStr = context.BuildDockerRunCommand(ImageRef.From("test-image"), ["sh", "-c", innerScript]);
 
-        // A stub `docker` on PATH dumps its argv NUL-terminated, so we see exactly what the outer shell hands it.
-        var stubDir = Path.Combine(Path.GetTempPath(), $"ilmarinen-docker-stub-{Guid.NewGuid():N}");
+        var argv = await ArgvThroughShellAsync(cmdStr, "docker");
+
+        Assert.That(argv[0], Is.EqualTo("run"));
+        Assert.That(argv, Does.Contain("/hostwork:/workspace"),
+            "the bind mount must use the daemon-side host path, not the process-local path");
+        Assert.That(argv[^3..], Is.EqualTo(new[] { "sh", "-c", innerScript }),
+            "the nested command must reach docker exactly as written — no outer-shell expansion");
+    }
+
+    /// <summary>The workspace's host path is wherever the worker keeps it, which the shell has no business interpreting. A colon is left out: docker splits the bind spec on it whatever the quoting.</summary>
+    [Test]
+    public async Task BuildDockerRunCommand_HostilePathAndNetwork_ReachDockerIntact()
+    {
+        const string hostWorkDir = "/host work/$HOME/it's";
+        var context = new DockerJobContext(null!, "container", "/workspace", "/localwork", hostWorkDir, "test net", "main", "abc123", _ => null);
+
+        var argv = await ArgvThroughShellAsync(context.BuildDockerRunCommand(ImageRef.From("test-image"), ["true"]), "docker");
+
+        Assert.That(ValueAfter(argv, "-v"), Is.EqualTo($"{hostWorkDir}:/workspace"));
+        Assert.That(ValueAfter(argv, "--network"), Is.EqualTo("test net"));
+    }
+
+    [Test]
+    public async Task BuildDockerBuildCommand_HostileTag_ReachesDockerIntact()
+    {
+        const string tag = "repo/img:v1;echo pwned $(id)";
+
+        var argv = await ArgvThroughShellAsync(DockerJobContext.BuildDockerBuildCommand("Dockerfile", tag, ".", null), "docker");
+
+        Assert.That(ValueAfter(argv, "-t"), Is.EqualTo(tag));
+        Assert.That(argv[^1], Is.EqualTo("."));
+    }
+
+    [Test]
+    public async Task BuildDockerServiceCommand_HostileNameAndImage_ReachDockerIntact()
+    {
+        var context = new DockerJobContext(null!, "container", "/workspace", "/localwork", "/hostwork", "testnet", "main", "abc123", _ => null);
+
+        var argv = await ArgvThroughShellAsync(context.BuildDockerServiceCommand(ImageRef.From("img;echo pwned"), "testnet-my svc", [5432]), "docker");
+
+        Assert.That(ValueAfter(argv, "--name"), Is.EqualTo("testnet-my svc"));
+        Assert.That(argv[^1], Is.EqualTo("img;echo pwned"));
+    }
+
+    /// <summary>A query string's &amp; would otherwise background the check and report healthy on the spot.</summary>
+    [Test]
+    public async Task BuildHealthCheckCommand_UrlWithQueryString_ReachesCurlIntact()
+    {
+        const string url = "http://svc:8080/health?a=1&b=2";
+
+        var argv = await ArgvThroughShellAsync(DockerJobContext.BuildHealthCheckCommand(url), "curl");
+
+        Assert.That(argv, Is.EqualTo(new[] { "-sf", url }));
+    }
+
+    [Test]
+    public async Task BuildHealthCheckCommand_TcpUrl_SplitsHostAndPortForNc()
+    {
+        var argv = await ArgvThroughShellAsync(DockerJobContext.BuildHealthCheckCommand("tcp://db:5432"), "nc");
+
+        Assert.That(argv, Is.EqualTo(new[] { "-z", "db", "5432" }));
+    }
+
+    private static string ValueAfter(string[] argv, string flag)
+    {
+        var index = Array.IndexOf(argv, flag);
+        Assert.That(index, Is.GreaterThanOrEqualTo(0), $"{flag} missing from {string.Join(" | ", argv)}");
+        return argv[index + 1];
+    }
+
+    /// <summary>
+    /// Evaluates <paramref name="command"/> through a real /bin/sh with a stub <paramref name="program"/> on PATH that dumps its argv NUL-terminated, so we see exactly what the shell hands it.
+    /// </summary>
+    private static async Task<string[]> ArgvThroughShellAsync(string command, string program)
+    {
+        var stubDir = Path.Combine(Path.GetTempPath(), $"ilmarinen-stub-{Guid.NewGuid():N}");
         Directory.CreateDirectory(stubDir);
         try
         {
-            var stubPath = Path.Combine(stubDir, "docker");
+            var stubPath = Path.Combine(stubDir, program);
             await File.WriteAllTextAsync(stubPath, "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\0' \"$a\"; done\n");
             File.SetUnixFileMode(stubPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
 
             var env = new Dictionary<string, string> { ["PATH"] = stubDir + ":" + Environment.GetEnvironmentVariable("PATH") };
-            var (exitCode, stdout, stderr) = await RunShAsync(cmdStr, env);
+            var (exitCode, stdout, stderr) = await RunShAsync(command, env);
 
             Assert.That(exitCode, Is.EqualTo(0), stderr);
-            var argv = SplitNulTerminated(stdout);
-            Assert.That(argv[0], Is.EqualTo("run"));
-            Assert.That(argv, Does.Contain("/hostwork:/workspace"),
-                "the bind mount must use the daemon-side host path, not the process-local path");
-            Assert.That(argv[^3..], Is.EqualTo(new[] { "sh", "-c", innerScript }),
-                "the nested command must reach docker exactly as written — no outer-shell expansion");
+            return SplitNulTerminated(stdout);
         }
         finally
         {
