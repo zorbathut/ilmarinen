@@ -117,6 +117,8 @@ public static class AgentScriptHarness
         {
             AgentShell.BusyboxAlpine => ["alpine:latest", "sh", "/ilmarinen-agent"],
             AgentShell.DebianDash => ["buildpack-deps:bookworm-curl", "sh", "/ilmarinen-agent"],
+            // The script prefers curl, so taking it away is what puts it on GNU wget.
+            AgentShell.DebianDashWget => ["buildpack-deps:bookworm-curl", "sh", "-c", "rm -f /usr/bin/curl && exec sh /ilmarinen-agent \"$@\"", "--"],
             _ => throw new ArgumentOutOfRangeException(nameof(shell), shell, "not a container shell")
         };
     }
@@ -216,5 +218,8 @@ public enum AgentShell
     BusyboxAlpine,
 
     /// <summary>dash with curl, as in Debian- and Ubuntu-based images.</summary>
-    DebianDash
+    DebianDash,
+
+    /// <summary>dash with GNU wget and no curl.</summary>
+    DebianDashWget
 }

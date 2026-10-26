@@ -157,12 +157,12 @@ public class PipelineRunner : IDisposable
                 esac
             }
         elif command -v wget >/dev/null 2>&1; then
-            # wget keeps no body for an error response, so whatever $BODY holds after a failure is a truncated success and must not be shown. The server puts its reason in the status line instead, which busybox wget reports even under -q.
+            # wget keeps no body for an error response, so whatever $BODY holds after a failure is a truncated success and must not be shown. The server puts its reason in the status line instead. wget runs at its normal verbosity, into $ERR, which is shown only on failure: that is where both wgets report the status line and their own complaints (GNU's -q or -nv would hide them). One try only: GNU wget otherwise repeats a request whose connection dropped, POSTs included.
             http() {
                 if [ $# -gt 1 ]; then
-                    wget -q -O "$BODY" --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>"$ERR" || return 1
+                    wget --tries=1 -O "$BODY" --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>"$ERR" || return 1
                 else
-                    wget -q -O "$BODY" --header="Authorization: Bearer $TOKEN" "$1" 2>"$ERR" || return 1
+                    wget --tries=1 -O "$BODY" --header="Authorization: Bearer $TOKEN" "$1" 2>"$ERR" || return 1
                 fi
             }
         else

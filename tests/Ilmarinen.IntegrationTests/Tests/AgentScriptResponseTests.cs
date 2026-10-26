@@ -1,6 +1,7 @@
 using Ilmarinen.IntegrationTests.Fixtures;
 using NUnit.Framework;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 
@@ -51,6 +52,7 @@ public class AgentScriptResponseTests
 
         Assert.That(result.ExitCode, Is.Not.EqualTo(0));
         Assert.That(result.Stdout + result.Stderr, Does.Not.Contain("partial-secret"));
+        Assert.That(result.Stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries), Has.Length.GreaterThan(1), "the client's own account of the failure is shown, not just that the request failed");
     }
 
     /// <summary>An error from the run-command endpoint must not leave the agent exec'ing whatever the body said.</summary>
