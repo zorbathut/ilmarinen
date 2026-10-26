@@ -1,4 +1,4 @@
-using Ilmarinen.Server;
+using Ilmarinen.Protocol;
 using NUnit.Framework;
 using System.Linq;
 

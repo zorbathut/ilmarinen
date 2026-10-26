@@ -1,5 +1,6 @@
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;

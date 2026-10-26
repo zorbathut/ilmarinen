@@ -4,7 +4,6 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Controllers;
 using Ilmarinen.Server.Services;
-using Ilmarinen.Server;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;

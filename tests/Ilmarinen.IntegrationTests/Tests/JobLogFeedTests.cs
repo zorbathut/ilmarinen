@@ -1,7 +1,6 @@
 using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
-using Ilmarinen.Server;
 using Ilmarinen.Server.Controllers;
 using Ilmarinen.Server.Services;
 using Microsoft.Extensions.DependencyInjection;

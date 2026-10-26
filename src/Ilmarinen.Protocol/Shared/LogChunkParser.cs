@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json;
 using System;
 
-namespace Ilmarinen.Server;
+namespace Ilmarinen.Protocol;
 
 /// <summary>
 /// One piece of output from a job: "o" for stdout, "e" for stderr, "m" for metadata (pipeline step markers and worker progress lines).
@@ -19,7 +19,7 @@ public record LogEntry
 /// line — into the output entries it carries. Lines of any other type are not output and are
 /// dropped.
 ///
-/// wwwroot/log-viewer.js decodes the same format in the browser, for chunks the feed serves
+/// The server's wwwroot/log-viewer.js decodes the same format in the browser, for chunks the feed serves
 /// verbatim; the two have to agree on which types count as output.
 /// </summary>
 public static class LogChunkParser
