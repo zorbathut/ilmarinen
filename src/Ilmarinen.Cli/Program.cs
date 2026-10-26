@@ -156,25 +156,7 @@ public class Commands
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
         using var http = new HttpClient();
-
-        // Check build compatibility with server
-        try
-        {
-            var versionResponse = await http.GetFromJsonAsync<VersionInfo>($"{server}/api/version", jsonOptions);
-            if (versionResponse?.ProtocolHash != ProtocolVersion.Hash)
-            {
-                Console.Error.WriteLine($"Warning: Protocol mismatch with server.");
-                Console.Error.WriteLine($"  CLI:    {ProtocolVersion.Hash}");
-                Console.Error.WriteLine($"  Server: {versionResponse?.ProtocolHash ?? "unknown"}");
-                Console.Error.WriteLine("Rebuild CLI and server with the same protocol definitions.");
-                if (Environment.GetEnvironmentVariable("DEBUG") != null)
-                    Console.Error.WriteLine($"CLI protocol hash input:\n{ProtocolVersion.HashInput}");
-            }
-        }
-        catch (HttpRequestException)
-        {
-            // Older server without version endpoint - proceed anyway
-        }
+        await CheckProtocolAsync(http, server, jsonOptions);
 
         var submission = new JobSubmission
         {
@@ -198,6 +180,33 @@ public class Commands
         var jobUrl = $"{server.TrimEnd('/')}/jobs/{result?.Id}";
         Console.WriteLine($"Job submitted: {jobUrl}");
         return 0;
+    }
+
+    /// <summary>Warns, without failing the command, when the server's protocol differs from this CLI's.</summary>
+    private static async Task CheckProtocolAsync(HttpClient http, string server, JsonSerializerOptions jsonOptions)
+    {
+        VersionInfo? versionResponse;
+        try
+        {
+            versionResponse = await http.GetFromJsonAsync<VersionInfo>($"{server}/api/version", jsonOptions);
+        }
+        catch (HttpRequestException)
+        {
+            // Older server without version endpoint - proceed anyway
+            return;
+        }
+
+        if (versionResponse?.ProtocolHash != ProtocolVersion.Hash)
+        {
+            Console.Error.WriteLine($"Warning: Protocol mismatch with server.");
+            Console.Error.WriteLine($"  CLI:    {ProtocolVersion.Hash}");
+            Console.Error.WriteLine($"  Server: {versionResponse?.ProtocolHash ?? "unknown"}");
+            Console.Error.WriteLine("Rebuild CLI and server with the same protocol definitions.");
+            if (Environment.GetEnvironmentVariable("DEBUG") != null)
+            {
+                Console.Error.WriteLine($"CLI protocol hash input:\n{ProtocolVersion.HashInput}");
+            }
+        }
     }
 
     /// <summary>Get job status</summary>
