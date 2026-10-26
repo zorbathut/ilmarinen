@@ -214,7 +214,7 @@ Step("build")
 1. CLI submits job via `POST /api/jobs` with `JobSubmission` (RepoUrl, Ref, ScriptPath)
 2. Server stores job in PostgreSQL, emits to job queue
 3. Worker receives job assignment via SignalR
-4. Worker clones repo, loads pipeline script, executes locally
+4. Worker fetches into its per-repo bare mirror (`<WorkspacePath>/.mirrors`), compiles the pipeline script straight from the pinned commit, clones the job checkout locally from the mirror (or updates the persistent workspace from it), and executes locally
 5. Worker streams logs and status updates back via SignalR
 
 ### Agent Communication

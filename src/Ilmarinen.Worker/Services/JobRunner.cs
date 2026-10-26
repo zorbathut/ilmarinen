@@ -5,6 +5,7 @@ using Ilmarinen.Protocol;
 using Ilmarinen.Scripting;
 using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -24,6 +25,7 @@ public class JobRunner
     private readonly BufferedHubSender _sender;
     private readonly ILogger _logger;
     private readonly LogCollector _logCollector;
+    private bool _mirrorRebuilt;
 
     public JobRunner(
         WorkerConfig config,
@@ -43,107 +45,32 @@ public class JobRunner
 
     public async Task<JobResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
-        // Start with a temporary directory to clone and read the script
-        var tempDir = Path.Combine(_config.WorkspacePath, _job.Id.ToString());
-        string? workDir = null;
-        WorkspaceConfig? workspaceConfig = null;
+        // New checkouts are built here and, for a persistent workspace, moved into place once complete
+        var buildDir = Path.Combine(_config.WorkspacePath, _job.Id.ToString());
+        PreparedJob? prepared = null;
 
         try
         {
-            // 1. Clone to temp directory to read the script
-            _logger.LogInformation("Cloning {RepoUrl}...", _job.RepoUrl);
-            CloneRepository(tempDir);
-
-            // 2. Checkout ref and pin the resolved commit SHA
-            _logger.LogInformation("Checking out {Ref}...", _job.Ref);
-            var commitSha = CheckoutRef(tempDir);
-            _logger.LogInformation("Resolved {Ref} to {CommitSha}", _job.Ref, commitSha);
-
-            // Report resolved commit to server. An unreachable server delays the report; it must not fail the job.
-            await _sender.SendOrBufferAsync("ReportCommit", _job.Id, commitSha);
-
-            // 3. Load pipeline script to get workspace config
-            var scriptPath = Path.Combine(tempDir, _job.ScriptPath);
-            if (!File.Exists(scriptPath))
+            prepared = await PrepareAsync(buildDir);
+            if (prepared == null)
             {
-                _logger.LogError("Pipeline script not found: {ScriptPath}", _job.ScriptPath);
                 return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
             }
 
-            _logger.LogInformation("Loading pipeline: {ScriptPath}", _job.ScriptPath);
-            var scriptResult = await PipelineScript.LoadAsync(scriptPath);
-            workspaceConfig = scriptResult.Workspace;
+            var workDir = prepared.WorkDir;
 
-            if (scriptResult.Steps.Count == 0)
-            {
-                _logger.LogError("Pipeline has no steps");
-                return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
-            }
-
-            // 4. Determine workspace path and prepare it
-            if (workspaceConfig != null)
-            {
-                // Persistent workspace - validate name is safe (defense-in-depth)
-                var wsName = workspaceConfig.Name;
-                if (!WorkspaceConfig.IsValidName(wsName, out var validationError))
-                {
-                    _logger.LogError("Invalid workspace name rejected: {WorkspaceName} - {Error}",
-                        wsName, validationError);
-                    return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
-                }
-
-                workDir = Path.Combine(_config.WorkspacePath, wsName);
-
-                // Final safety check: ensure resolved path is under workspace root
-                var resolvedPath = Path.GetFullPath(workDir);
-                var workspaceRoot = Path.GetFullPath(_config.WorkspacePath);
-                if (!resolvedPath.StartsWith(workspaceRoot + Path.DirectorySeparatorChar) &&
-                    resolvedPath != workspaceRoot)
-                {
-                    _logger.LogError(
-                        "Workspace path escape detected: {ResolvedPath} is not under {WorkspaceRoot}",
-                        resolvedPath, workspaceRoot);
-                    return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
-                }
-
-                _logger.LogInformation("Using persistent workspace: {WorkspaceName}", wsName);
-                _workspaceManager.SetActiveWorkspace(wsName);
-
-                if (Directory.Exists(workDir))
-                {
-                    // Workspace exists - delete temp, use existing workspace
-                    _logger.LogInformation("Reusing existing workspace at {WorkDir}", workDir);
-                    DeleteDirectory(tempDir);
-
-                    // Validate and update existing workspace, using pinned commit SHA
-                    WorkspaceGitHelper.PrepareWorkspace(workDir, _job.RepoUrl, commitSha, _job.GitToken);
-                }
-                else
-                {
-                    // Workspace doesn't exist - move temp to workspace path
-                    _logger.LogInformation("Creating new workspace at {WorkDir}", workDir);
-                    Directory.Move(tempDir, workDir);
-                }
-            }
-            else
-            {
-                // Ephemeral workspace - use temp directory
-                workDir = tempDir;
-                _logger.LogInformation("Using ephemeral workspace at {WorkDir}", workDir);
-            }
-
-            // 5. Verify the working directory is at the pinned commit
+            // Verify the working directory is at the pinned commit
             var actualSha = GetHeadSha(workDir);
-            if (actualSha != commitSha)
+            if (actualSha != prepared.CommitSha)
             {
                 _logger.LogError(
                     "Commit mismatch: expected {Expected} but workspace is at {Actual}",
-                    commitSha, actualSha);
+                    prepared.CommitSha, actualSha);
                 return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
             }
 
-            // 6. Run pipeline with log streaming and artifact upload
-            _logger.LogInformation("git describe: {Description}", DescribeHead(workDir));
+            // Run pipeline with log streaming and artifact upload
+            _logger.LogInformation("git describe: {Description}", prepared.Description);
 
             // Compute host path for Docker bind mounts (may differ when running in Docker)
             var hostWorkDir = Path.Combine(_config.HostWorkspacePath, Path.GetFileName(workDir)!);
@@ -154,7 +81,7 @@ public class JobRunner
                 _config.WorkerContainerId,
                 artifactSaver: artifactSaver,
                 onOutput: _logCollector.AsCallback());
-            var success = await runner.RunAsync(scriptResult.Steps, cancellationToken);
+            var success = await runner.RunAsync(prepared.Steps, cancellationToken);
 
             return new JobResult
             {
@@ -167,11 +94,11 @@ public class JobRunner
             _workspaceManager.SetActiveWorkspace(null);
 
             // Cleanup: only delete ephemeral workspaces
-            if (workspaceConfig == null && workDir != null)
+            if (prepared != null && prepared.Ephemeral)
             {
                 try
                 {
-                    DeleteDirectory(workDir);
+                    DeleteDirectory(prepared.WorkDir);
                 }
                 catch (Exception ex)
                 {
@@ -179,41 +106,150 @@ public class JobRunner
                 }
             }
 
-            // Also cleanup temp dir if it still exists (error case before move)
-            if (workDir != tempDir && Directory.Exists(tempDir))
+            // Also cleanup the build directory if it still exists (error case before move)
+            if (Directory.Exists(buildDir) && (prepared == null || prepared.WorkDir != buildDir))
             {
                 try
                 {
-                    DeleteDirectory(tempDir);
+                    DeleteDirectory(buildDir);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to cleanup temp directory");
+                    _logger.LogWarning(ex, "Failed to cleanup build directory");
                 }
             }
         }
     }
 
-    private void CloneRepository(string workDir)
-    {
-        var options = new CloneOptions();
+    private sealed record PreparedJob(string WorkDir, bool Ephemeral, string CommitSha, IReadOnlyList<Step<object?>> Steps, string Description);
 
-        if (!string.IsNullOrEmpty(_job.GitToken))
+    private sealed record PipelineAtCommit(string CommitSha, PipelineScriptResult? Script);
+
+    /// <summary>
+    /// Brings the mirror up to date, resolves the ref, compiles the script straight from the commit, and readies the working directory it asks for. Returns null, having logged why, when the job can't run.
+    /// </summary>
+    private async Task<PreparedJob?> PrepareAsync(string buildDir)
+    {
+        // 1. Fetch into the repository's mirror, pin the ref, and compile the script from that commit
+        _logger.LogInformation("Fetching {RepoUrl}...", _job.RepoUrl);
+        var mirrorPath = GitMirror.Sync(_config.WorkspacePath, _job.RepoUrl, _job.GitToken, _logger);
+        var pipeline = await ReadingMirrorAsync(() => LoadPipelineAsync(mirrorPath));
+        var commitSha = pipeline.CommitSha;
+
+        // Report resolved commit to server. An unreachable server delays the report; it must not fail the job.
+        await _sender.SendOrBufferAsync("ReportCommit", _job.Id, commitSha);
+
+        if (pipeline.Script == null)
         {
-            options.FetchOptions.CredentialsProvider = (url, user, types) =>
-                new UsernamePasswordCredentials
-                {
-                    Username = "git",
-                    Password = _job.GitToken
-                };
+            return null;
         }
 
-        Repository.Clone(_job.RepoUrl, workDir, options);
+        var workspaceConfig = pipeline.Script.Workspace;
+        if (pipeline.Script.Steps.Count == 0)
+        {
+            _logger.LogError("Pipeline has no steps");
+            return null;
+        }
+
+        // 2. Ready the working directory
+        if (workspaceConfig == null)
+        {
+            _logger.LogInformation("Using ephemeral workspace at {WorkDir}", buildDir);
+            var description = await ReadingMirrorAsync(() => Task.FromResult(CloneFromMirror(mirrorPath, buildDir, commitSha)));
+            return new PreparedJob(buildDir, true, commitSha, pipeline.Script.Steps, description);
+        }
+
+        // Persistent workspace - validate name is safe (defense-in-depth)
+        var wsName = workspaceConfig.Name;
+        if (!WorkspaceConfig.IsValidName(wsName, out var validationError))
+        {
+            _logger.LogError("Invalid workspace name rejected: {WorkspaceName} - {Error}",
+                wsName, validationError);
+            return null;
+        }
+
+        var workDir = Path.Combine(_config.WorkspacePath, wsName);
+
+        // Final safety check: ensure resolved path is under workspace root
+        var resolvedPath = Path.GetFullPath(workDir);
+        var workspaceRoot = Path.GetFullPath(_config.WorkspacePath);
+        if (!resolvedPath.StartsWith(workspaceRoot + Path.DirectorySeparatorChar) &&
+            resolvedPath != workspaceRoot)
+        {
+            _logger.LogError(
+                "Workspace path escape detected: {ResolvedPath} is not under {WorkspaceRoot}",
+                resolvedPath, workspaceRoot);
+            return null;
+        }
+
+        _logger.LogInformation("Using persistent workspace: {WorkspaceName}", wsName);
+        _workspaceManager.SetActiveWorkspace(wsName);
+
+        if (Directory.Exists(workDir))
+        {
+            // Only the fetch reads the mirror; the reset and checkout fail on the workspace's own state, which a new mirror wouldn't change
+            _logger.LogInformation("Reusing existing workspace at {WorkDir}", workDir);
+            WorkspaceGitHelper.ResetWorkspace(workDir, _job.RepoUrl);
+            await ReadingMirrorAsync(() =>
+            {
+                WorkspaceGitHelper.FetchIntoWorkspace(workDir, mirrorPath);
+                return Task.FromResult(true);
+            });
+            WorkspaceGitHelper.CheckoutCommit(workDir, commitSha);
+            return new PreparedJob(workDir, false, commitSha, pipeline.Script.Steps, DescribeHead(workDir));
+        }
+
+        // Built aside and moved in whole, so an interrupted build never leaves a half-made workspace for the next job to reuse
+        _logger.LogInformation("Creating new workspace at {WorkDir}", workDir);
+        var newDescription = await ReadingMirrorAsync(() => Task.FromResult(CloneFromMirror(mirrorPath, buildDir, commitSha)));
+        Directory.Move(buildDir, workDir);
+        return new PreparedJob(workDir, false, commitSha, pipeline.Script.Steps, newDescription);
     }
 
-    private string CheckoutRef(string workDir)
+    /// <summary>
+    /// Runs <paramref name="read"/>, which reads the mirror's objects; if they turn out to be damaged, rebuilds the mirror and runs it again. One rebuild per job: damage that survives it is reported, not chased.
+    /// </summary>
+    private async Task<T> ReadingMirrorAsync<T>(Func<Task<T>> read)
     {
-        return WorkspaceGitHelper.CheckoutRef(workDir, _job.Ref);
+        try
+        {
+            return await read();
+        }
+        catch (Exception ex) when (!_mirrorRebuilt && GitMirror.IsDamage(ex))
+        {
+            _logger.LogWarning(ex, "Reading the mirror of {RepoUrl} failed; rebuilding it", _job.RepoUrl);
+            _mirrorRebuilt = true;
+            GitMirror.Rebuild(_config.WorkspacePath, _job.RepoUrl, _job.GitToken);
+            return await read();
+        }
+    }
+
+    private async Task<PipelineAtCommit> LoadPipelineAsync(string mirrorPath)
+    {
+        using var mirror = new Repository(mirrorPath);
+        var commit = GitMirror.Resolve(mirror, _job.Ref);
+        _logger.LogInformation("Resolved {Ref} to {CommitSha}", _job.Ref, commit.Sha);
+
+        var sources = new GitTreeSourceResolver(commit);
+        var scriptPath = sources.FilePathFor(_job.ScriptPath);
+        if (scriptPath == null || !sources.Exists(scriptPath))
+        {
+            _logger.LogError("Pipeline script not found: {ScriptPath}", _job.ScriptPath);
+            return new PipelineAtCommit(commit.Sha, null);
+        }
+
+        _logger.LogInformation("Loading pipeline: {ScriptPath}", _job.ScriptPath);
+        return new PipelineAtCommit(commit.Sha, await PipelineScript.LoadAsync(scriptPath, sources));
+    }
+
+    /// <summary>
+    /// Clones the mirror into <paramref name="path"/> at <paramref name="commitSha"/> and returns its <c>git describe</c>, which walks history the local clone copied without checking.
+    /// </summary>
+    private string CloneFromMirror(string mirrorPath, string path, string commitSha)
+    {
+        DeleteDirectory(path);
+        WorkspaceGitHelper.CloneWorkspace(mirrorPath, path, _job.RepoUrl, commitSha);
+        return DescribeHead(path);
     }
 
     private static string GetHeadSha(string workDir)

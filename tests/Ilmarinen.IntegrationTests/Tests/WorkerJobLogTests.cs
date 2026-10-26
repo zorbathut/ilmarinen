@@ -77,8 +77,8 @@ public class WorkerJobLogTests
 
         Assert.That(completedJob.Status, Is.EqualTo(JobStatus.Success));
 
-        var logs = await WaitForLogContentAsync(jobId, "Cloning");
-        Assert.That(logs, Does.Contain("Cloning"));
+        var logs = await WaitForLogContentAsync(jobId, "Fetching");
+        Assert.That(logs, Does.Contain("Fetching"));
         Assert.That(logs, Does.Contain("Hello from integration test!"));
     }
 
