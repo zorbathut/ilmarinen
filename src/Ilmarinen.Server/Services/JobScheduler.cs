@@ -192,6 +192,10 @@ public class JobScheduler
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        // Persist the buffered tail before the status turns terminal: a log reader stops at a terminal status plus an empty read, and the completion flush below drops the buffer before its insert lands, where the reader's own flush can't see it.
+        await _logStream.FlushJobAsync(jobId);
+
         if (!await jobs.UpdateStatusAsync(jobId, status))
         {
             await _logStream.FlushAsync(jobId);
@@ -219,6 +223,9 @@ public class JobScheduler
 
         // Find the worker running this job before cancelling (status change clears the assignment)
         var connectionId = workers.FindConnectionIdByJobId(jobId);
+
+        // The same ordering as CompleteJobAsync, for the same reason.
+        await _logStream.FlushJobAsync(jobId);
 
         var cancelled = await jobs.TryCancelAsync(jobId);
         if (!cancelled)
