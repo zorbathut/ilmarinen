@@ -1,8 +1,8 @@
 using Ilmarinen.Worker.Services;
-using LibGit2Sharp;
 using NUnit.Framework;
-using System;
 using System.IO;
+using System;
+using static Ilmarinen.Core.Tests.GitTestRepos;
 
 namespace Ilmarinen.Core.Tests;
 
@@ -136,81 +136,6 @@ public class WorkspaceGitHelperTests
 
     private void InitRemote()
     {
-        Repository.Init(_remoteDir);
-        using var repo = new Repository(_remoteDir);
-        repo.Refs.UpdateTarget("HEAD", "refs/heads/master");
-    }
-
-    private static string WriteAndCommit(string repoPath, string relPath, string content)
-    {
-        var fullPath = Path.Combine(repoPath, relPath);
-        File.WriteAllText(fullPath, content);
-        using var repo = new Repository(repoPath);
-        Commands.Stage(repo, relPath);
-        var sig = new Signature("Test", "test@example.com", DateTimeOffset.UtcNow);
-        var commit = repo.Commit($"set {relPath}={content}", sig, sig);
-        return commit.Sha;
-    }
-
-    private static void TagAt(string repoPath, string tagName, string sha)
-    {
-        using var repo = new Repository(repoPath);
-        repo.ApplyTag(tagName, sha);
-    }
-
-    private static void DeleteTag(string repoPath, string tagName)
-    {
-        using var repo = new Repository(repoPath);
-        repo.Tags.Remove(tagName);
-    }
-
-    private static void CreateBranch(string repoPath, string branchName, string sha)
-    {
-        using var repo = new Repository(repoPath);
-        var commit = repo.Lookup<Commit>(sha);
-        repo.CreateBranch(branchName, commit);
-    }
-
-    private static void UpdateBranch(string repoPath, string branchName, string sha)
-    {
-        using var repo = new Repository(repoPath);
-        repo.Refs.UpdateTarget($"refs/heads/{branchName}", sha);
-    }
-
-    private static void DeleteBranch(string repoPath, string branchName)
-    {
-        using var repo = new Repository(repoPath);
-        repo.Branches.Remove(branchName);
-    }
-
-    private static string? LookupTag(string repoPath, string tagName)
-    {
-        using var repo = new Repository(repoPath);
-        var tag = repo.Tags[tagName];
-        return tag?.Target.Sha;
-    }
-
-    private static string? LookupRemoteBranch(string repoPath, string branchName)
-    {
-        using var repo = new Repository(repoPath);
-        var branch = repo.Branches[$"origin/{branchName}"];
-        return branch?.Tip?.Sha;
-    }
-
-    private static void ForceDeleteDirectory(string path)
-    {
-        var dir = new DirectoryInfo(path);
-        foreach (var sub in dir.GetDirectories("*", SearchOption.AllDirectories))
-        {
-            foreach (var file in sub.GetFiles())
-            {
-                file.Attributes = FileAttributes.Normal;
-            }
-        }
-        foreach (var file in dir.GetFiles("*", SearchOption.AllDirectories))
-        {
-            file.Attributes = FileAttributes.Normal;
-        }
-        Directory.Delete(path, recursive: true);
+        InitRepo(_remoteDir);
     }
 }
