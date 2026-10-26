@@ -6,7 +6,6 @@ using Ilmarinen.Models;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Text;
 using System.Threading.Tasks;
 using System;
@@ -119,58 +118,6 @@ public class DockerJobContext : IJobContext
     }
 
     /// <summary>
-    /// Executes a command with streaming output to the provided stream in NDJSON format.
-    /// Each line is a JSON object: {"t":"o","d":"..."} for stdout, {"t":"e","d":"..."} for stderr,
-    /// or {"t":"x","c":0} for exit.
-    /// </summary>
-    private async Task<CommandResult> TryExecStreaming(Stream outputStream, string command, params string[] args)
-    {
-        var cmd = new List<string> { command };
-        cmd.AddRange(args);
-
-        var stdoutBuilder = new StringBuilder();
-        var stderrBuilder = new StringBuilder();
-        var writer = new StreamWriter(outputStream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
-
-        var exitCode = await DockerExec.RunAsync(_client, _containerId, cmd, _containerWorkDir, _userSpec, async (isStdout, chunk) =>
-        {
-            // Write NDJSON line to stream
-            var json = JsonSerializer.Serialize(new { t = isStdout ? "o" : "e", d = chunk });
-            await writer.WriteLineAsync(json);
-
-            // Accumulate for final CommandResult
-            if (isStdout)
-            {
-                stdoutBuilder.Append(chunk);
-                Console.Write(chunk);
-                _onOutput?.Invoke("o", chunk);
-            }
-            else
-            {
-                stderrBuilder.Append(chunk);
-                Console.Error.Write(chunk);
-                _onOutput?.Invoke("e", chunk);
-            }
-        });
-
-        // Write exit message
-        var exitJson = JsonSerializer.Serialize(new { t = "x", c = exitCode });
-        await writer.WriteLineAsync(exitJson);
-
-        return new CommandResult
-        {
-            ExitCode = exitCode,
-            Stdout = stdoutBuilder.ToString(),
-            Stderr = stderrBuilder.ToString()
-        };
-    }
-
-    private Task<CommandResult> TryShellStreaming(Stream outputStream, string script)
-    {
-        return TryExecStreaming(outputStream, "/bin/sh", "-c", script);
-    }
-
-    /// <summary>
     /// Builds the docker run command with user/group and workspace settings.
     /// </summary>
     internal string BuildDockerRunCommand(ImageRef image, string[] command)
@@ -181,29 +128,6 @@ public class DockerJobContext : IJobContext
         // Set HOME and common cache dirs to /tmp when running as non-root (no passwd entry for the UID)
         var envArg = _userSpec != null ? "-e HOME=/tmp -e DOCKER_CONFIG=/tmp/.docker " : "";
         return $"docker run --rm {userArg}{groupArg}{envArg}-v {_hostWorkDir}:/workspace -w /workspace --network {_networkName} {EscapeShellArg(image.Reference)} {cmdStr}";
-    }
-
-    /// <summary>
-    /// Runs a nested container with streaming output to the provided stream.
-    /// </summary>
-    private async Task<CommandResult> TryRunStreaming(Stream outputStream, ImageRef image, params string[] command)
-    {
-        return await TryShellStreaming(outputStream, BuildDockerRunCommand(image, command));
-    }
-
-    public async Task<CommandResult> RunStreaming(Stream outputStream, ImageRef image, params string[] command)
-    {
-        var result = await TryRunStreaming(outputStream, image, command);
-        if (!result.Success)
-        {
-            throw new NestedContainerException(
-                image.Reference,
-                command,
-                result.ExitCode,
-                result.Stdout,
-                result.Stderr);
-        }
-        return result;
     }
 
     public async Task<CommandResult> Shell(string script)

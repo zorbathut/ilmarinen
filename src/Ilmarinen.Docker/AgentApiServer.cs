@@ -127,8 +127,8 @@ public class AgentApiServer : IAsyncDisposable
             }
 
             // Route requests
-            if (method == "POST" && path == "/api/run")
-                await HandleRun(request, response);
+            if (method == "POST" && path == "/api/run-command")
+                await HandleRunCommand(request, response);
             else if (method == "POST" && path == "/api/build")
                 await HandleBuild(request, response);
             else if (method == "GET" && path.StartsWith("/api/secret/"))
@@ -141,21 +141,9 @@ public class AgentApiServer : IAsyncDisposable
                 await WriteJsonResponse(response, new { error = "Not found" });
             }
         }
-        catch (NestedContainerException ex)
-        {
-            response.StatusCode = 422; // Unprocessable Entity - command ran but failed
-            await WriteJsonResponse(response, new ErrorResponse(
-                ex.Message,
-                ex.GetType().Name,
-                ex.ExitCode,
-                ex.Stdout,
-                ex.Stderr,
-                ex.NestingDepth,
-                ex.ContainerChain.ToArray()));
-        }
         catch (CommandException ex)
         {
-            response.StatusCode = 422;
+            response.StatusCode = 422; // Unprocessable Entity - command ran but failed
             await WriteJsonResponse(response, new ErrorResponse(
                 ex.Message,
                 ex.GetType().Name,
@@ -183,50 +171,13 @@ public class AgentApiServer : IAsyncDisposable
         }
     }
 
-    private async Task HandleRun(HttpListenerRequest request, HttpListenerResponse response)
+    /// <summary>
+    /// The docker command line for a nested container, for the agent to run in the step itself. Composing it needs what only this side knows — the workspace's host path, the job's network, the user and docker group — but running it from the step means the nested container's output is simply the step's own output, live and byte for byte.
+    /// </summary>
+    private async Task HandleRunCommand(HttpListenerRequest request, HttpListenerResponse response)
     {
         var body = await ReadJsonBody<RunRequest>(request);
-
-        // Stream NDJSON response in real-time
-        response.ContentType = "application/x-ndjson";
-        response.SendChunked = true;
-
-        try
-        {
-            await _currentContext!.RunStreaming(
-                response.OutputStream,
-                ImageRef.From(body.Image),
-                body.Command ?? []);
-        }
-        catch (NestedContainerException ex)
-        {
-            // Write error as final NDJSON line
-            var newChain = new List<string>(ex.ContainerChain) { body.Image };
-            var errorJson = JsonSerializer.Serialize(new
-            {
-                t = "x",
-                c = ex.ExitCode,
-                error = ex.Message,
-                exceptionType = ex.GetType().Name,
-                nestingDepth = ex.NestingDepth + 1,
-                containerChain = newChain
-            }, JsonOptions);
-            var bytes = Encoding.UTF8.GetBytes(errorJson + "\n");
-            await response.OutputStream.WriteAsync(bytes);
-        }
-        catch (Exception ex)
-        {
-            // Write generic error as final NDJSON line
-            var errorJson = JsonSerializer.Serialize(new
-            {
-                t = "x",
-                c = -1,
-                error = ex.Message,
-                exceptionType = ex.GetType().Name
-            }, JsonOptions);
-            var bytes = Encoding.UTF8.GetBytes(errorJson + "\n");
-            await response.OutputStream.WriteAsync(bytes);
-        }
+        await WriteTextResponse(response, _currentContext!.BuildDockerRunCommand(ImageRef.From(body.Image), body.Command ?? []));
     }
 
     private async Task HandleBuild(HttpListenerRequest request, HttpListenerResponse response)
@@ -276,6 +227,14 @@ public class AgentApiServer : IAsyncDisposable
         var json = await reader.ReadToEndAsync();
         return JsonSerializer.Deserialize<T>(json, JsonOptions)
             ?? throw new InvalidOperationException("Failed to parse request body");
+    }
+
+    private static async Task WriteTextResponse(HttpListenerResponse response, string text)
+    {
+        var buffer = Encoding.UTF8.GetBytes(text);
+        response.ContentType = "text/plain; charset=utf-8";
+        response.ContentLength64 = buffer.Length;
+        await response.OutputStream.WriteAsync(buffer);
     }
 
     private static async Task WriteJsonResponse(HttpListenerResponse response, object data)

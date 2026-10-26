@@ -49,6 +49,20 @@ public class JobOutputFidelityTests
         Assert.That(stdout, Does.Not.Contain("�"));
     }
 
+    /// <summary>A nested run's output is the step's own output, so it should read exactly as the nested command wrote it and appear once.</summary>
+    [Test]
+    public async Task AgentRun_NestedOutput_IsLoggedOnceAndExactly()
+    {
+        var (stdout, stderr) = await RunStepAsync("docker:cli", @"ilmarinen-agent run alpine:latest -- sh -c 'printf ""a>b\n\n\033[31mred+\303\251\n""; printf ""nested-err\n"" >&2; exit 3'; echo rc=$?");
+
+        // Counted on bare markers as well as the exact text, since a second, mangled copy wouldn't match the exact text.
+        Assert.That(Occurrences(stdout + stderr, "red"), Is.EqualTo(1), $"stdout was: {stdout}");
+        Assert.That(Occurrences(stdout + stderr, "nested-err"), Is.EqualTo(1), $"stderr was: {stderr}");
+        Assert.That(stdout, Does.Contain("a>b\n\n\u001b[31mred+é\n"));
+        Assert.That(stderr, Does.Contain("nested-err\n"));
+        Assert.That(stdout, Does.Contain("rc=3\n"), "the nested exit code should reach the step");
+    }
+
     /// <summary>Runs a one-step pipeline whose step runs <paramref name="script"/> in <paramref name="image"/>, and returns the job's logged stdout and stderr.</summary>
     private async Task<(string Stdout, string Stderr)> RunStepAsync(string image, string script)
     {
@@ -95,5 +109,16 @@ public class JobOutputFidelityTests
         }
 
         return (stdout.ToString(), stderr.ToString());
+    }
+
+    private static int Occurrences(string text, string value)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(value, StringComparison.Ordinal); i >= 0; i = text.IndexOf(value, i + 1, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 }

@@ -143,16 +143,39 @@ public class PipelineRunner : IDisposable
         API="${ILMARINEN_API}"
         TOKEN="${ILMARINEN_TOKEN}"
 
-        # Detect HTTP client
+        # Response bodies land in a file rather than a variable: command substitution strips trailing newlines, and the body is the value.
+        BODY=$(mktemp)
+        trap 'rm -f "$BODY"' EXIT
+
+        # Detect HTTP client. http <url> [json] sends a GET, or a POST of the JSON, leaves the response body in $BODY, and returns 0 for a 2xx response, 2 for any other response, 1 for none at all.
         if command -v curl >/dev/null 2>&1; then
-            # Prefer curl for streaming (-N disables buffering)
+            http() {
+                if [ $# -gt 1 ]; then
+                    _code=$(curl -s -o "$BODY" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1") || return 1
+                else
+                    _code=$(curl -s -o "$BODY" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$1") || return 1
+                fi
+                case "$_code" in
+                    2??) return 0 ;;
+                    000) return 1 ;;
+                    *) return 2 ;;
+                esac
+            }
             http_get() { curl -s -H "Authorization: Bearer $TOKEN" "$1"; }
             http_post() { curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1"; }
-            http_stream() {
-                curl -sN -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$2" "$1" | stream_output
-                return $?
-            }
         elif command -v wget >/dev/null 2>&1; then
+            # wget reports no status, and busybox's keeps no body for an error response, so a failure that left no body counts as no response.
+            http() {
+                _rc=0
+                if [ $# -gt 1 ]; then
+                    wget -q -O "$BODY" --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null || _rc=$?
+                else
+                    wget -q -O "$BODY" --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null || _rc=$?
+                fi
+                [ "$_rc" -eq 0 ] && return 0
+                [ -s "$BODY" ] && return 2
+                return 1
+            }
             http_get() {
                 _rc=0; _body=$(wget -qO- --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null) || _rc=$?
                 if [ -z "$_body" ] && [ "$_rc" -ne 0 ]; then return "$_rc"; fi
@@ -162,10 +185,6 @@ public class PipelineRunner : IDisposable
                 _rc=0; _body=$(wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null) || _rc=$?
                 if [ -z "$_body" ] && [ "$_rc" -ne 0 ]; then return "$_rc"; fi
                 printf '%s' "$_body"
-            }
-            http_stream() {
-                wget -qO- --header="Authorization: Bearer $TOKEN" --header="Content-Type: application/json" --post-data="$2" "$1" 2>/dev/null | stream_output
-                return $?
             }
         else
             echo "Error: Neither wget nor curl found" >&2
@@ -182,58 +201,6 @@ public class PipelineRunner : IDisposable
         # Escape a value for embedding in a JSON string literal: backslash, quote, newline, CR, tab. Other control characters are not escaped and will be rejected by the server's JSON parser — a loud 4xx over silent corruption. awk reads line-by-line, so a trailing newline on the value is dropped — fine for command arguments. The &-based gsub replacement is deliberate: it means the same thing in POSIX awks (busybox, mawk) and gawk, whereas backslash-only replacements differ between them.
         json_escape() {
             printf '%s' "$1" | awk 'BEGIN{ORS=""} NR>1{printf "\\n"} {gsub(/[\\"]/,"\\\\&"); gsub(/\r/,"\\r"); gsub(/\t/,"\\t"); print}'
-        }
-
-        # Unescape JSON string (handles \n, \t, \", \\)
-        json_unescape() {
-            # Use printf %b to interpret escape sequences
-            printf '%b' "$(printf '%s' "$1" | sed 's/\\"/"/g')"
-        }
-
-        # Stream NDJSON output - parses {"t":"o/e/x","d":"...","c":N} lines
-        # Returns exit code from the "x" message
-        stream_output() {
-            _stream_exit=0
-            _got_exit=false
-            while IFS= read -r line || [ -n "$line" ]; do
-                [ -z "$line" ] && continue
-                # Extract type field
-                _type=$(echo "$line" | sed -n 's/.*"t":"\([^"]*\)".*/\1/p')
-                case "$_type" in
-                    o)
-                        # stdout chunk
-                        _data=$(echo "$line" | sed -n 's/.*"d":"\([^"]*\)".*/\1/p')
-                        printf '%s' "$(json_unescape "$_data")"
-                        ;;
-                    e)
-                        # stderr chunk
-                        _data=$(echo "$line" | sed -n 's/.*"d":"\([^"]*\)".*/\1/p')
-                        printf '%s' "$(json_unescape "$_data")" >&2
-                        ;;
-                    x)
-                        # exit message
-                        _got_exit=true
-                        _stream_exit=$(echo "$line" | sed -n 's/.*"c":\([0-9-]*\).*/\1/p')
-                        _stream_exit=${_stream_exit:-0}
-                        # Check for error
-                        if echo "$line" | grep -q '"error"'; then
-                            _error=$(echo "$line" | sed -n 's/.*"error":"\([^"]*\)".*/\1/p')
-                            _extype=$(echo "$line" | sed -n 's/.*"exceptionType":"\([^"]*\)".*/\1/p')
-                            _depth=$(echo "$line" | sed -n 's/.*"nestingDepth":\([0-9]*\).*/\1/p')
-                            echo "=== ilmarinen error ===" >&2
-                            [ -n "$_extype" ] && echo "Type: $_extype" >&2
-                            [ -n "$_depth" ] && [ "$_depth" -gt 1 ] 2>/dev/null && echo "Nesting depth: $_depth" >&2
-                            echo "Error: $_error" >&2
-                            echo "=======================" >&2
-                        fi
-                        ;;
-                esac
-            done
-            if [ "$_got_exit" = false ]; then
-                echo "Error: Lost connection to API server" >&2
-                return 1
-            fi
-            return $_stream_exit
         }
 
         # Handle structured error responses
@@ -263,6 +230,19 @@ public class PipelineRunner : IDisposable
                 return "$default_exit"
             fi
             return 0
+        }
+
+        # api <url> [json]: an http request that ends the command unless it succeeded, reporting why.
+        api() {
+            _rc=0; http "$@" || _rc=$?
+            [ "$_rc" -eq 0 ] && return 0
+            if [ "$_rc" -eq 2 ]; then
+                handle_error "$(cat "$BODY")" || exit $?
+                echo "Error: API request failed: $1" >&2
+                exit 1
+            fi
+            echo "Error: Cannot reach API server" >&2
+            exit 1
         }
 
         case "$1" in
@@ -310,9 +290,12 @@ public class PipelineRunner : IDisposable
                     cmd="$cmd\"$(json_escape "$arg")\""
                 done
                 cmd="$cmd]"
-                # Use streaming for real-time output
-                http_stream "${API}/api/run" "{\"image\":\"$(json_escape "$image")\",\"command\":$cmd}"
-                exit $?
+                # The server composes the docker command line and the step runs it, so the nested container's output is this command's own.
+                api "${API}/api/run-command" "{\"image\":\"$(json_escape "$image")\",\"command\":$cmd}"
+                run_command=$(cat "$BODY")
+                # exec replaces the shell, so the exit trap won't get the chance.
+                rm -f "$BODY"
+                exec sh -c "$run_command"
                 ;;
             build)
                 shift

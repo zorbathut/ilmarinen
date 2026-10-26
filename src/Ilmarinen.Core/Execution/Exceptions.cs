@@ -133,41 +133,25 @@ public class NestedContainerException : Exception
     /// </summary>
     public string Stderr { get; }
 
-    /// <summary>
-    /// The nesting depth (1 = first nested container, 2 = nested within nested, etc.)
-    /// </summary>
-    public int NestingDepth { get; }
-
-    /// <summary>
-    /// Chain of container images from outermost to innermost.
-    /// </summary>
-    public IReadOnlyList<string> ContainerChain { get; }
-
     public NestedContainerException(
         string image,
         IReadOnlyList<string> command,
         int exitCode,
         string stdout,
-        string stderr,
-        int nestingDepth = 1,
-        IReadOnlyList<string>? containerChain = null,
-        Exception? inner = null)
-        : base(BuildMessage(image, command, exitCode, stderr, nestingDepth), inner)
+        string stderr)
+        : base(BuildMessage(image, command, exitCode, stderr))
     {
         Image = image;
         Command = command;
         ExitCode = exitCode;
         Stdout = stdout;
         Stderr = stderr;
-        NestingDepth = nestingDepth;
-        ContainerChain = containerChain ?? [image];
     }
 
-    private static string BuildMessage(string image, IReadOnlyList<string> command, int exitCode, string stderr, int depth)
+    private static string BuildMessage(string image, IReadOnlyList<string> command, int exitCode, string stderr)
     {
         var cmdStr = command.Count > 0 ? string.Join(" ", command) : "(default entrypoint)";
-        var depthInfo = depth > 1 ? $" (nesting depth: {depth})" : "";
-        var msg = $"Nested container '{image}' failed{depthInfo} with exit code {exitCode}\nCommand: {cmdStr}";
+        var msg = $"Nested container '{image}' failed with exit code {exitCode}\nCommand: {cmdStr}";
         if (!string.IsNullOrWhiteSpace(stderr))
         {
             var stderrPreview = stderr.Length > MaxStderrPreview ? stderr[..MaxStderrPreview] + "..." : stderr;

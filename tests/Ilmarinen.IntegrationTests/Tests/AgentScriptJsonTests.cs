@@ -116,8 +116,7 @@ public class AgentScriptJsonTests
     }
 
     /// <summary>
-    /// Accepts one HTTP request, returns its body, and answers with the NDJSON exit message the
-    /// script's stream parser expects.
+    /// Accepts one HTTP request, returns its body, and answers with a run command that does nothing, so the script exits cleanly once it has posted.
     /// </summary>
     private static async Task<string> HandleOneRequestAsync(TcpListener listener)
     {
@@ -151,8 +150,8 @@ public class AgentScriptJsonTests
             length += n;
         }
 
-        const string ndjson = "{\"t\":\"x\",\"c\":0}\n";
-        var response = $"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {Encoding.ASCII.GetByteCount(ndjson)}\r\nConnection: close\r\n\r\n{ndjson}";
+        const string command = "true";
+        var response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {Encoding.ASCII.GetByteCount(command)}\r\nConnection: close\r\n\r\n{command}";
         await stream.WriteAsync(Encoding.ASCII.GetBytes(response));
 
         return Encoding.UTF8.GetString(data, bodyStart, contentLength);

@@ -224,7 +224,7 @@ Each container receives:
 - `/usr/local/bin/ilmarinen-agent` shell script for CLI commands
 - `ILMARINEN_API` and `ILMARINEN_TOKEN` environment variables
 
-The agent HTTP API uses NDJSON streaming format: `{"t":"o"|"e"|"x","d":"...","c":exitCode}`
+`ilmarinen-agent run` asks the API for the composed `docker run` command line (`POST /api/run-command`) and runs it in the step itself, so the nested container's output is the step's own.
 
 ### IJobContext Interface
 
@@ -239,8 +239,6 @@ The `IJobContext` interface provides these capabilities to step actions:
 - `WaitForHealthy(url, timeout)` - HTTP/TCP health check
 - `Secret(name)` - Retrieve secrets from environment
 
-`DockerJobContext.RunStreaming` (not on the interface) provides real-time NDJSON output for the agent HTTP API's `run` endpoint.
-
 ### Type System
 
 - `Step<T>` - Generic step that returns value of type T
@@ -252,7 +250,7 @@ The `IJobContext` interface provides these capabilities to step actions:
 
 - `CommandException` - Command failed with exit code, stdout/stderr (truncated)
 - `ShellException` - Shell script failed (extends CommandException, preserves original script)
-- `NestedContainerException` - Nested container failed (tracks nesting depth, container chain)
+- `NestedContainerException` - Nested container (`Run`) failed with exit code, stdout/stderr
 
 ### Server/Worker Communication
 
