@@ -70,26 +70,40 @@ public class NotificationRepository
     public async Task<List<JobNotification>> PullAsync(Guid subscriberId, int limit = 10)
     {
         var now = DateTime.UtcNow;
-        var lockUntil = now.AddMinutes(5);
 
-        var notifications = await _db.Notifications
-            .Include(n => n.Job)
+        // Matched against the stored value to find the rows this pull won, so it is truncated to the database's microsecond precision rather than relying on both conversions rounding alike.
+        var lockUntil = now.AddMinutes(5);
+        lockUntil = lockUntil.AddTicks(-(lockUntil.Ticks % 10));
+
+        var candidateIds = await _db.Notifications
             .Where(n => n.SubscriberId == subscriberId
                 && !n.IsProcessed
                 && (n.LockedUntil == null || n.LockedUntil <= now))
             .OrderBy(n => n.CreatedAt)
             .Take(limit)
+            .Select(n => n.Id)
             .ToListAsync();
 
-        // Lock them
-        foreach (var n in notifications)
+        if (candidateIds.Count == 0)
         {
-            n.LockedUntil = lockUntil;
-            n.RetryCount++;
+            return [];
         }
 
-        if (notifications.Count > 0)
-            await _db.SaveChangesAsync();
+        // Lock before reading anything off the job: the status below is then read after the lock commits, so a completion that finds a notification still unlocked can rely on this pull reporting its status write.
+        await _db.Notifications
+            .Where(n => candidateIds.Contains(n.Id)
+                && !n.IsProcessed
+                && (n.LockedUntil == null || n.LockedUntil <= now))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(n => n.LockedUntil, lockUntil)
+                .SetProperty(n => n.RetryCount, n => n.RetryCount + 1));
+
+        var notifications = await _db.Notifications
+            .AsNoTracking()
+            .Include(n => n.Job)
+            .Where(n => candidateIds.Contains(n.Id) && n.LockedUntil == lockUntil)
+            .OrderBy(n => n.CreatedAt)
+            .ToListAsync();
 
         // Resolve pipeline names
         var pipelineIds = notifications
