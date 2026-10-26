@@ -165,19 +165,19 @@ public class DockerJobContext : IJobContext
     /// <summary>
     /// The command `ilmarinen-agent build` runs in the step: docker's output goes to stderr so that stdout carries only the image reference, which is what callers capture, and docker's exit code is the command's.
     /// </summary>
-    internal static string BuildAgentBuildCommand(string dockerfile, string? tag, string context, IDictionary<string, string>? buildArgs)
+    internal static string BuildAgentBuildCommand(string? dockerfile, string? tag, string context, IDictionary<string, string>? buildArgs)
     {
         var imageTag = tag ?? GenerateBuildTag();
         return $"{BuildDockerBuildCommand(dockerfile, imageTag, context, buildArgs)} >&2 && printf '%s\\n' {EscapeShellArg(imageTag)}";
     }
 
     /// <summary>
-    /// Builds the docker build command for an image built from the workspace.
+    /// Builds the docker build command for an image built from the workspace. With no <paramref name="dockerfile"/>, docker uses the context's own Dockerfile.
     /// </summary>
-    internal static string BuildDockerBuildCommand(string dockerfile, string imageTag, string context, IDictionary<string, string>? buildArgs)
+    internal static string BuildDockerBuildCommand(string? dockerfile, string imageTag, string context, IDictionary<string, string>? buildArgs)
     {
         // Escape paths for shell (handle spaces and special characters)
-        var escapedDockerfile = EscapeShellArg(dockerfile);
+        var fileArg = dockerfile != null ? $"-f {EscapeShellArg(dockerfile)} " : "";
         var escapedContext = EscapeShellArg(context);
 
         // Build the --build-arg flags
@@ -190,7 +190,7 @@ public class DockerJobContext : IJobContext
             }
         }
 
-        return $"docker build -f {escapedDockerfile} -t {EscapeShellArg(imageTag)}{buildArgsStr} {escapedContext}";
+        return $"docker build {fileArg}-t {EscapeShellArg(imageTag)}{buildArgsStr} {escapedContext}";
     }
 
     /// <summary>

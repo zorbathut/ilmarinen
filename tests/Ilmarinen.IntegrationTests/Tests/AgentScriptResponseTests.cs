@@ -1,5 +1,6 @@
 using Ilmarinen.IntegrationTests.Fixtures;
 using NUnit.Framework;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System;
 
@@ -74,6 +75,17 @@ public class AgentScriptResponseTests
         Assert.That(result.ExitCode, Is.EqualTo(0), $"stderr: {result.Stderr}");
         Assert.That(result.RequestPath, Is.EqualTo("/api/info/branch"));
         Assert.That(result.Stdout, Is.EqualTo("feature/x\n"));
+    }
+
+    [Test]
+    public async Task Build_WithoutAFile_LeavesTheDockerfileToDocker([Values] AgentShell shell)
+    {
+        var result = await AgentScriptHarness.RunAsync(shell, 200, "true", ["build", "sub"]);
+
+        Assert.That(result.ExitCode, Is.EqualTo(0), $"stderr: {result.Stderr}");
+        using var payload = JsonDocument.Parse(result.RequestBody);
+        Assert.That(payload.RootElement.TryGetProperty("dockerfile", out _), Is.False);
+        Assert.That(payload.RootElement.GetProperty("context").GetString(), Is.EqualTo("sub"));
     }
 
     /// <summary>Commands that never call the API work without anywhere to put a response.</summary>

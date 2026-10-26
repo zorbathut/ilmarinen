@@ -269,5 +269,5 @@ public class AgentApiServer : IAsyncDisposable
 
     // Request DTOs
     private record RunRequest(string Image, string[]? Command);
-    private record BuildRequest(string Dockerfile, string? Tag, string? Context, Dictionary<string, string>? BuildArgs);
+    private record BuildRequest(string? Dockerfile, string? Tag, string? Context, Dictionary<string, string>? BuildArgs);
 }

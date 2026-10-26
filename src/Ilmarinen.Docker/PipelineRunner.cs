@@ -289,13 +289,13 @@ public class PipelineRunner : IDisposable
                     esac
                 done
 
-                [ -z "$dockerfile" ] && dockerfile="Dockerfile"
                 [ -z "$context" ] && context="."
 
-                json_dockerfile=$(json_escape "$dockerfile")
                 json_context=$(json_escape "$context")
 
-                payload="{\"dockerfile\":\"$json_dockerfile\",\"context\":\"$json_context\""
+                # No -f leaves docker to find the context's own Dockerfile, as docker build itself would.
+                payload="{\"context\":\"$json_context\""
+                [ -n "$dockerfile" ] && payload="$payload,\"dockerfile\":\"$(json_escape "$dockerfile")\""
                 [ -n "$tag" ] && payload="$payload,\"tag\":\"$(json_escape "$tag")\""
                 [ -n "$build_args" ] && payload="$payload,\"buildArgs\":{$build_args}"
                 payload="$payload}"

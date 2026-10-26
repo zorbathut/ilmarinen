@@ -92,6 +92,16 @@ public class ShellEscapingTests
         Assert.That(argv[^1], Is.EqualTo("."));
     }
 
+    /// <summary>With no file named, docker looks in the context for its Dockerfile, which a forced -f Dockerfile would make it look for in the current directory instead.</summary>
+    [Test]
+    public async Task BuildDockerBuildCommand_NoDockerfile_LeavesItToDocker()
+    {
+        var argv = await ArgvThroughShellAsync(DockerJobContext.BuildDockerBuildCommand(null, "img:v1", "sub dir", null), "docker");
+
+        Assert.That(argv, Does.Not.Contain("-f"));
+        Assert.That(argv[^1], Is.EqualTo("sub dir"));
+    }
+
     [Test]
     public async Task BuildDockerServiceCommand_HostileNameAndImage_ReachDockerIntact()
     {

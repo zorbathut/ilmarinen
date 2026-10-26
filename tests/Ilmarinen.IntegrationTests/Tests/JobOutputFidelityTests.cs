@@ -68,7 +68,7 @@ public class JobOutputFidelityTests
     public async Task AgentBuild_StdoutIsOnlyTheImageReference()
     {
         var tag = $"ilmarinen-test-build:{Guid.NewGuid():N}";
-        var (stdout, stderr) = await RunStepAsync("docker:cli", $"mkdir -p /tmp/ctx && echo 'FROM alpine:latest' > /tmp/ctx/Dockerfile && cd /tmp/ctx && rc=0 && ref=$(ilmarinen-agent build -t {tag} .) || rc=$?; docker rmi {tag} >/dev/null 2>&1; echo \"ref=[$ref]\"; exit $rc");
+        var (stdout, stderr) = await RunStepAsync("docker:cli", $"mkdir -p /tmp/ctx && echo 'FROM alpine:latest' > /tmp/ctx/Dockerfile && rc=0 && ref=$(ilmarinen-agent build -t {tag} /tmp/ctx) || rc=$?; docker rmi {tag} >/dev/null 2>&1; echo \"ref=[$ref]\"; exit $rc");
 
         Assert.That(stdout, Does.Contain($"ref=[{tag}]\n"));
         Assert.That(stderr, Does.Contain("alpine"), "the build's progress is reported, on stderr");
