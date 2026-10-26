@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http.Json;
 using System.Net.Http;
+using System.Net;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Threading;
@@ -184,13 +185,17 @@ internal class Commands
         return 0;
     }
 
+    private const string FollowExitCodes = "exit 0 if the job succeeded, 3 if it failed, 4 if it was cancelled, 2 if it could not be followed, 1 if it could not be started, 130 if interrupted";
+
     /// <summary>Trigger a registered pipeline</summary>
     [Command("trigger")]
     public async Task<int> Trigger(
+        [FromService] ICoconaAppContextAccessor contextAccessor,
         [Option('s', Description = "Server URL")] string server,
         [Argument(Description = "Pipeline ID")] Guid pipelineId,
         [Option("ref", Description = "Git ref (defaults to the pipeline's own)")] string? gitRef = null,
-        [Option("min-worker-priority", Description = "Only run on workers of at least this priority")] WorkerPriority? minWorkerPriority = null)
+        [Option("min-worker-priority", Description = "Only run on workers of at least this priority")] WorkerPriority? minWorkerPriority = null,
+        [Option('f', Description = "Stream the job's log until it finishes; " + FollowExitCodes + ". Interrupting cancels the job")] bool follow = false)
     {
         var serverUrl = NormalizeServerUrl(server);
         if (serverUrl == null)
@@ -219,8 +224,17 @@ internal class Commands
 
         var result = await response.Content.ReadFromJsonAsync<JobSubmissionResult>(jsonOptions);
         var jobId = result!.Id;
-        Console.WriteLine($"Job submitted: {serverUrl}/jobs/{jobId}");
-        return 0;
+
+        // While following, stdout carries the job's own stdout and nothing else.
+        var announce = follow ? Console.Error : Console.Out;
+        announce.WriteLine($"Job submitted: {serverUrl}/jobs/{jobId}");
+
+        if (!follow)
+        {
+            return 0;
+        }
+
+        return await FollowJobAsync(serverUrl, jobId, cancelOnInterrupt: true, contextAccessor.Current!.CancellationToken);
     }
 
     /// <summary>Stream a job's log until it finishes; exit 0 if the job succeeded, 3 if it failed, 4 if it was cancelled, 2 if it could not be followed, 130 if interrupted. Interrupting stops following but leaves the job running</summary>
@@ -236,7 +250,7 @@ internal class Commands
             return 1;
         }
 
-        return await FollowJobAsync(serverUrl, jobId, contextAccessor.Current!.CancellationToken);
+        return await FollowJobAsync(serverUrl, jobId, cancelOnInterrupt: false, contextAccessor.Current!.CancellationToken);
     }
 
     /// <summary>Idle time between feed reads while following. Output that arrives in bulk is read back to back; this only bounds how late a quiet job's next line or its completion is noticed.</summary>
@@ -245,8 +259,11 @@ internal class Commands
     /// <summary>Long enough to ride out a server redeploy, short enough that a reader blocked on a dead server finds out.</summary>
     private static readonly TimeSpan FollowGiveUpAfter = TimeSpan.FromMinutes(2);
 
+    /// <summary>Cocona ends the process a few seconds after an interrupt whether or not the command has finished, so cancelling the job has to fit inside that.</summary>
+    private static readonly TimeSpan FollowCancelTimeout = TimeSpan.FromSeconds(3);
+
     /// <param name="interrupted">Cocona's own token, cancelled on Ctrl-C and on SIGTERM — the latter being what a supervising tool sends when it gives up waiting.</param>
-    private static async Task<int> FollowJobAsync(string serverUrl, Guid jobId, CancellationToken interrupted)
+    private static async Task<int> FollowJobAsync(string serverUrl, Guid jobId, bool cancelOnInterrupt, CancellationToken interrupted)
     {
         var logUrl = $"{serverUrl}/api/jobs/{jobId}/logs/raw";
 
@@ -287,7 +304,15 @@ internal class Commands
         catch (OperationCanceledException) when (interrupted.IsCancellationRequested)
         {
             Console.Error.WriteLine();
-            Console.Error.WriteLine($"Stopped following job {jobId}; the job itself was not cancelled. Full log: {logUrl}");
+
+            if (!cancelOnInterrupt)
+            {
+                Console.Error.WriteLine($"Stopped following job {jobId}; the job itself was not cancelled. Full log: {logUrl}");
+                return 130;
+            }
+
+            // The job was started for this follow, so it shouldn't outlive it. Its teardown output arrives after the cancel has already made it terminal, so there is nothing left worth waiting for.
+            await CancelJobAsync(http, jobId, logUrl);
             return 130;
         }
         catch (Exception ex)
@@ -299,6 +324,35 @@ internal class Commands
             }
 
             return 2;
+        }
+    }
+
+    private static async Task CancelJobAsync(HttpClient http, Guid jobId, string logUrl)
+    {
+        using var timeout = new CancellationTokenSource(FollowCancelTimeout);
+
+        try
+        {
+            using var response = await http.DeleteAsync($"api/jobs/{jobId}", timeout.Token);
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.Error.WriteLine($"Cancelled job {jobId}. Full log: {logUrl}");
+            }
+            else if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                // The server answers a cancel of a job that already finished the same way as one of a job that doesn't exist, and this job did exist.
+                Console.Error.WriteLine($"Job {jobId} had already finished, so there was nothing to cancel. Full log: {logUrl}");
+            }
+            else
+            {
+                Console.Error.Write($"Failed to cancel job {jobId}: ");
+                await WriteErrorAsync(response);
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException || timeout.IsCancellationRequested)
+        {
+            Console.Error.WriteLine($"Failed to cancel job {jobId}, which may still be running: {ex.Message}");
         }
     }
 
