@@ -182,7 +182,7 @@ public class Commands
         return 0;
     }
 
-    /// <summary>Warns, without failing the command, when the server's protocol differs from this CLI's.</summary>
+    /// <summary>Warns, without failing the command, when the server's protocol differs from this CLI's or can't be checked.</summary>
     private static async Task CheckProtocolAsync(HttpClient http, string server, JsonSerializerOptions jsonOptions)
     {
         VersionInfo? versionResponse;
@@ -190,9 +190,9 @@ public class Commands
         {
             versionResponse = await http.GetFromJsonAsync<VersionInfo>($"{server}/api/version", jsonOptions);
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or NotSupportedException)
         {
-            // Older server without version endpoint - proceed anyway
+            Console.Error.WriteLine($"Warning: could not check protocol compatibility with the server: {ex.Message}");
             return;
         }
 
