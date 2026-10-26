@@ -16,12 +16,17 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [Category("Integration")]
 public class AgentScriptJsonTests
 {
+    [OneTimeSetUp]
+    public static async Task OneTimeSetUp()
+    {
+        await AgentScriptHarness.PullImagesAsync();
+    }
+
     /// <summary>
     /// The busybox variant matters: the script runs inside arbitrary user images, and POSIX awks (busybox, mawk) define gsub replacement escapes differently from gawk — an escaping program that is only exercised under the host's gawk can pass here and still corrupt JSON in real containers.
     /// </summary>
-    [TestCase(false, TestName = "AgentRun_EncodesHostileArgumentsAsValidJson_HostShell")]
-    [TestCase(true, TestName = "AgentRun_EncodesHostileArgumentsAsValidJson_BusyboxAlpine")]
-    public async Task AgentRun_EncodesHostileArgumentsAsValidJson(bool useAlpineContainer)
+    [Test]
+    public async Task AgentRun_EncodesHostileArgumentsAsValidJson([Values] AgentShell shell)
     {
         var args = new[]
         {
@@ -35,7 +40,7 @@ public class AgentScriptJsonTests
         };
 
         // The answer is a run command that does nothing, so the script exits cleanly once it has posted.
-        var result = await AgentScriptHarness.RunAsync(useAlpineContainer, 200, "true", ["run", "test-image", "--", .. args]);
+        var result = await AgentScriptHarness.RunAsync(shell, 200, "true", ["run", "test-image", "--", .. args]);
 
         Assert.That(result.ExitCode, Is.EqualTo(0), $"stderr: {result.Stderr}\nstdout: {result.Stdout}");
 

@@ -11,14 +11,19 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [Category("Integration")]
 public class AgentScriptResponseTests
 {
+    [OneTimeSetUp]
+    public static async Task OneTimeSetUp()
+    {
+        await AgentScriptHarness.PullImagesAsync();
+    }
+
     /// <summary>Everything a JSON encoder would have escaped, and the trailing newlines a shell variable would have dropped.</summary>
     private const string HostileValue = "a+b\"c\\d<e>&'f\u001b[0m é ✓\n\n";
 
-    [TestCase(false, TestName = "Secret_PrintsTheValueByteForByte_HostShell")]
-    [TestCase(true, TestName = "Secret_PrintsTheValueByteForByte_BusyboxAlpine")]
-    public async Task Secret_PrintsTheValueByteForByte(bool useAlpineContainer)
+    [Test]
+    public async Task Secret_PrintsTheValueByteForByte([Values] AgentShell shell)
     {
-        var result = await AgentScriptHarness.RunAsync(useAlpineContainer, 200, HostileValue, ["secret", "get", "token"]);
+        var result = await AgentScriptHarness.RunAsync(shell, 200, HostileValue, ["secret", "get", "token"]);
 
         Assert.That(result.ExitCode, Is.EqualTo(0), $"stderr: {result.Stderr}");
         Assert.That(result.RequestPath, Is.EqualTo("/api/secret/token"));
@@ -26,13 +31,12 @@ public class AgentScriptResponseTests
     }
 
     /// <summary>curl reads the reason from the body and wget from the status line, so it reaches the user either way.</summary>
-    [TestCase(false, TestName = "Secret_ErrorResponse_FailsWithTheServersReason_HostShell")]
-    [TestCase(true, TestName = "Secret_ErrorResponse_FailsWithTheServersReason_BusyboxAlpine")]
-    public async Task Secret_ErrorResponse_FailsWithTheServersReason(bool useAlpineContainer)
+    [Test]
+    public async Task Secret_ErrorResponse_FailsWithTheServersReason([Values] AgentShell shell)
     {
         const string reason = "Secret 'token' not found";
 
-        var result = await AgentScriptHarness.RunAsync(useAlpineContainer, 404, reason, ["secret", "get", "token"]);
+        var result = await AgentScriptHarness.RunAsync(shell, 404, reason, ["secret", "get", "token"]);
 
         Assert.That(result.ExitCode, Is.Not.EqualTo(0));
         Assert.That(result.Stdout, Is.Empty);
@@ -40,33 +44,30 @@ public class AgentScriptResponseTests
     }
 
     /// <summary>A success cut short is a failure, and what did arrive of a secret must not be printed — not as the value, and not as an error message either, since stderr goes to the job log.</summary>
-    [TestCase(false, TestName = "Secret_TruncatedResponse_FailsWithoutPrintingIt_HostShell")]
-    [TestCase(true, TestName = "Secret_TruncatedResponse_FailsWithoutPrintingIt_BusyboxAlpine")]
-    public async Task Secret_TruncatedResponse_FailsWithoutPrintingIt(bool useAlpineContainer)
+    [Test]
+    public async Task Secret_TruncatedResponse_FailsWithoutPrintingIt([Values] AgentShell shell)
     {
-        var result = await AgentScriptHarness.RunAsync(useAlpineContainer, 200, "partial-secret-and-the-rest", ["secret", "get", "token"], truncateAfter: 14);
+        var result = await AgentScriptHarness.RunAsync(shell, 200, "partial-secret-and-the-rest", ["secret", "get", "token"], truncateAfter: 14);
 
         Assert.That(result.ExitCode, Is.Not.EqualTo(0));
         Assert.That(result.Stdout + result.Stderr, Does.Not.Contain("partial-secret"));
     }
 
     /// <summary>An error from the run-command endpoint must not leave the agent exec'ing whatever the body said.</summary>
-    [TestCase(false, TestName = "Run_ErrorResponse_FailsWithoutRunningAnything_HostShell")]
-    [TestCase(true, TestName = "Run_ErrorResponse_FailsWithoutRunningAnything_BusyboxAlpine")]
-    public async Task Run_ErrorResponse_FailsWithoutRunningAnything(bool useAlpineContainer)
+    [Test]
+    public async Task Run_ErrorResponse_FailsWithoutRunningAnything([Values] AgentShell shell)
     {
-        var result = await AgentScriptHarness.RunAsync(useAlpineContainer, 503, "echo ran-anyway", ["run", "alpine:latest", "--", "true"]);
+        var result = await AgentScriptHarness.RunAsync(shell, 503, "echo ran-anyway", ["run", "alpine:latest", "--", "true"]);
 
         Assert.That(result.ExitCode, Is.Not.EqualTo(0));
         Assert.That(result.Stdout, Does.Not.Contain("ran-anyway"));
         Assert.That(result.Stderr, Does.Contain("echo ran-anyway"), "the body is the server's reason, so it is reported rather than run");
     }
 
-    [TestCase(false, TestName = "Info_PrintsTheValueOnItsOwnLine_HostShell")]
-    [TestCase(true, TestName = "Info_PrintsTheValueOnItsOwnLine_BusyboxAlpine")]
-    public async Task Info_PrintsTheValueOnItsOwnLine(bool useAlpineContainer)
+    [Test]
+    public async Task Info_PrintsTheValueOnItsOwnLine([Values] AgentShell shell)
     {
-        var result = await AgentScriptHarness.RunAsync(useAlpineContainer, 200, "feature/x", ["info", "branch"]);
+        var result = await AgentScriptHarness.RunAsync(shell, 200, "feature/x", ["info", "branch"]);
 
         Assert.That(result.ExitCode, Is.EqualTo(0), $"stderr: {result.Stderr}");
         Assert.That(result.RequestPath, Is.EqualTo("/api/info/branch"));
@@ -83,11 +84,10 @@ public class AgentScriptResponseTests
         Assert.That(result.Stdout, Is.Not.Empty);
     }
 
-    [TestCase(false, TestName = "Build_PrintsTheImageReference_HostShell")]
-    [TestCase(true, TestName = "Build_PrintsTheImageReference_BusyboxAlpine")]
-    public async Task Build_PrintsTheImageReference(bool useAlpineContainer)
+    [Test]
+    public async Task Build_PrintsTheImageReference([Values] AgentShell shell)
     {
-        var result = await AgentScriptHarness.RunAsync(useAlpineContainer, 200, "ilmarinen-build:abc123", ["build", "-t", "ilmarinen-build:abc123"]);
+        var result = await AgentScriptHarness.RunAsync(shell, 200, "ilmarinen-build:abc123", ["build", "-t", "ilmarinen-build:abc123"]);
 
         Assert.That(result.ExitCode, Is.EqualTo(0), $"stderr: {result.Stderr}");
         Assert.That(result.RequestPath, Is.EqualTo("/api/build"));

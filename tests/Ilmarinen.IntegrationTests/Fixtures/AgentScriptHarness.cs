@@ -14,14 +14,14 @@ namespace Ilmarinen.IntegrationTests.Fixtures;
 /// <summary>
 /// Runs the real in-container agent script against a loopback server that answers its one request as told, so the script's own encoding and response handling can be checked without a pipeline around it.
 ///
-/// It runs either under the host's /bin/sh, which finds the host's curl, or in busybox Alpine, which has only wget — the two HTTP paths the script has, and the awks it meets in real images.
+/// The script meets arbitrary images, so each test runs it under every <see cref="AgentShell"/>.
 /// </summary>
 public static class AgentScriptHarness
 {
     public sealed record Result(int ExitCode, string Stdout, string Stderr, string RequestPath, string RequestBody);
 
     /// <param name="truncateAfter">When set, the response declares its full length but the connection closes after this many body bytes, as a server or network failing mid-response would.</param>
-    public static async Task<Result> RunAsync(bool useAlpineContainer, int responseStatus, string responseBody, string[] args, int? truncateAfter = null)
+    public static async Task<Result> RunAsync(AgentShell shell, int responseStatus, string responseBody, string[] args, int? truncateAfter = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -36,21 +36,21 @@ public static class AgentScriptHarness
             {
                 var api = $"http://127.0.0.1:{port}";
                 ProcessStartInfo psi;
-                if (useAlpineContainer)
-                {
-                    // --network host so the container reaches the loopback server.
-                    psi = new ProcessStartInfo("docker");
-                    foreach (var dockerArg in new[] { "run", "--rm", "--network", "host", "-e", $"ILMARINEN_API={api}", "-e", "ILMARINEN_TOKEN=test-token", "-v", $"{scriptPath}:/ilmarinen-agent:ro", "alpine:latest", "sh", "/ilmarinen-agent" })
-                    {
-                        psi.ArgumentList.Add(dockerArg);
-                    }
-                }
-                else
+                if (shell == AgentShell.HostSh)
                 {
                     psi = new ProcessStartInfo("/bin/sh");
                     psi.ArgumentList.Add(scriptPath);
                     psi.Environment["ILMARINEN_API"] = api;
                     psi.Environment["ILMARINEN_TOKEN"] = "test-token";
+                }
+                else
+                {
+                    // --network host so the container reaches the loopback server.
+                    psi = new ProcessStartInfo("docker");
+                    foreach (var dockerArg in new[] { "run", "--rm", "--network", "host", "-e", $"ILMARINEN_API={api}", "-e", "ILMARINEN_TOKEN=test-token", "-v", $"{scriptPath}:/ilmarinen-agent:ro" }.Concat(ContainerCommand(shell)))
+                    {
+                        psi.ArgumentList.Add(dockerArg);
+                    }
                 }
 
                 psi.RedirectStandardOutput = true;
@@ -87,6 +87,38 @@ public static class AgentScriptHarness
         {
             listener.Stop();
         }
+    }
+
+    /// <summary>Pulls the images the container shells run in, so that a first, cold pull isn't counted against a test's own waits.</summary>
+    public static async Task PullImagesAsync()
+    {
+        foreach (var image in new[] { "alpine:latest", "buildpack-deps:bookworm-curl" })
+        {
+            var psi = new ProcessStartInfo("docker")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            psi.ArgumentList.Add("pull");
+            psi.ArgumentList.Add(image);
+
+            using var process = Process.Start(psi)!;
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.That(process.ExitCode, Is.EqualTo(0), $"docker pull {image} failed: {await stderrTask}{await stdoutTask}");
+        }
+    }
+
+    /// <summary>The image and command line that run the script under <paramref name="shell"/>.</summary>
+    private static string[] ContainerCommand(AgentShell shell)
+    {
+        return shell switch
+        {
+            AgentShell.BusyboxAlpine => ["alpine:latest", "sh", "/ilmarinen-agent"],
+            AgentShell.DebianDash => ["buildpack-deps:bookworm-curl", "sh", "/ilmarinen-agent"],
+            _ => throw new ArgumentOutOfRangeException(nameof(shell), shell, "not a container shell")
+        };
     }
 
     /// <summary>Runs the script in busybox Alpine on a read-only root filesystem, with no API behind it, for commands that shouldn't need either.</summary>
@@ -172,4 +204,17 @@ public static class AgentScriptHarness
         }
         return -1;
     }
+}
+
+/// <summary>Where the agent script runs: the shell, and the HTTP client it finds there.</summary>
+public enum AgentShell
+{
+    /// <summary>The host's /bin/sh, with the host's curl.</summary>
+    HostSh,
+
+    /// <summary>busybox sh and busybox wget, as in alpine-based images such as docker:cli.</summary>
+    BusyboxAlpine,
+
+    /// <summary>dash with curl, as in Debian- and Ubuntu-based images.</summary>
+    DebianDash
 }
