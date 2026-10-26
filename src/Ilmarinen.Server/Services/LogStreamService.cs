@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Threading;
 using System;
 
 namespace Ilmarinen.Server.Services;
@@ -114,7 +115,16 @@ public class LogStreamService
 
     private async Task FlushBufferAsync(Guid jobId, LogBuffer buffer)
     {
-        await PersistAsync(jobId, buffer.Drain());
+        // Held across the insert, not just the drain: two flushes committing in either order would let a reader see a later chunk before the earlier ones land, and a reader that pages forward from what it has seen never goes back for them. It also means a flush that finds the buffer already drained waits for that drain's insert, instead of returning while those chunks are still unreadable.
+        await buffer.PersistLock.WaitAsync();
+        try
+        {
+            await PersistAsync(jobId, buffer.Drain());
+        }
+        finally
+        {
+            buffer.PersistLock.Release();
+        }
     }
 
     private async Task PersistAsync(Guid jobId, List<LogChunk> chunks)
@@ -141,6 +151,8 @@ public class LogStreamService
         private int _totalBytes;
         private DateTime _firstChunkTime = DateTime.MaxValue;
         private readonly object _lock = new();
+
+        public SemaphoreSlim PersistLock { get; } = new(1, 1);
 
         public void Add(LogChunk chunk)
         {
