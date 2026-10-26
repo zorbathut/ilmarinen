@@ -316,9 +316,10 @@ public class NotificationTests
         }
         else
         {
-            // Rare: a non-cancellation exception during the worker's teardown makes it report Failed, which overrides Cancelled and must signal again — exactly two notifications.
+            // Rare: a non-cancellation exception during the worker's teardown makes it report Failed, which overrides Cancelled. Nothing pulled the cancel's notification in between, so it reports the Failed instead of a second one being made.
             Assert.That(job.Status, Is.EqualTo(JobStatus.Failed));
-            Assert.That(forJob, Has.Count.EqualTo(2));
+            Assert.That(forJob, Has.Count.EqualTo(1));
+            Assert.That(forJob[0].Status, Is.EqualTo(JobStatus.Failed));
         }
     }
 

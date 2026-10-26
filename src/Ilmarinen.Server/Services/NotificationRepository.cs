@@ -23,6 +23,8 @@ public class NotificationRepository
 
     /// <summary>
     /// Announces a job's completion to every active subscriber, unless its pipeline's notification policy says this outcome isn't worth announcing. The policy is read now rather than when the job was created, so muting a pipeline quiets the jobs it already has in flight; a job with no pipeline, or whose pipeline is gone, is announced.
+    ///
+    /// A subscriber with a notification for this job that has never been pulled gets no second one: a pull locks before it reads the job, so that notification will report this status. One that has been pulled at all — delivered, mid-delivery, or handed back for a retry — may have gone out with the old status, so the subscriber gets a new one; that can repeat a status, but never loses one. Callers must not run this concurrently for one job, or both could miss the other's notification.
     /// </summary>
     public async Task CreateForCompletionAsync(Guid jobId, JobStatus status)
     {
@@ -39,6 +41,13 @@ public class NotificationRepository
 
         var now = DateTime.UtcNow;
         var activeIds = await _subscribers.GetActiveSubscriberIdsAsync();
+
+        var neverPulled = await _db.Notifications
+            .Where(n => n.JobId == jobId && !n.IsProcessed && n.LockedUntil == null)
+            .Select(n => n.SubscriberId)
+            .Distinct()
+            .ToListAsync();
+        activeIds = activeIds.Except(neverPulled).ToList();
 
         foreach (var subscriberId in activeIds)
         {

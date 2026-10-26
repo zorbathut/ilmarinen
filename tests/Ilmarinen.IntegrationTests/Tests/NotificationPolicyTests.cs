@@ -79,6 +79,35 @@ public class NotificationPolicyTests
         Assert.That(await NotificationCountAsync(jobId), Is.EqualTo(expected));
     }
 
+    /// <summary>A notification still waiting to be pulled reports the job's status when it is pulled, so the outcome that overrode the cancel is already in it — a second one would only repeat it.</summary>
+    [Test]
+    public async Task OutcomeOverridingACancel_BeforeItWasPulled_IsFoldedIntoThePendingNotification()
+    {
+        var jobId = await SubmitAsync(await CreatePipelineAsync(NotificationPolicy.All));
+
+        await CancelAsync(jobId);
+        await CompleteAsync(jobId, JobStatus.Failed);
+
+        var notifications = (await _fixture.PullNotificationsAsync(_subscriber.Id, limit: 100)).Where(n => n.JobId == jobId).ToList();
+        Assert.That(notifications, Has.Count.EqualTo(1));
+        Assert.That(notifications[0].Status, Is.EqualTo(JobStatus.Failed));
+    }
+
+    /// <summary>Once the cancel has gone out, the overriding outcome is news and gets its own notification.</summary>
+    [Test]
+    public async Task OutcomeOverridingACancel_AfterItWasPulled_IsAnnouncedAgain()
+    {
+        var jobId = await SubmitAsync(await CreatePipelineAsync(NotificationPolicy.All));
+
+        await CancelAsync(jobId);
+        var first = (await _fixture.PullNotificationsAsync(_subscriber.Id, limit: 100)).Where(n => n.JobId == jobId).ToList();
+        await CompleteAsync(jobId, JobStatus.Failed);
+        var second = (await _fixture.PullNotificationsAsync(_subscriber.Id, limit: 100)).Where(n => n.JobId == jobId).ToList();
+
+        Assert.That(first.Select(n => n.Status), Is.EqualTo(new[] { JobStatus.Cancelled }));
+        Assert.That(second.Select(n => n.Status), Is.EqualTo(new[] { JobStatus.Failed }));
+    }
+
     /// <summary>The policy is read when the job finishes, so muting a pipeline also quiets the jobs it already has running.</summary>
     [Test]
     public async Task PolicyChangedWhileAJobRuns_AppliesToThatJob()

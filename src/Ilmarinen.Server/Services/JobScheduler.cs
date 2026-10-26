@@ -23,6 +23,9 @@ public class JobScheduler
     // Serializes the check-and-assign sequence within this process. Assignment is triggered concurrently from multiple places (JobCompleted, Ready, EnqueueJob), and the windows between "is this worker free?" / "which job is next?" and marking them busy / Running must be atomic.
     private readonly SemaphoreSlim _assignLock = new(1, 1);
 
+    // A cancel and the worker's own report of the same job complete concurrently, and each creates notifications only where the other hasn't left one pending; serialized, each sees what the other did. Taken inside _assignLock (dispatch completes jobs it can't start), so nothing may take _assignLock while holding this.
+    private readonly SemaphoreSlim _notificationLock = new(1, 1);
+
     public JobScheduler(
         IServiceScopeFactory scopeFactory,
         IHubContext<WorkerHub, IWorkerClient> hubContext,
@@ -210,7 +213,15 @@ public class JobScheduler
         await _logStream.NotifyJobCompletedAsync(jobId, status);
 
         var notifications = scope.ServiceProvider.GetRequiredService<NotificationRepository>();
-        await notifications.CreateForCompletionAsync(jobId, status);
+        await _notificationLock.WaitAsync();
+        try
+        {
+            await notifications.CreateForCompletionAsync(jobId, status);
+        }
+        finally
+        {
+            _notificationLock.Release();
+        }
 
         _uiEvents.NotifyJobsChanged();
     }
