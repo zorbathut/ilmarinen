@@ -350,7 +350,7 @@ Match response length to the task. A simple question gets a direct answer, not h
 ## Dependencies
 
 - .NET 9.0
-- Docker.DotNet - Docker API client
+- Docker.DotNet.Enhanced - Docker API client (the maintained fork of Docker.DotNet; same namespace)
 - Roslyn (Microsoft.CodeAnalysis.CSharp.Scripting) - C# script compilation
 - ASP.NET Core / SignalR - Web server and real-time communication
 - Entity Framework Core with Npgsql - PostgreSQL ORM

@@ -494,7 +494,7 @@ public class PipelineRunner : IDisposable
             {
                 await _client.Containers.ExtractArchiveToContainerAsync(
                     containerId,
-                    new ContainerPathStatParameters { Path = "/usr/local/bin", AllowOverwriteDirWithFile = false },
+                    new CopyToContainerParameters { Path = "/usr/local/bin", AllowOverwriteDirWithFile = false },
                     tarStream);
             }
 

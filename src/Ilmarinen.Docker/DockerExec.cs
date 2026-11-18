@@ -14,7 +14,7 @@ internal static class DockerExec
 {
     internal static async Task<int> RunAsync(DockerClient client, string containerId, IList<string> cmd, string? workDir, string? user, Func<bool, string, Task> onChunk)
     {
-        var execCreate = await client.Exec.ExecCreateContainerAsync(containerId, new ContainerExecCreateParameters
+        var execCreate = await client.Exec.CreateContainerExecAsync(containerId, new ContainerExecCreateParameters
         {
             Cmd = cmd,
             AttachStdout = true,
@@ -23,7 +23,7 @@ internal static class DockerExec
             User = user
         });
 
-        using var multiplexed = await client.Exec.StartAndAttachContainerExecAsync(execCreate.ID, false);
+        using var multiplexed = await client.Exec.StartContainerExecAsync(execCreate.ID, new ContainerExecStartParameters());
 
         var buffer = new byte[4096];
         var chars = new char[Encoding.UTF8.GetMaxCharCount(buffer.Length)];
@@ -60,6 +60,6 @@ internal static class DockerExec
         }
 
         var inspect = await client.Exec.InspectContainerExecAsync(execCreate.ID);
-        return (int)inspect.ExitCode;
+        return (int)(inspect.ExitCode ?? throw new InvalidOperationException($"exec {execCreate.ID} closed its output streams but is still running, so it has no exit code"));
     }
 }
