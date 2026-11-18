@@ -25,10 +25,10 @@ public class DockerDiagnosticTests
         Assert.That(report.Status, Is.EqualTo(DiagnosticStatus.Healthy),
             $"Expected Healthy, got {report.Status}. Summary: {report.Summary}. " +
             $"Steps: {string.Join("; ", report.Steps.Select(s => $"{s.Name}={s.Success}"))}");
-        Assert.That(report.Steps, Has.Count.EqualTo(8));
+        Assert.That(report.Steps, Has.Count.EqualTo(9));
         Assert.That(report.Steps.Select(s => s.Name), Is.EqualTo(new[]
         {
-            "docker_daemon", "dns_worker", "image_pull", "container_run",
+            "docker_daemon", "gateway_priority", "dns_worker", "image_pull", "container_run",
             "output_capture", "dns_container", "agent_api_reachability", "cleanup"
         }));
         Assert.That(report.Steps.All(s => s.Success), Is.True,
@@ -46,13 +46,14 @@ public class DockerDiagnosticTests
         var report = await diagnostic.RunAsync(progress: null, ct: CancellationToken.None);
 
         Assert.That(report.Status, Is.EqualTo(DiagnosticStatus.Unhealthy));
-        // After the fatal docker_daemon failure, only cleanup runs (which succeeds because no resources were allocated).
-        Assert.That(report.Steps, Has.Count.EqualTo(2));
+        // After the fatal docker_daemon failure, only the advisory and cleanup steps run (cleanup succeeds because no resources were allocated).
+        Assert.That(report.Steps, Has.Count.EqualTo(3));
         Assert.That(report.Steps[0].Name, Is.EqualTo("docker_daemon"));
         Assert.That(report.Steps[0].Success, Is.False);
         Assert.That(report.Steps[0].Failure,
             Is.AnyOf(FailureKind.SocketUnreachable, FailureKind.DaemonError));
-        Assert.That(report.Steps[1].Name, Is.EqualTo("cleanup"));
+        Assert.That(report.Steps[1].Name, Is.EqualTo("gateway_priority"));
+        Assert.That(report.Steps[2].Name, Is.EqualTo("cleanup"));
         Assert.That(report.Summary, Does.StartWith("docker_daemon failed:"));
     }
 

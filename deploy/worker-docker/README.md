@@ -8,7 +8,7 @@ The worker is a *client* — it makes outbound connections to the server and nee
 
 ## Prerequisites
 
-- Docker with Compose v2 (`docker compose version`).
+- Docker with Compose v2 (`docker compose version`), Engine 28 or later (`docker version`). Older engines let each job's network take over the worker container's default route, so a connection the worker opens mid-job dies silently when the job ends.
 - Network access from this host to the server's **worker port** (see below).
 - Enough headroom to build .NET from source: the SDK image alone is ~850 MB on disk, and the build is memory-hungry. The smallest VPS tiers will OOM-kill the compiler with a confusing error.
 

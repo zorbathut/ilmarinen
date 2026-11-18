@@ -67,6 +67,7 @@ public class DockerDiagnostic : IAsyncDisposable
         var executed = await ExecuteStepsAsync(
         [
             new DiagnosticStep("docker_daemon", DiagnosticStepKind.Capability, CheckDaemonAsync),
+            new DiagnosticStep("gateway_priority", DiagnosticStepKind.Advisory, CheckGatewayPriorityAsync),
             new DiagnosticStep("dns_worker", DiagnosticStepKind.Capability, CheckWorkerDnsAsync),
             new DiagnosticStep("image_pull", DiagnosticStepKind.Capability, CheckImagePullAsync),
             new DiagnosticStep("container_run", DiagnosticStepKind.Capability, CheckContainerRunAsync),
@@ -191,6 +192,23 @@ public class DockerDiagnostic : IAsyncDisposable
         }
     }
 
+    private async Task<DiagnosticStepResult> CheckGatewayPriorityAsync(CancellationToken ct)
+    {
+        if (_workerContainerId == null)
+        {
+            return Ok("Worker runs on the host; job networks don't touch its routes");
+        }
+
+        var version = await _client.System.GetVersionAsync(ct);
+        if (WorkerNetwork.HonoursGatewayPriority(version.APIVersion))
+        {
+            return Ok($"Daemon API {version.APIVersion} keeps job networks off the worker's default route");
+        }
+        return Fail($"Daemon API {version.APIVersion} (Docker {version.Version}) ignores gateway priority: each job's network takes over the worker container's default route, so a connection the worker opens mid-job dies silently when the job ends",
+            FailureKind.DaemonError,
+            "Upgrade Docker Engine to 28 or later.");
+    }
+
     private async Task<DiagnosticStepResult> CheckImagePullAsync(CancellationToken ct)
     {
         try
@@ -251,10 +269,7 @@ public class DockerDiagnostic : IAsyncDisposable
             // In Docker-in-Docker, attach the worker container to the diagnostic network so the test container can reach the AgentApiServer running inside the worker.
             if (_workerContainerId != null)
             {
-                await _client.Networks.ConnectNetworkAsync(_testNetworkName, new NetworkConnectParameters
-                {
-                    Container = _workerContainerId
-                }, ct);
+                await WorkerNetwork.AttachAsync(_client, _testNetworkName, _workerContainerId, ct);
             }
 
             var apiHost = _workerContainerId ?? "host.docker.internal";

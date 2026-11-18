@@ -404,10 +404,7 @@ public class PipelineRunner : IDisposable
         // In Docker-in-Docker: connect worker container to the network so job containers can reach the AgentApiServer via Docker DNS
         if (_workerContainerId != null)
         {
-            await _client.Networks.ConnectNetworkAsync(name, new NetworkConnectParameters
-            {
-                Container = _workerContainerId
-            });
+            await WorkerNetwork.AttachAsync(_client, name, _workerContainerId, default);
         }
     }
 
