@@ -77,6 +77,7 @@
                         <tr>
                             <th>Name</th>
                             <th>Path</th>
+                            <th>Last Used</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -86,6 +87,9 @@
                             <tr>
                                 <td>@ws.Name</td>
                                 <td><code>@ws.Path</code></td>
+                                <td>
+                                    <TimeAgo When="ws.LastUsed" />
+                                </td>
                                 <td>
                                     @if (worker.IsConnected)
                                     {

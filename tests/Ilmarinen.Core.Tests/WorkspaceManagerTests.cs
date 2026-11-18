@@ -146,11 +146,51 @@ public class WorkspaceManagerTests
         Directory.CreateDirectory(wsPath);
 
         _manager.SetActiveWorkspace("was-active");
-        _manager.SetActiveWorkspace(null);
+        _manager.ReleaseActiveWorkspace();
 
         var result = _manager.TryDelete("was-active");
 
         Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.Success));
         Assert.That(Directory.Exists(wsPath), Is.False);
+    }
+
+    [Test]
+    public void ReleaseActiveWorkspace_RecordsTheWorkspacesLastUse()
+    {
+        var ws = Path.Combine(_tempDir, "used");
+        Directory.CreateDirectory(ws);
+        Directory.SetLastWriteTimeUtc(ws, DateTime.UtcNow - TimeSpan.FromDays(3));
+
+        var before = DateTimeOffset.UtcNow;
+        _manager.SetActiveWorkspace("used");
+        _manager.ReleaseActiveWorkspace();
+        var after = DateTimeOffset.UtcNow;
+
+        Assert.That(LastUsedOf("used"), Is.InRange(before, after));
+    }
+
+    [Test]
+    public void ReleaseActiveWorkspace_WorkspaceNeverCreated_LeavesNothingBehind()
+    {
+        _manager.SetActiveWorkspace("never-made");
+        _manager.ReleaseActiveWorkspace();
+
+        Assert.That(_manager.DiscoverWorkspaces(), Is.Empty);
+    }
+
+    [Test]
+    public void DiscoverWorkspaces_WorkspaceNoJobHasReleased_ReportsWhenItLastChanged()
+    {
+        var ws = Path.Combine(_tempDir, "untouched");
+        Directory.CreateDirectory(ws);
+        var changed = DateTime.UtcNow - TimeSpan.FromDays(3);
+        Directory.SetLastWriteTimeUtc(ws, changed);
+
+        Assert.That(LastUsedOf("untouched"), Is.EqualTo(new DateTimeOffset(changed)).Within(TimeSpan.FromSeconds(1)));
+    }
+
+    private DateTimeOffset LastUsedOf(string name)
+    {
+        return _manager.DiscoverWorkspaces().Single(w => w.Name == name).LastUsed;
     }
 }

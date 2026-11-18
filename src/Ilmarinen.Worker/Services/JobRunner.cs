@@ -91,7 +91,7 @@ public class JobRunner
         }
         finally
         {
-            _workspaceManager.SetActiveWorkspace(null);
+            _workspaceManager.ReleaseActiveWorkspace();
 
             // Cleanup: only delete ephemeral workspaces
             if (prepared != null && prepared.Ephemeral)

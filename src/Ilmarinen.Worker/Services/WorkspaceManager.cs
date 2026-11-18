@@ -23,7 +23,7 @@ public class WorkspaceManager
     }
 
     /// <summary>
-    /// Lists persistent workspaces with their full local paths (filters out GUID-named job dirs and dot-named worker state such as the git mirrors).
+    /// Lists persistent workspaces with their full local paths and last use (filters out GUID-named job dirs and dot-named worker state such as the git mirrors).
     /// </summary>
     public List<WorkspaceInfo> DiscoverWorkspaces()
     {
@@ -36,7 +36,8 @@ public class WorkspaceManager
             .Select(dir => new WorkspaceInfo
             {
                 Name = Path.GetFileName(dir),
-                Path = Path.GetFullPath(dir)
+                Path = Path.GetFullPath(dir),
+                LastUsed = Directory.GetLastWriteTimeUtc(dir)
             })
             .ToList();
     }
@@ -44,11 +45,49 @@ public class WorkspaceManager
     /// <summary>
     /// Tracks which workspace the current job is using.
     /// </summary>
-    public void SetActiveWorkspace(string? name)
+    public void SetActiveWorkspace(string name)
     {
         lock (_lock)
         {
             _activeWorkspace = name;
+        }
+    }
+
+    /// <summary>
+    /// Ends the current job's use of its workspace: if the job got as far as creating it, this becomes its last use, and it may be deleted again.
+    /// </summary>
+    public void ReleaseActiveWorkspace()
+    {
+        lock (_lock)
+        {
+            // Stamped while still active, so a delete can't remove the workspace in between and leave the stamp nowhere
+            var name = _activeWorkspace;
+            if (name != null)
+            {
+                StampLastUse(name);
+            }
+            _activeWorkspace = null;
+        }
+    }
+
+    /// <summary>
+    /// A workspace's last use is its directory's modification time, set when a job finishes with it, so the record lives and dies with the workspace.
+    /// </summary>
+    private void StampLastUse(string name)
+    {
+        var dir = Path.Combine(_config.WorkspacePath, name);
+        if (!Directory.Exists(dir))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.SetLastWriteTimeUtc(dir, DateTime.UtcNow);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Failed to record last use of workspace {WorkspaceName}", name);
         }
     }
 

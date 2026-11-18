@@ -1,0 +1,45 @@
+@using Microsoft.Extensions.Logging
+@using System.Threading
+@implements IDisposable
+@inject ILogger<TimeAgo> Logger
+
+<span title="@(When.UtcDateTime.ToString("yyyy-MM-dd HH:mm") + " UTC")">@DisplayFormat.Ago(When, DateTimeOffset.UtcNow)</span>
+
+@code {
+    // "5m ago" goes stale as time passes even when nothing else on the page changes, and its finest unit is a minute
+    private readonly PeriodicTimer tick = new(TimeSpan.FromMinutes(1));
+
+    [Parameter, EditorRequired]
+    public DateTimeOffset When { get; set; }
+
+    protected override void OnInitialized()
+    {
+        _ = TickAsync();
+    }
+
+    private async Task TickAsync()
+    {
+        try
+        {
+            // Ends when Dispose disposes the timer
+            while (await tick.WaitForNextTickAsync())
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (ObjectDisposedException ex)
+        {
+            Logger.LogDebug(ex, "Circuit went away mid-refresh");
+        }
+        catch (Exception ex)
+        {
+            // Nothing awaits this loop, so hand anything unexpected to the circuit's own error handling rather than lose it
+            await DispatchExceptionAsync(ex);
+        }
+    }
+
+    public void Dispose()
+    {
+        tick.Dispose();
+    }
+}
