@@ -54,7 +54,6 @@
                     <th class="hide-mobile">ID</th>
                     <th>Priority</th>
                     <th>Current Job</th>
-                    <th>Workspaces</th>
                     <th class="hide-mobile">Bundle</th>
                     <th class="hide-mobile">Registered</th>
                     <th class="hide-mobile">Last Seen</th>
@@ -86,27 +85,6 @@
                                 </select>
                             </td>
                             <td><JobsLink JobIds="worker.CurrentJobs" /></td>
-                            <td>
-                                @if (worker.Workspaces.Count > 0)
-                                {
-                                    @foreach (var ws in worker.Workspaces)
-                                    {
-                                        <span class="workspace-tag">
-                                            @ws.Name
-                                            @if (worker.IsConnected)
-                                            {
-                                                <button class="workspace-delete"
-                                                        disabled="@IsDeleting(worker.Id, ws.Name)"
-                                                        @onclick="() => DeleteWorkspace(worker.Id, ws.Name)">x</button>
-                                            }
-                                        </span>
-                                    }
-                                }
-                                else
-                                {
-                                    <span>-</span>
-                                }
-                            </td>
                             <td class="hide-mobile">
                                 @if (worker.BundleHash == null)
                                 {
@@ -136,6 +114,46 @@
         </table>
     </div>
 </div>
+
+@if (workers != null && workers.Any(w => w.Workspaces.Count > 0))
+{
+    <div class="card" style="margin-top: 1rem;">
+        <h2 class="card-title">Workspaces</h2>
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Worker</th>
+                        <th>Workspace</th>
+                        <th>Last Used</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var worker in workers)
+                    {
+                        @foreach (var ws in worker.Workspaces.OrderByDescending(ws => ws.LastUsed))
+                        {
+                            <tr @key="(worker.Id, ws.Name)">
+                                <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
+                                <td>@ws.Name</td>
+                                <td><TimeAgo When="ws.LastUsed" /></td>
+                                <td>
+                                    @if (worker.IsConnected)
+                                    {
+                                        <button class="btn btn-danger"
+                                                disabled="@IsDeleting(worker.Id, ws.Name)"
+                                                @onclick="() => DeleteWorkspace(worker.Id, ws.Name)">Delete</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
 
 @if (actionError != null)
 {

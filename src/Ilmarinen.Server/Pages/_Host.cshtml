@@ -397,28 +397,6 @@
             background-color: var(--accent);
             text-decoration: none;
         }
-        .workspace-tag {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.25rem;
-            padding: 0.2rem 0.5rem;
-            background-color: var(--bg-tertiary);
-            border-radius: 0.25rem;
-            font-size: 0.75rem;
-            margin: 0.125rem;
-        }
-        .workspace-delete {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            cursor: pointer;
-            font-size: 0.7rem;
-            padding: 0 0.2rem;
-            line-height: 1;
-            border-radius: 0.125rem;
-        }
-        .workspace-delete:hover { color: var(--error); }
-        .workspace-delete:disabled { opacity: 0.3; cursor: not-allowed; }
         @@media (max-width: 768px) {
             .layout { flex-direction: column; }
             .sidebar {
@@ -450,7 +428,6 @@
                 padding: 0.6rem 1rem;
             }
             .btn-retry { padding: 0.5rem 0.75rem; font-size: 0.8rem; }
-            .workspace-delete { font-size: 0.875rem; padding: 0.4rem 0.6rem; }
             .log-option { padding: 0.5rem 0.25rem; }
             .sidebar nav a { padding: 0.85rem 1rem; }
             .logfull-header > a { display: inline-flex; align-items: center; min-height: 44px; }
