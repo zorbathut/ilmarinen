@@ -7,9 +7,11 @@
 @using Ilmarinen.Server.Services
 @using Microsoft.AspNetCore.SignalR
 @using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
 @using System.Threading
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
+@inject ILogger<WorkerDetail> Logger
 @inject WorkspaceDeletionService DeletionService
 @inject IHubContext<WorkerHub, IWorkerClient> HubContext
 @inject UIEventService UIEvents
@@ -349,7 +351,14 @@ else
                 await InvokeAsync(StateHasChanged);
             }
         }
-        catch { }
+        catch (ObjectDisposedException ex)
+        {
+            Logger.LogDebug(ex, "Worker page went away mid-refresh");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Refreshing the worker page failed");
+        }
     }
 
     private async Task RefreshAsync(Guid ulid)

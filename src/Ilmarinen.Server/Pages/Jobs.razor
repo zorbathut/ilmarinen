@@ -4,9 +4,11 @@
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
 @using System.Threading
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
+@inject ILogger<Jobs> Logger
 @inject JobScheduler Scheduler
 @inject UIEventService UIEvents
 @inject NavigationManager Navigation
@@ -82,9 +84,13 @@
             jobs = await FetchJobsAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch
+        catch (ObjectDisposedException ex)
         {
-            // Page may have been disposed
+            Logger.LogDebug(ex, "Jobs page went away mid-refresh");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Refreshing the jobs page failed");
         }
     }
 
