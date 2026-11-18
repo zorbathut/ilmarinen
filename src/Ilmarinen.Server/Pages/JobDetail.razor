@@ -105,7 +105,7 @@
                         {
                             <tr>
                                 <td>@artifact.Name</td>
-                                <td>@FormatSize(artifact.Size)</td>
+                                <td>@DisplayFormat.Size(artifact.Size)</td>
                                 <td><a href="/api/jobs/@job.Id/artifacts/@artifact.Id/download" class="btn-download" download>Download</a></td>
                             </tr>
                         }
@@ -225,14 +225,5 @@ else
     public void Dispose()
     {
         UIEvents.OnJobsChanged -= OnJobsChanged;
-    }
-
-    private static string FormatSize(long bytes)
-    {
-        if (bytes >= 1024 * 1024)
-            return $"{bytes / (1024.0 * 1024.0):F1} MB";
-        if (bytes >= 1024)
-            return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes} B";
     }
 }
