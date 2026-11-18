@@ -72,7 +72,7 @@
                                 @WorkerBadge.GetStatusLabel(worker)
                             </td>
                             <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
-                            <td class="hide-mobile">@worker.Id.ToString()[..8]</td>
+                            <td class="hide-mobile">@ShortId.From(worker.Id)</td>
                             <td>
                                 @* Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without this the diff is a no-op and the dropdown would keep showing the value the user picked instead of the one that is actually stored. *@
                                 <select @key="(worker.Priority, prioritySaves)"

@@ -15,6 +15,15 @@ else
     [Parameter]
     public string? WorkerName { get; set; }
 
-    private string DisplayName =>
-        !string.IsNullOrEmpty(WorkerName) ? WorkerName : WorkerId?.ToString()[..8] ?? "-";
+    private string DisplayName
+    {
+        get
+        {
+            if (!string.IsNullOrEmpty(WorkerName))
+            {
+                return WorkerName;
+            }
+            return ShortId.From(WorkerId!.Value);
+        }
+    }
 }

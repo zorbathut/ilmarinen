@@ -8,7 +8,7 @@
 @if (job != null)
 {
     <div class="logfull-header">
-        <a href="/jobs/@job.Id">&larr; Job @ShortId</a>
+        <a href="/jobs/@job.Id">&larr; Job @ShortId.From(job.Id)</a>
         <span class="logfull-title">@job.PipelineName @job.Ref</span>
         <a href="/api/jobs/@job.Id/logs/raw" class="btn-download" target="_blank">Raw</a>
         <a href="/api/jobs/@job.Id/logs/download" class="btn-download" download>Download</a>
@@ -32,11 +32,6 @@ else
     private JobInfo? job;
     private string? loadedId;
     private bool loading = true;
-
-    private string ShortId
-    {
-        get { return Id.Length >= 8 ? Id[..8] : Id; }
-    }
 
     // The router reuses this component across /jobs/{a}/logs → /jobs/{b}/logs, so the lookup belongs here rather than in OnInitializedAsync, which would keep showing the first job under the second job's URL.
     protected override async Task OnParametersSetAsync()

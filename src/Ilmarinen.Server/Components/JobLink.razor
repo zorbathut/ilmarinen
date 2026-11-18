@@ -1,7 +1,7 @@
 
 @if (JobId != null)
 {
-    <a href="/jobs/@JobId">@JobId.Value.ToString()[..8]</a>
+    <a href="/jobs/@JobId" title="@JobId">@ShortId.From(JobId.Value)</a>
 }
 else
 {

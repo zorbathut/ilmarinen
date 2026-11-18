@@ -15,6 +15,15 @@ else
     [Parameter]
     public string? PipelineName { get; set; }
 
-    private string DisplayName =>
-        !string.IsNullOrEmpty(PipelineName) ? PipelineName : PipelineId?.ToString()[..8] ?? "-";
+    private string DisplayName
+    {
+        get
+        {
+            if (!string.IsNullOrEmpty(PipelineName))
+            {
+                return PipelineName;
+            }
+            return ShortId.From(PipelineId!.Value);
+        }
+    }
 }

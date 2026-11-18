@@ -3,7 +3,7 @@
 {
     @foreach (var jobId in JobIds)
     {
-        <a href="/jobs/@jobId">@jobId.ToString()[..8]</a>
+        <a href="/jobs/@jobId" title="@jobId">@ShortId.From(jobId)</a>
     }
 }
 else
