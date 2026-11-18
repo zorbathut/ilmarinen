@@ -1,0 +1,46 @@
+@using Ilmarinen.Protocol.Responses
+@using Microsoft.Extensions.Logging
+@using System.Threading
+@implements IDisposable
+@inject ILogger<ElapsedTime> Logger
+
+<span>@DisplayFormat.JobElapsed(Job, DateTime.UtcNow)</span>
+
+@code {
+    // A running job's elapsed time counts in seconds, and nothing else on the page changes that often
+    private readonly PeriodicTimer tick = new(TimeSpan.FromSeconds(1));
+
+    [Parameter, EditorRequired]
+    public JobInfo Job { get; set; } = null!;
+
+    protected override void OnInitialized()
+    {
+        _ = TickAsync();
+    }
+
+    private async Task TickAsync()
+    {
+        try
+        {
+            // Ends when Dispose disposes the timer
+            while (await tick.WaitForNextTickAsync())
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (ObjectDisposedException ex)
+        {
+            Logger.LogDebug(ex, "Circuit went away mid-refresh");
+        }
+        catch (Exception ex)
+        {
+            // Nothing awaits this loop, so hand anything unexpected to the circuit's own error handling rather than lose it
+            await DispatchExceptionAsync(ex);
+        }
+    }
+
+    public void Dispose()
+    {
+        tick.Dispose();
+    }
+}

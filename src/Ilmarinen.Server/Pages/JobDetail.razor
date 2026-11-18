@@ -53,6 +53,17 @@
 
                 <span class="detail-label">Completed</span>
                 <span class="detail-value">@(job.CompletedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</span>
+
+                @if (job.StartedAt != null && job.CompletedAt != null)
+                {
+                    <span class="detail-label">Duration</span>
+                    <span class="detail-value">@DisplayFormat.JobElapsed(job, DateTime.UtcNow)</span>
+                }
+                else if (job.StartedAt != null)
+                {
+                    <span class="detail-label">Elapsed</span>
+                    <span class="detail-value"><ElapsedTime Job="job" /></span>
+                }
             </div>
 
             <div class="card-actions">
