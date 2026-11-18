@@ -162,7 +162,7 @@
                                         @StepLabel(step)
                                     </td>
                                     <td><code>@step.Name</code></td>
-                                    <td>@FormatDuration(step.Duration)</td>
+                                    <td>@DiagnosticStepDuration(step.Duration)</td>
                                     <td>
                                         @if (step.Message != null)
                                         {
@@ -223,7 +223,7 @@
                                 <td>@GetShortRepoUrl(job.RepoUrl)</td>
                                 <td>@job.Ref</td>
                                 <td class="hide-mobile">@job.ScriptPath</td>
-                                <td>@FormatDuration(job)</td>
+                                <td>@DisplayFormat.JobElapsed(job, DateTime.UtcNow)</td>
                             </tr>
                         }
                     }
@@ -291,7 +291,7 @@ else
         return step.Success ? "ok" : "FAIL";
     }
 
-    private static string FormatDuration(TimeSpan d)
+    private static string DiagnosticStepDuration(TimeSpan d)
     {
         if (d.TotalSeconds < 1) return $"{d.TotalMilliseconds:0}ms";
         if (d.TotalSeconds < 60) return $"{d.TotalSeconds:0.0}s";
@@ -420,21 +420,6 @@ else
             deletingWorkspaces.Remove(workspace);
             StateHasChanged();
         }
-    }
-
-    private static string FormatDuration(JobInfo job)
-    {
-        if (job.StartedAt == null)
-            return "---";
-
-        var end = job.CompletedAt ?? DateTime.UtcNow;
-        var duration = end - job.StartedAt.Value;
-
-        if (duration.TotalMinutes < 1)
-            return $"{duration.Seconds}s";
-        if (duration.TotalHours < 1)
-            return $"{duration.Minutes}m {duration.Seconds}s";
-        return $"{(int)duration.TotalHours}h {duration.Minutes}m";
     }
 
     private static string GetShortRepoUrl(string url)

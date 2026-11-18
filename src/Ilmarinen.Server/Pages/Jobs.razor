@@ -54,7 +54,7 @@
                             <td>@job.Ref</td>
                             <td class="hide-mobile">@job.ScriptPath</td>
                             <td class="hide-mobile"><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
-                            <td>@FormatDuration(job)</td>
+                            <td>@DisplayFormat.JobElapsed(job, DateTime.UtcNow)</td>
                         </tr>
                     }
                 }
@@ -99,21 +99,6 @@
         using var scope = ScopeFactory.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<JobRepository>();
         return await repo.GetAllAsync();
-    }
-
-    private static string FormatDuration(JobInfo job)
-    {
-        if (job.StartedAt == null)
-            return "---";
-
-        var end = job.CompletedAt ?? DateTime.UtcNow;
-        var duration = end - job.StartedAt.Value;
-
-        if (duration.TotalMinutes < 1)
-            return $"{duration.Seconds}s";
-        if (duration.TotalHours < 1)
-            return $"{duration.Minutes}m {duration.Seconds}s";
-        return $"{(int)duration.TotalHours}h {duration.Minutes}m";
     }
 
     private async Task RetryJob(Guid jobId)

@@ -1,3 +1,5 @@
+using Ilmarinen.Protocol;
+using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Components;
 using NUnit.Framework;
 using System;
@@ -18,6 +20,56 @@ public class DisplayFormatTests
     public void Size_PicksTheLargestUnitBelowTheValue(long bytes, string expected)
     {
         Assert.That(DisplayFormat.Size(bytes), Is.EqualTo(expected));
+    }
+
+    [TestCase(0, "0s")]
+    [TestCase(59, "59s")]
+    [TestCase(60, "1m 0s")]
+    [TestCase(3599, "59m 59s")]
+    [TestCase(3600, "1h 0m")]
+    [TestCase(90061, "25h 1m")]
+    public void Duration_PicksUnitsByMagnitude(int seconds, string expected)
+    {
+        Assert.That(DisplayFormat.Duration(TimeSpan.FromSeconds(seconds)), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void JobElapsed_NotStarted_ReadsAsNoDuration()
+    {
+        var now = DateTime.UtcNow;
+
+        Assert.That(DisplayFormat.JobElapsed(JobAt(started: null, completed: null), now), Is.EqualTo("---"));
+    }
+
+    [Test]
+    public void JobElapsed_Running_CountsUpToNow()
+    {
+        var now = DateTime.UtcNow;
+
+        Assert.That(DisplayFormat.JobElapsed(JobAt(started: now.AddSeconds(-90), completed: null), now), Is.EqualTo(DisplayFormat.Duration(TimeSpan.FromSeconds(90))));
+    }
+
+    [Test]
+    public void JobElapsed_Completed_StopsAtCompletion()
+    {
+        var now = DateTime.UtcNow;
+        var job = JobAt(started: now.AddHours(-2), completed: now.AddHours(-2).AddSeconds(45));
+
+        Assert.That(DisplayFormat.JobElapsed(job, now), Is.EqualTo(DisplayFormat.Duration(TimeSpan.FromSeconds(45))));
+    }
+
+    private static JobInfo JobAt(DateTime? started, DateTime? completed)
+    {
+        return new JobInfo
+        {
+            Id = Guid.CreateVersion7(),
+            Status = JobStatus.Running,
+            RepoUrl = "https://example.invalid/repo.git",
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            StartedAt = started,
+            CompletedAt = completed
+        };
     }
 
     [Test]

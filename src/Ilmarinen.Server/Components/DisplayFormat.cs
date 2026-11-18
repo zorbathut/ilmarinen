@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol.Responses;
 using System.Globalization;
 using System;
 
@@ -20,6 +21,31 @@ public static class DisplayFormat
             return string.Format(CultureInfo.InvariantCulture, "{0:F1} KB", bytes / 1024.0);
         }
         return $"{bytes} B";
+    }
+
+    public static string Duration(TimeSpan duration)
+    {
+        if (duration.TotalMinutes < 1)
+        {
+            return $"{duration.Seconds}s";
+        }
+        if (duration.TotalHours < 1)
+        {
+            return $"{duration.Minutes}m {duration.Seconds}s";
+        }
+        return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+    }
+
+    /// <summary>
+    /// How long a job has run: up to <paramref name="now"/> while it's running, up to its completion once it's done.
+    /// </summary>
+    public static string JobElapsed(JobInfo job, DateTime now)
+    {
+        if (job.StartedAt == null)
+        {
+            return "---";
+        }
+        return Duration((job.CompletedAt ?? now) - job.StartedAt.Value);
     }
 
     /// <summary>
