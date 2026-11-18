@@ -51,3 +51,4 @@ The launcher is the one component that cannot update itself — deliberately, so
 - **`stop_grace_period` matters.** The launcher forwards SIGTERM to the worker and gives it ~25s to stop cleanly; the compose file sets `stop_grace_period: 40s` to leave room. Don't lower it — Docker's 10s default would SIGKILL a mid-job worker.
 - **Server without a bundle.** If the server has no bundle configured (manifest 404), a launcher with a cached bundle runs the cached one; running workers keep working (a server with no bundle expresses no opinion about staleness). A launcher with an empty cache waits for the manifest to appear.
 - The bundle cache keeps the current and previous bundle and prunes the rest.
+- **Hosts that sleep.** Add `docker-compose.inhibit-sleep.yml` (`-f docker-compose.yml -f docker-compose.inhibit-sleep.yml`) so the worker holds a logind inhibitor while a job runs. Caveats as in `../worker-docker/README.md`.

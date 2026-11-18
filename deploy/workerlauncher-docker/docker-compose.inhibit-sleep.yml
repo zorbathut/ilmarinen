@@ -1,0 +1,11 @@
+# Overlay for a launcher on a Linux host that suspends when idle.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.inhibit-sleep.yml up -d --build
+#
+# The launcher's worker child inherits this container's environment and mounts, so this is the launcher-service form of deploy/worker-docker/docker-compose.inhibit-sleep.yml — read that file for what it does and for the lid-close, Docker Desktop, SELinux and no-D-Bus caveats before using it.
+services:
+  launcher:
+    environment:
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro
