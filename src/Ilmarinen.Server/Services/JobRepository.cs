@@ -270,6 +270,66 @@ public class JobRepository
             retryablePipelines: retryablePipelines)).ToList();
     }
 
+    /// <summary>
+    /// The latest ten runs, plus the one left out of them. See <see cref="EstimateDuration"/>.
+    /// </summary>
+    private const int EstimateSampleSize = 11;
+
+    /// <summary>
+    /// Expected durations of the running jobs among <paramref name="jobs"/>, keyed by job ID, for those whose worker has run the same script of the same repository successfully more than once. Web UI only: JobInfo is a protocol type, and growing it would change the protocol hash for a display feature.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<Guid, TimeSpan>> GetDurationEstimatesAsync(IEnumerable<JobInfo> jobs)
+    {
+        var estimates = new Dictionary<Guid, TimeSpan>();
+        var running = jobs
+            .Where(j => j.Status == JobStatus.Running && j.WorkerId != null)
+            .GroupBy(j => (j.RepoUrl, j.ScriptPath, WorkerId: j.WorkerId!.Value));
+        foreach (var triple in running)
+        {
+            var (repoUrl, scriptPath, workerId) = triple.Key;
+            var latest = await _db.Jobs
+                .Where(j => j.WorkerId == workerId
+                    && j.Status == JobStatus.Success
+                    && j.RepoUrl == repoUrl
+                    && j.ScriptPath == scriptPath
+                    && j.StartedAt != null
+                    && j.CompletedAt != null)
+                .OrderByDescending(j => j.CompletedAt)
+                .Take(EstimateSampleSize)
+                .Select(j => new { StartedAt = j.StartedAt!.Value, CompletedAt = j.CompletedAt!.Value })
+                .ToListAsync();
+
+            var estimate = EstimateDuration(latest.Select(j => j.CompletedAt - j.StartedAt).ToList());
+            if (estimate != null)
+            {
+                foreach (var job in triple)
+                {
+                    estimates[job.Id] = estimate.Value;
+                }
+            }
+        }
+        return estimates;
+    }
+
+    /// <summary>
+    /// The median of the latest ten successful runs, leaving out the very first one: a script's first successful run on a worker does its setup (mirror, workspace, images) and says little about the rest. Null when that leaves nothing. Only the latest <see cref="EstimateSampleSize"/> are looked at and the oldest of those is dropped, which while history is short is that first run, and otherwise the one just beyond the latest ten.
+    /// </summary>
+    public static TimeSpan? EstimateDuration(IReadOnlyList<TimeSpan> successesNewestFirst)
+    {
+        var sample = successesNewestFirst.Take(EstimateSampleSize).SkipLast(1).Order().ToList();
+        if (sample.Count == 0)
+        {
+            return null;
+        }
+
+        var middle = sample.Count / 2;
+        if (sample.Count % 2 == 1)
+        {
+            return sample[middle];
+        }
+        return (sample[middle - 1] + sample[middle]) / 2;
+    }
+
     public async Task<IReadOnlyList<JobInfo>> GetByWorkerAsync(Guid workerId)
     {
         var workerName = await _db.Workers.Where(w => w.Id == workerId).Select(w => w.Name).FirstOrDefaultAsync();

@@ -63,6 +63,12 @@
                 {
                     <span class="detail-label">Elapsed</span>
                     <span class="detail-value"><ElapsedTime Job="job" /></span>
+
+                    @if (estimate is TimeSpan expected)
+                    {
+                        <span class="detail-label">Estimated Duration</span>
+                        <span class="detail-value">~@DisplayFormat.Duration(expected)</span>
+                    }
                 }
             </div>
 
@@ -146,6 +152,7 @@ else
     public string Id { get; set; } = "";
 
     private JobInfo? job;
+    private TimeSpan? estimate;
     private Guid jobGuid;
     private string? loadedId;
     private bool loading = true;
@@ -165,12 +172,13 @@ else
 
         loadedId = Id;
         job = null;
+        estimate = null;
         loading = true;
         jobGuid = Guid.TryParse(Id, out var parsed) ? parsed : default;
 
         if (jobGuid != default)
         {
-            job = await FetchJobAsync(jobGuid);
+            (job, estimate) = await FetchJobAsync(jobGuid);
         }
 
         loading = false;
@@ -194,7 +202,7 @@ else
                 return;
             }
 
-            job = fetched;
+            (job, estimate) = fetched;
             await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)
@@ -203,11 +211,18 @@ else
         }
     }
 
-    private async Task<JobInfo?> FetchJobAsync(Guid id)
+    private async Task<(JobInfo? Job, TimeSpan? Estimate)> FetchJobAsync(Guid id)
     {
         using var scope = ScopeFactory.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        return await repo.GetAsync(id);
+        var fetched = await repo.GetAsync(id);
+        if (fetched == null)
+        {
+            return (null, null);
+        }
+
+        var estimates = await repo.GetDurationEstimatesAsync([fetched]);
+        return (fetched, estimates.TryGetValue(fetched.Id, out var expected) ? expected : null);
     }
 
     private async Task CancelJob()

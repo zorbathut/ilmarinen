@@ -54,7 +54,7 @@
                             <td>@job.Ref</td>
                             <td class="hide-mobile">@job.ScriptPath</td>
                             <td class="hide-mobile"><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
-                            <td>@DisplayFormat.JobElapsed(job, DateTime.UtcNow)</td>
+                            <td>@DisplayFormat.JobProgress(job, EstimateFor(job), DateTime.UtcNow)</td>
                         </tr>
                     }
                 }
@@ -65,11 +65,12 @@
 
 @code {
     private IReadOnlyList<JobInfo>? jobs;
+    private IReadOnlyDictionary<Guid, TimeSpan> estimates = new Dictionary<Guid, TimeSpan>();
     private Timer? _timer;
 
     protected override async Task OnInitializedAsync()
     {
-        jobs = await FetchJobsAsync();
+        (jobs, estimates) = await FetchJobsAsync();
 
         UIEvents.OnJobsChanged += OnJobsChanged;
 
@@ -81,7 +82,7 @@
     {
         try
         {
-            jobs = await FetchJobsAsync();
+            (jobs, estimates) = await FetchJobsAsync();
             await InvokeAsync(StateHasChanged);
         }
         catch (ObjectDisposedException ex)
@@ -94,11 +95,17 @@
         }
     }
 
-    private async Task<IReadOnlyList<JobInfo>> FetchJobsAsync()
+    private async Task<(IReadOnlyList<JobInfo> Jobs, IReadOnlyDictionary<Guid, TimeSpan> Estimates)> FetchJobsAsync()
     {
         using var scope = ScopeFactory.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        return await repo.GetAllAsync();
+        var all = await repo.GetAllAsync();
+        return (all, await repo.GetDurationEstimatesAsync(all));
+    }
+
+    private TimeSpan? EstimateFor(JobInfo job)
+    {
+        return estimates.TryGetValue(job.Id, out var estimate) ? estimate : null;
     }
 
     private async Task RetryJob(Guid jobId)

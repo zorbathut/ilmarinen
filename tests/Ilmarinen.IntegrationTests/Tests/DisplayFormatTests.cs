@@ -58,6 +58,36 @@ public class DisplayFormatTests
         Assert.That(DisplayFormat.JobElapsed(job, now), Is.EqualTo(DisplayFormat.Duration(TimeSpan.FromSeconds(45))));
     }
 
+    [Test]
+    public void JobProgress_WithAnEstimate_ShowsBothElapsedAndEstimate()
+    {
+        var now = DateTime.UtcNow;
+        var job = JobAt(started: now.AddSeconds(-80), completed: null);
+
+        var withEstimate = DisplayFormat.JobProgress(job, TimeSpan.FromSeconds(190), now);
+
+        Assert.That(withEstimate, Does.Contain(DisplayFormat.JobElapsed(job, now)));
+        Assert.That(withEstimate, Does.Contain(DisplayFormat.Duration(TimeSpan.FromSeconds(190))));
+    }
+
+    [Test]
+    public void JobProgress_FinishedJob_DropsTheEstimate()
+    {
+        var now = DateTime.UtcNow;
+        var job = JobAt(started: now.AddSeconds(-300), completed: now);
+
+        Assert.That(DisplayFormat.JobProgress(job, TimeSpan.FromSeconds(190), now), Is.EqualTo(DisplayFormat.JobElapsed(job, now)));
+    }
+
+    [Test]
+    public void JobProgress_WithoutAnEstimate_IsJustTheElapsedTime()
+    {
+        var now = DateTime.UtcNow;
+        var job = JobAt(started: now.AddSeconds(-80), completed: null);
+
+        Assert.That(DisplayFormat.JobProgress(job, null, now), Is.EqualTo(DisplayFormat.JobElapsed(job, now)));
+    }
+
     private static JobInfo JobAt(DateTime? started, DateTime? completed)
     {
         return new JobInfo

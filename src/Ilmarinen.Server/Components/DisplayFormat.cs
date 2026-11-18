@@ -49,6 +49,19 @@ public static class DisplayFormat
     }
 
     /// <summary>
+    /// A job's elapsed time, followed by how long it's expected to take while it's still running and there's an estimate for it.
+    /// </summary>
+    public static string JobProgress(JobInfo job, TimeSpan? estimate, DateTime now)
+    {
+        var elapsed = JobElapsed(job, now);
+        if (estimate == null || job.CompletedAt != null)
+        {
+            return elapsed;
+        }
+        return $"{elapsed} / ~{Duration(estimate.Value)}";
+    }
+
+    /// <summary>
     /// A size that is measured in the background: <paramref name="bytes"/> is null both before the measurement arrives and when it failed, and the two should read differently.
     /// </summary>
     public static string MeasuredSize(bool measured, long? bytes)
