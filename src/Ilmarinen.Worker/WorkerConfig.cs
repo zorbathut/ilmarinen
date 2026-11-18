@@ -30,6 +30,11 @@ public class WorkerConfig
     public string WorkspacePath { get; init; } = GetDefaultWorkspacePath();
 
     /// <summary>
+    /// Least time between two measurements of workspace disk usage. Each walks every workspace, so a run of short jobs shouldn't trigger one apiece.
+    /// </summary>
+    public TimeSpan WorkspaceUsageInterval { get; init; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>
     /// Hash of the bundle this worker was launched from. Set via ILMARINEN_BUNDLE_HASH by the launcher; null means classic mode (no self-update behavior).
     /// </summary>
     public string? BundleHash { get; init; }

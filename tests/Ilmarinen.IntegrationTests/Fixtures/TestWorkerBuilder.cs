@@ -47,7 +47,9 @@ public class TestWorkerBuilder
             ServerUrl = _serverUrl,
             WorkspacePath = _workspacePath,
             WorkerKey = _workerKey,
-            BundleHash = _bundleHash
+            BundleHash = _bundleHash,
+            // Measure after every job, so a test doesn't wait out the production spacing
+            WorkspaceUsageInterval = TimeSpan.Zero
         };
 
         var builder = Host.CreateApplicationBuilder();

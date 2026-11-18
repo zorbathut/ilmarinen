@@ -115,7 +115,7 @@
     </div>
 </div>
 
-@if (workers != null && workers.Any(w => w.Workspaces.Count > 0))
+@if (workers != null && workers.Any(w => w.Workspaces.Count > 0 || w.ShowsMirrors))
 {
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Workspaces</h2>
@@ -125,6 +125,7 @@
                     <tr>
                         <th>Worker</th>
                         <th>Workspace</th>
+                        <th>Size</th>
                         <th>Last Used</th>
                         <th></th>
                     </tr>
@@ -137,6 +138,7 @@
                             <tr @key="(worker.Id, ws.Name)">
                                 <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
                                 <td>@ws.Name</td>
+                                <td>@DisplayFormat.MeasuredSize(ws.Measured, ws.SizeBytes)</td>
                                 <td><TimeAgo When="ws.LastUsed" /></td>
                                 <td>
                                     @if (worker.IsConnected)
@@ -146,6 +148,16 @@
                                                 @onclick="() => DeleteWorkspace(worker.Id, ws.Name)">Delete</button>
                                     }
                                 </td>
+                            </tr>
+                        }
+                        @if (worker.ShowsMirrors)
+                        {
+                            <tr @key="(worker.Id, MirrorsRowKey)">
+                                <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
+                                <td><em>git mirrors</em></td>
+                                <td>@DisplayFormat.MeasuredSize(true, worker.MirrorsSizeBytes)</td>
+                                <td>-</td>
+                                <td></td>
                             </tr>
                         }
                     }
@@ -206,6 +218,9 @@
         UIEvents.OnWorkersChanged -= OnChanged;
         UIEvents.OnJobsChanged -= OnChanged;
     }
+
+    // Workspace names can't start with a dot, so this never collides with one
+    private const string MirrorsRowKey = ".mirrors";
 
     private bool IsDeleting(Guid workerId, string workspace) =>
         deletingWorkspaces.Contains($"{workerId}:{workspace}");

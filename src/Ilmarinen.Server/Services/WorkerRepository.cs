@@ -32,6 +32,9 @@ public class WorkerRepository
     // Diagnostic state, keyed by worker ID (not connection ID) so it survives reconnects. Cleared on revoke, not disconnect — a reconnecting worker re-pushes its cached diagnostic so the value here is replaced anyway, and keeping it across the brief reconnect window avoids a "no diagnostic" UI flicker.
     private readonly ConcurrentDictionary<Guid, DiagnosticReport> _workerDiagnostics = new();
 
+    // Latest workspace disk usage, keyed by worker ID for the same reason as diagnostics: a reconnect shouldn't blank every size until the worker's next measurement lands. The connection-keyed workspace list still decides which workspaces are shown.
+    private readonly ConcurrentDictionary<Guid, WorkspaceUsageReport> _workerUsage = new();
+
     // Bundle hash reported at authentication by launcher-run workers; absent for classic workers.
     private readonly ConcurrentDictionary<string, string> _connectionBundleHashes = new();
 
@@ -269,6 +272,16 @@ public class WorkerRepository
         _workerDiagnostics.TryRemove(workerId, out _);
     }
 
+    public void SetWorkspaceUsage(Guid workerId, WorkspaceUsageReport report)
+    {
+        _workerUsage[workerId] = report;
+    }
+
+    public void ClearWorkspaceUsage(Guid workerId)
+    {
+        _workerUsage.TryRemove(workerId, out _);
+    }
+
     public void RemoveWorkspace(string connectionId, string name)
     {
         _workerWorkspaces.AddOrUpdate(
@@ -319,6 +332,7 @@ public class WorkerRepository
             _connectionBundleHashes.TryGetValue(connectionId, out bundleHash);
         }
         _workerDiagnostics.TryGetValue(w.Id, out diagnostic);
+        _workerUsage.TryGetValue(w.Id, out var usage);
 
         var currentJobIds = await db.Jobs
             .Where(j => j.WorkerId == id && j.Status == JobStatus.Running)
@@ -341,7 +355,9 @@ public class WorkerRepository
             LastSeen = w.LastSeen,
             LastIpAddress = w.LastIpAddress,
             Priority = w.Priority,
-            Workspaces = workspaces ?? [],
+            Workspaces = WorkspaceView.Join(workspaces ?? [], usage),
+            MirrorsSizeBytes = usage?.MirrorsSizeBytes,
+            UsageMeasured = usage != null,
             Diagnostic = diagnostic,
             BundleHash = bundleHash
         };
@@ -381,6 +397,7 @@ public class WorkerRepository
                 _connectionBundleHashes.TryGetValue(connectionId, out bundleHash);
             }
             _workerDiagnostics.TryGetValue(w.Id, out diagnostic);
+            _workerUsage.TryGetValue(w.Id, out var usage);
 
             return new WorkerView
             {
@@ -393,7 +410,9 @@ public class WorkerRepository
                 LastSeen = w.LastSeen,
                 LastIpAddress = w.LastIpAddress,
                 Priority = w.Priority,
-                Workspaces = workspaces ?? [],
+                Workspaces = WorkspaceView.Join(workspaces ?? [], usage),
+                MirrorsSizeBytes = usage?.MirrorsSizeBytes,
+                UsageMeasured = usage != null,
                 Diagnostic = diagnostic,
                 BundleHash = bundleHash
             };
@@ -419,7 +438,62 @@ public class WorkerView
     public DateTime LastSeen { get; init; }
     public string? LastIpAddress { get; init; }
     public WorkerPriority Priority { get; init; }
-    public IReadOnlyList<WorkspaceInfo> Workspaces { get; init; } = [];
+    public IReadOnlyList<WorkspaceView> Workspaces { get; init; } = [];
+
+    /// <summary>
+    /// Disk space the worker's git mirrors take. Null when not yet measured or unmeasurable.
+    /// </summary>
+    public long? MirrorsSizeBytes { get; init; }
+
+    /// <summary>
+    /// Whether any disk-usage measurement from the worker has arrived yet.
+    /// </summary>
+    public bool UsageMeasured { get; init; }
+
+    /// <summary>
+    /// A worker with no mirrors yet has nothing to show; one whose mirrors couldn't be measured still shows that.
+    /// </summary>
+    public bool ShowsMirrors
+    {
+        get { return UsageMeasured && MirrorsSizeBytes != 0; }
+    }
     public DiagnosticReport? Diagnostic { get; init; }
     public string? BundleHash { get; init; }
+}
+
+/// <summary>
+/// A workspace as the UI shows it: the worker's latest listing joined with its latest disk-usage measurement, which arrives separately and can lag behind.
+/// </summary>
+public record WorkspaceView
+{
+    public required string Name { get; init; }
+    public required string Path { get; init; }
+    public required DateTimeOffset LastUsed { get; init; }
+
+    /// <summary>
+    /// False until a measurement that covers this workspace has arrived.
+    /// </summary>
+    public bool Measured { get; init; }
+
+    /// <summary>
+    /// Disk space deleting the workspace would free. Null when not measured, or when measuring it failed.
+    /// </summary>
+    public long? SizeBytes { get; init; }
+
+    public static IReadOnlyList<WorkspaceView> Join(IReadOnlyList<WorkspaceInfo> workspaces, WorkspaceUsageReport? usage)
+    {
+        return workspaces.Select(ws =>
+        {
+            long? size = null;
+            var measured = usage != null && usage.WorkspaceSizes.TryGetValue(ws.Name, out size);
+            return new WorkspaceView
+            {
+                Name = ws.Name,
+                Path = ws.Path,
+                LastUsed = ws.LastUsed,
+                Measured = measured,
+                SizeBytes = size
+            };
+        }).ToList();
+    }
 }

@@ -3,8 +3,11 @@ using Ilmarinen.Worker.Services;
 using Ilmarinen.Worker;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Threading;
 using System;
 
 namespace Ilmarinen.Core.Tests;
@@ -154,6 +157,124 @@ public class WorkspaceManagerTests
         Assert.That(Directory.Exists(wsPath), Is.False);
     }
 
+    private const int OneMegabyte = 1024 * 1024;
+
+    [Test]
+    public async Task MeasureUsage_CountsNestedFilesAndDotfiles()
+    {
+        var ws = Path.Combine(_tempDir, "sized");
+        WriteRandomFile(Path.Combine(ws, "src", "deep", "a.bin"), OneMegabyte);
+        WriteRandomFile(Path.Combine(ws, ".git", "objects", "b.bin"), OneMegabyte);
+
+        var usage = await _manager.MeasureUsageAsync(CancellationToken.None);
+
+        Assert.That(usage.WorkspaceSizes["sized"], Is.GreaterThanOrEqualTo(2L * OneMegabyte));
+    }
+
+    [Test]
+    public async Task MeasureUsage_DoesNotFollowSymlinks()
+    {
+        var outside = Path.Combine(_tempDir, ".outside");
+        WriteRandomFile(Path.Combine(outside, "big.bin"), OneMegabyte);
+        var ws = Path.Combine(_tempDir, "linked");
+        Directory.CreateDirectory(ws);
+        File.CreateSymbolicLink(Path.Combine(ws, "file-link"), Path.Combine(outside, "big.bin"));
+        Directory.CreateSymbolicLink(Path.Combine(ws, "dir-link"), outside);
+
+        var usage = await _manager.MeasureUsageAsync(CancellationToken.None);
+
+        Assert.That(usage.WorkspaceSizes["linked"], Is.Not.Null.And.LessThan((long)OneMegabyte));
+    }
+
+    [Test]
+    public async Task MeasureUsage_FileSharedWithTheMirrors_CountsTowardTheMirrorsOnly()
+    {
+        var mirrored = Path.Combine(_tempDir, ".mirrors", "repo.git", "objects", "pack.bin");
+        WriteRandomFile(mirrored, OneMegabyte);
+        HardLink(mirrored, Path.Combine(_tempDir, "clone", ".git", "objects", "pack.bin"));
+
+        var usage = await _manager.MeasureUsageAsync(CancellationToken.None);
+
+        Assert.That(usage.WorkspaceSizes["clone"], Is.Not.Null.And.LessThan((long)OneMegabyte));
+        Assert.That(usage.MirrorsSizeBytes, Is.GreaterThanOrEqualTo((long)OneMegabyte));
+    }
+
+    [Test]
+    public async Task MeasureUsage_FileSharedBetweenTwoWorkspaces_CountsTowardNeither()
+    {
+        // What two clones of one mirror are left with once the mirror is rebuilt: deleting either frees none of it
+        var first = Path.Combine(_tempDir, "first", "pack.bin");
+        WriteRandomFile(first, OneMegabyte);
+        HardLink(first, Path.Combine(_tempDir, "second", "pack.bin"));
+
+        var usage = await _manager.MeasureUsageAsync(CancellationToken.None);
+
+        Assert.That(usage.WorkspaceSizes["first"], Is.Not.Null.And.LessThan((long)OneMegabyte));
+        Assert.That(usage.WorkspaceSizes["second"], Is.Not.Null.And.LessThan((long)OneMegabyte));
+    }
+
+    [Test]
+    public async Task MeasureUsage_FileLinkedTwiceInsideOneWorkspace_CountsOnce()
+    {
+        var original = Path.Combine(_tempDir, "doubled", "a.bin");
+        WriteRandomFile(original, OneMegabyte);
+        HardLink(original, Path.Combine(_tempDir, "doubled", "b.bin"));
+
+        var usage = await _manager.MeasureUsageAsync(CancellationToken.None);
+
+        Assert.That(usage.WorkspaceSizes["doubled"], Is.InRange((long)OneMegabyte, 2L * OneMegabyte - 1));
+    }
+
+    [Test]
+    public async Task MeasureUsage_NoMirrors_ReportsZeroMirrorSize()
+    {
+        Directory.CreateDirectory(Path.Combine(_tempDir, "ws"));
+
+        var usage = await _manager.MeasureUsageAsync(CancellationToken.None);
+
+        Assert.That(usage.MirrorsSizeBytes, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task MeasureUsage_ReflectsChangesImmediately()
+    {
+        var ws = Path.Combine(_tempDir, "growing");
+        Directory.CreateDirectory(ws);
+        var before = (await _manager.MeasureUsageAsync(CancellationToken.None)).WorkspaceSizes["growing"];
+
+        WriteRandomFile(Path.Combine(ws, "grown.bin"), OneMegabyte);
+
+        Assert.That((await _manager.MeasureUsageAsync(CancellationToken.None)).WorkspaceSizes["growing"], Is.GreaterThanOrEqualTo(before + OneMegabyte));
+    }
+
+    [Test]
+    public async Task MeasureUsage_UnreadableDirectory_ReportsNullForThatWorkspaceOnly()
+    {
+        if (Environment.UserName == "root")
+        {
+            Assert.Ignore("root reads everything, so there is no unreadable directory to make");
+        }
+        var locked = Path.Combine(_tempDir, "locked", "secret");
+        Directory.CreateDirectory(locked);
+        Directory.CreateDirectory(Path.Combine(_tempDir, "fine"));
+        Directory.CreateDirectory(Path.Combine(_tempDir, ".mirrors"));
+        File.SetUnixFileMode(locked, UnixFileMode.None);
+        try
+        {
+            var usage = await _manager.MeasureUsageAsync(CancellationToken.None);
+
+            Assert.That(usage.WorkspaceSizes["locked"], Is.Null);
+            Assert.That(usage.WorkspaceSizes["fine"], Is.Not.Null);
+            Assert.That(usage.MirrorsSizeBytes, Is.Not.Null);
+        }
+        finally
+        {
+            File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        Assert.That((await _manager.MeasureUsageAsync(CancellationToken.None)).WorkspaceSizes["locked"], Is.Not.Null);
+    }
+
     [Test]
     public void ReleaseActiveWorkspace_RecordsTheWorkspacesLastUse()
     {
@@ -192,5 +313,22 @@ public class WorkspaceManagerTests
     private DateTimeOffset LastUsedOf(string name)
     {
         return _manager.DiscoverWorkspaces().Single(w => w.Name == name).LastUsed;
+    }
+
+    private static void WriteRandomFile(string path, int length)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        // Random so a compressing filesystem can't store it in fewer blocks than its length
+        var bytes = new byte[length];
+        Random.Shared.NextBytes(bytes);
+        File.WriteAllBytes(path, bytes);
+    }
+
+    private static void HardLink(string existing, string link)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+        using var process = Process.Start("ln", [existing, link]);
+        process.WaitForExit();
+        Assert.That(process.ExitCode, Is.EqualTo(0), "ln failed");
     }
 }

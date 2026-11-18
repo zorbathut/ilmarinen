@@ -23,6 +23,22 @@ public static class DisplayFormat
     }
 
     /// <summary>
+    /// A size that is measured in the background: <paramref name="bytes"/> is null both before the measurement arrives and when it failed, and the two should read differently.
+    /// </summary>
+    public static string MeasuredSize(bool measured, long? bytes)
+    {
+        if (!measured)
+        {
+            return "measuring…";
+        }
+        if (bytes == null)
+        {
+            return "unknown";
+        }
+        return Size(bytes.Value);
+    }
+
+    /// <summary>
     /// How long before <paramref name="now"/> something happened, coarsely. A time in the future (the worker's clock ahead of the server's) reads as now.
     /// </summary>
     public static string Ago(DateTimeOffset when, DateTimeOffset now)

@@ -9,10 +9,12 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Threading;
 using System;
@@ -55,6 +57,9 @@ public class WorkerService : BackgroundService
     // True once an authenticated server has told us it serves a different bundle than the one we run. Only meaningful in launcher mode (BundleHash set).
     private volatile bool _updatePending;
     private int _handshakeFailures;
+
+    // Requests for a background measurement of workspace disk usage. Capacity one and dropping extras, so requests made while one is pending coalesce into it.
+    private readonly Channel<bool> _usageRequests = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
 
     private Guid? CurrentJobId
     {
@@ -167,6 +172,7 @@ public class WorkerService : BackgroundService
         _logger.LogInformation("Worker {WorkerId} connected and ready", _workerId);
 
         var diagnosticRetries = RetryUnhealthyDiagnosticAsync(stoppingToken);
+        var usageMeasurements = MeasureWorkspaceUsageAsync(stoppingToken);
 
         // Heartbeat loop — also handles manual reconnection when auto-reconnect gives up
         while (!stoppingToken.IsCancellationRequested)
@@ -217,6 +223,7 @@ public class WorkerService : BackgroundService
         }
 
         await diagnosticRetries;
+        await usageMeasurements;
         await DrainInFlightWorkAsync();
     }
 
@@ -387,6 +394,7 @@ public class WorkerService : BackgroundService
         {
             await ConnectAndSyncCore();
             Interlocked.Exchange(ref _handshakeFailures, 0);
+            _usageRequests.Writer.TryWrite(true);
         }
         catch
         {
@@ -764,6 +772,57 @@ public class WorkerService : BackgroundService
         finally
         {
             _syncLock.Release();
+            _usageRequests.Writer.TryWrite(true);
+        }
+    }
+
+    /// <summary>
+    /// Measures workspace disk usage whenever asked, at most once per <see cref="WorkerConfig.WorkspaceUsageInterval"/>, and reports it. Out of band because a measurement can take a while, and nothing should wait on it.
+    /// </summary>
+    private async Task MeasureWorkspaceUsageAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            while (true)
+            {
+                await _usageRequests.Reader.ReadAsync(stoppingToken);
+                try
+                {
+                    var stopwatch = Stopwatch.StartNew();
+                    var report = await _workspaceManager.MeasureUsageAsync(stoppingToken);
+                    _logger.LogInformation("Measured disk usage of {Count} workspaces and the mirrors in {ElapsedMs} ms", report.WorkspaceSizes.Count, stopwatch.ElapsedMilliseconds);
+                    await SendWorkspaceUsageIfConnectedAsync(report);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "Measuring workspace disk usage failed");
+                }
+                await Task.Delay(_config.WorkspaceUsageInterval, stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Stopped measuring workspace disk usage");
+        }
+    }
+
+    /// <summary>
+    /// Like a diagnostic report, disk usage is derived state that is measured afresh after every resync, so one that can't be sent now is dropped rather than buffered. A send can land in the window between a new connection opening and its authentication; the server refuses it, and the measurement the resync requests replaces it.
+    /// </summary>
+    private async Task SendWorkspaceUsageIfConnectedAsync(WorkspaceUsageReport report)
+    {
+        if (_connection?.State != HubConnectionState.Connected)
+        {
+            return;
+        }
+
+        try
+        {
+            await _connection.SendAsync("ReportWorkspaceUsage", report);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not send workspace disk usage; the next resync measures and sends it again");
         }
     }
 
@@ -835,6 +894,12 @@ public class WorkerService : BackgroundService
         _logger.LogInformation("Received workspace deletion request: {WorkspaceName}", name);
         var result = _workspaceManager.TryDelete(name);
         await _connection!.SendAsync("WorkspaceDeleted", name, result);
+
+        // Deleting one of two workspaces that share files leaves the other as their only holder
+        if (result.Status == DeleteWorkspaceStatus.Success)
+        {
+            _usageRequests.Writer.TryWrite(true);
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

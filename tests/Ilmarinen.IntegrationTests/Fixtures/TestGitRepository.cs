@@ -43,6 +43,14 @@ public class TestGitRepository : IDisposable
         _addedFiles.Add(relativePath);
     }
 
+    public void AddBinaryFile(string relativePath, byte[] content)
+    {
+        var fullPath = Path.Combine(_workTreePath, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllBytes(fullPath, content);
+        _addedFiles.Add(relativePath);
+    }
+
     public string Commit(string message)
     {
         using var repo = new Repository(_workTreePath);

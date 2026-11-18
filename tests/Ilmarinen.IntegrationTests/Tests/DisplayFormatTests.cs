@@ -21,6 +21,20 @@ public class DisplayFormatTests
     }
 
     [Test]
+    public void MeasuredSize_NotYetMeasuredFailedAndMeasured_AllReadDifferently()
+    {
+        var texts = new[]
+        {
+            DisplayFormat.MeasuredSize(false, null),
+            DisplayFormat.MeasuredSize(true, null),
+            DisplayFormat.MeasuredSize(true, 4096)
+        };
+
+        Assert.That(texts, Is.Unique);
+        Assert.That(texts[2], Is.EqualTo(DisplayFormat.Size(4096)));
+    }
+
+    [Test]
     public void Ago_ReadsDifferentlyAcrossMinutesHoursAndDays()
     {
         var now = DateTimeOffset.UtcNow;

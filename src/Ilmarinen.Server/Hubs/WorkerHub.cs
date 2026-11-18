@@ -375,6 +375,25 @@ public class WorkerHub : Hub<IWorkerClient>
         return Task.CompletedTask;
     }
 
+    public Task ReportWorkspaceUsage(WorkspaceUsageReport report)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        var worker = workers.GetByConnectionId(Context.ConnectionId);
+        if (worker == null)
+        {
+            _logger.LogWarning(
+                "Rejected ReportWorkspaceUsage from unauthenticated connection {ConnectionId}",
+                Context.ConnectionId);
+            throw new HubException("Worker not authenticated.");
+        }
+
+        workers.SetWorkspaceUsage(worker.Id, report);
+        _uiEvents.NotifyWorkersChanged();
+        return Task.CompletedTask;
+    }
+
     public async Task Heartbeat(WorkerHeartbeat status)
     {
         using var scope = _scopeFactory.CreateScope();

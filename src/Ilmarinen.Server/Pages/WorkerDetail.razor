@@ -77,6 +77,7 @@
                         <tr>
                             <th>Name</th>
                             <th>Path</th>
+                            <th>Size</th>
                             <th>Last Used</th>
                             <th></th>
                         </tr>
@@ -87,6 +88,7 @@
                             <tr>
                                 <td>@ws.Name</td>
                                 <td><code>@ws.Path</code></td>
+                                <td>@DisplayFormat.MeasuredSize(ws.Measured, ws.SizeBytes)</td>
                                 <td>
                                     <TimeAgo When="ws.LastUsed" />
                                 </td>
@@ -107,6 +109,10 @@
         else
         {
             <p style="color: var(--text-secondary);">No workspaces</p>
+        }
+        @if (worker.ShowsMirrors)
+        {
+            <p style="color: var(--text-secondary);">Git mirrors: @DisplayFormat.MeasuredSize(true, worker.MirrorsSizeBytes)</p>
         }
     </div>
 

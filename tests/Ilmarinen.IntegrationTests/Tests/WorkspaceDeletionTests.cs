@@ -79,6 +79,50 @@ public class WorkspaceDeletionTests
     }
 
     [Test]
+    public async Task GetWorkers_AfterJobWithWorkspace_ReportsLastUseAndTheSpaceDeletingItFrees()
+    {
+        // Random, so neither git nor the filesystem can store it in less than its size
+        const int blobSize = 1024 * 1024;
+        var blob = new byte[blobSize];
+        Random.Shared.NextBytes(blob);
+        _repo.AddBinaryFile("blob.bin", blob);
+        _repo.AddFile("pipeline.csx", """
+            Workspace("usage-ws");
+            Step("check")
+                .Image("alpine:latest")
+                .Run(async ctx => await ctx.Exec("echo", "Hello"));
+            """);
+        _repo.Commit("Add workspace pipeline with a large blob");
+
+        var jobId = await _fixture.SubmitJobAsync(new JobSubmission
+        {
+            RepoUrl = _repo.Url,
+            Ref = "master",
+            ScriptPath = "pipeline.csx"
+        });
+        var job = await _fixture.WaitForJobCompletionAsync(jobId);
+        Assert.That(job.Status, Is.EqualTo(JobStatus.Success));
+
+        // Disk usage is measured in the background after the job, so it lands some time after the result
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        WorkerView? worker = null;
+        WorkspaceView? workspace = null;
+        while (workspace?.Measured != true)
+        {
+            Assert.That(DateTime.UtcNow, Is.LessThan(deadline), "the worker never reported the disk usage of usage-ws");
+            await Task.Delay(200);
+            var workers = await _fixture.HttpClient.GetFromJsonAsync<List<WorkerView>>("/api/workers", JsonOptions);
+            worker = workers![0];
+            workspace = worker.Workspaces.SingleOrDefault(w => w.Name == "usage-ws");
+        }
+
+        Assert.That(workspace.LastUsed, Is.GreaterThan(DateTimeOffset.UtcNow - TimeSpan.FromMinutes(5)));
+        // The checkout holds its own copy of the blob, but the clone hard-links the mirror's copy of the object instead of duplicating it
+        Assert.That(workspace.SizeBytes, Is.InRange((long)blobSize, blobSize * 3L / 2));
+        Assert.That(worker!.MirrorsSizeBytes, Is.GreaterThanOrEqualTo((long)blobSize));
+    }
+
+    [Test]
     public async Task DeleteWorkspace_ExistingWorkspace_Returns200AndDeletes()
     {
         // Arrange - create workspace via a job
