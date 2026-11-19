@@ -107,6 +107,8 @@
         <LogViewer @key="job.Id" JobId="@job.Id" InitialStatus="@job.Status" Class="log-embed" />
     </div>
 
+    <JobMetrics @key="job.Id" JobId="@job.Id" Status="@job.Status" />
+
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Artifacts</h2>
         <div class="table-scroll">

@@ -298,7 +298,7 @@ curl -s "$SERVER/api/jobs/queue/estimate" | jq -r '"\(.queuedJobs) queued · ~\(
 
 ### Resource Metrics
 
-While a job runs, its worker samples resource use every 2 seconds (`ILMARINEN_METRICS_INTERVAL_SECONDS` on the worker; `0` turns it off).
+While a job runs, its worker samples resource use every 2 seconds (`ILMARINEN_METRICS_INTERVAL_SECONDS` on the worker; `0` turns it off). The job page charts CPU, memory and disk over the job, with each step's start marked.
 
 - `GET /api/jobs/{id}/metrics` returns the samples as NDJSON: one versioned record per line (`Ilmarinen.Protocol.Metrics`). The records:
   - **host:** the machine;

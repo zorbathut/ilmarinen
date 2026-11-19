@@ -222,6 +222,25 @@
         .unhealthy { background-color: var(--badge-failed-bg); }
         .degraded { background-color: var(--warning); }
         .paused { background-color: var(--text-secondary); }
+        .metrics-legend { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.5rem; flex-wrap: wrap; }
+        .metrics-legend span::before { content: ""; display: inline-block; width: 0.8rem; height: 0.2rem; margin-right: 0.3rem; vertical-align: middle; }
+        .metrics-legend .metric-host::before { background: var(--text-secondary); }
+        .metrics-legend .metric-job::before { background: var(--accent); }
+        .metrics-legend .metric-shared::before { background: var(--bg-tertiary); height: 0.6rem; }
+        .metrics-chart { margin-bottom: 0.75rem; }
+        .metrics-chart-title { font-size: 0.85rem; font-weight: 500; }
+        .metrics-chart-title span { color: var(--text-secondary); font-weight: 400; margin-left: 0.5rem; }
+        .metrics-chart svg { width: 100%; height: 8rem; display: block; background: var(--bg-primary); }
+        .metrics-chart polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+        .metrics-chart .metric-host { stroke: var(--text-secondary); }
+        .metrics-chart .metric-job { stroke: var(--accent); }
+        .metrics-chart .metric-read { stroke: var(--success); }
+        .metrics-chart .metric-write { stroke: var(--warning); }
+        .metric-shared-band { fill: var(--bg-tertiary); opacity: 0.6; }
+        .metric-marker { stroke: var(--text-secondary); stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
+        .metrics-chart-markers { position: relative; height: 1rem; font-size: 0.7rem; color: var(--text-secondary); overflow: hidden; }
+        .metrics-chart-markers span { position: absolute; top: 0; padding-left: 2px; white-space: nowrap; border-left: 1px dashed var(--text-secondary); }
+        .metrics-note { font-size: 0.75rem; color: var(--text-secondary); }
         .diagnostic-status-healthy { color: var(--success); font-weight: 500; }
         .diagnostic-status-unhealthy { color: var(--error); font-weight: 500; }
         .diagnostic-status-degraded { color: var(--warning); font-weight: 500; }

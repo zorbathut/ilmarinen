@@ -1,0 +1,129 @@
+@using Ilmarinen.Protocol.Metrics
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
+@using System.Globalization
+@using System.Threading
+@implements IDisposable
+@inject IServiceScopeFactory ScopeFactory
+@inject ILogger<JobMetrics> Logger
+
+@if (charts.Count > 0)
+{
+    <div class="card" style="margin-top: 1rem;">
+        <div class="card-split">
+            <h2 class="card-title">Resources</h2>
+            <div class="log-links">
+                <a href="/api/jobs/@JobId/metrics" class="btn-download" download>Download</a>
+            </div>
+        </div>
+        <div class="metrics-legend">
+            <span class="metric-host">Host</span>
+            <span class="metric-job">Job containers</span>
+            <span class="metric-shared">Shared with another job</span>
+        </div>
+        @foreach (var chart in charts)
+        {
+            <div class="metrics-chart">
+                <div class="metrics-chart-title">@chart.Title <span>max @chart.YMax.ToString("0.##") @chart.Unit</span></div>
+                <div class="metrics-chart-markers">
+                    @foreach (var marker in chart.Markers)
+                    {
+                        <span style="left: @Coordinate(marker.X / MetricsCharts.Width * 100)%">@marker.Label</span>
+                    }
+                </div>
+                <svg viewBox="0 0 @Coordinate(MetricsCharts.Width) @Coordinate(MetricsCharts.Height)" preserveAspectRatio="none" role="img" aria-label="@chart.Title over the job">
+                    @foreach (var band in chart.SharedHost)
+                    {
+                        <rect class="metric-shared-band" x="@Coordinate(band.X1)" y="0" width="@Coordinate(band.X2 - band.X1)" height="@Coordinate(MetricsCharts.Height)" />
+                    }
+                    @foreach (var marker in chart.Markers)
+                    {
+                        <line class="metric-marker" x1="@Coordinate(marker.X)" x2="@Coordinate(marker.X)" y1="0" y2="@Coordinate(MetricsCharts.Height)" />
+                    }
+                    @foreach (var line in chart.Lines)
+                    {
+                        <polyline class="@line.CssClass" points="@line.Points"><title>@line.Name</title></polyline>
+                    }
+                </svg>
+            </div>
+        }
+        <div class="metrics-note">Sampled: memory can miss short spikes. Image builds and pulls show in the host figures only.</div>
+    </div>
+}
+
+@code {
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
+
+    [Parameter, EditorRequired]
+    public Guid JobId { get; set; }
+
+    [Parameter, EditorRequired]
+    public JobStatus Status { get; set; }
+
+    private IReadOnlyList<Chart> charts = [];
+    private readonly CancellationTokenSource stop = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _ = PollAsync(stop.Token);
+    }
+
+    // While the job runs, and for one interval after: its last chunk is handed off as the job finishes and can land a few seconds after.
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(RefreshInterval);
+        try
+        {
+            var afterFinish = 0;
+            while (afterFinish < 2 && await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(RefreshAsync);
+                if (IsFinished(Status))
+                {
+                    afterFinish++;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The page went away.
+        }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The circuit went away while a refresh was being dispatched.
+        }
+    }
+
+    private static bool IsFinished(JobStatus status)
+    {
+        return status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled;
+    }
+
+    private static string Coordinate(double value)
+    {
+        return value.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var records = await scope.ServiceProvider.GetRequiredService<JobMetricsRepository>().GetRecordsAsync(JobId);
+            charts = MetricsCharts.Build(records);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not load job {JobId}'s resource metrics", JobId);
+        }
+    }
+
+    public void Dispose()
+    {
+        stop.Cancel();
+        stop.Dispose();
+    }
+}
