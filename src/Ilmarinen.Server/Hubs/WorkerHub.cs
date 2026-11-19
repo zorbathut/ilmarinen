@@ -261,6 +261,13 @@ public class WorkerHub : Hub<IWorkerClient>
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var worker = RequireWorker(scope, nameof(JobStarted));
+
+        if (await jobs.GetAssignedWorkerAsync(jobId) != worker.Id)
+        {
+            _logger.LogWarning("Worker {WorkerId} reported JobStarted for {JobId}, which isn't assigned to it; ignoring", worker.Id, jobId);
+            return;
+        }
 
         _logger.LogInformation("Job started: {JobId}", jobId);
         await jobs.UpdateStatusAsync(jobId, JobStatus.Running);
@@ -270,6 +277,13 @@ public class WorkerHub : Hub<IWorkerClient>
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var worker = RequireWorker(scope, nameof(ReportCommit));
+
+        if (await jobs.GetAssignedWorkerAsync(jobId) != worker.Id)
+        {
+            _logger.LogWarning("Worker {WorkerId} reported a commit for {JobId}, which isn't assigned to it; ignoring", worker.Id, jobId);
+            return;
+        }
 
         _logger.LogInformation("Job {JobId} resolved to commit {CommitSha}", jobId, commitSha);
         await jobs.SetCommitAsync(jobId, commitSha);
@@ -280,6 +294,7 @@ public class WorkerHub : Hub<IWorkerClient>
     {
         using var scope = _scopeFactory.CreateScope();
         var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
+        RequireWorker(scope, nameof(StreamLogs));
 
         await logService.ProcessChunkAsync(chunk);
     }
@@ -360,6 +375,7 @@ public class WorkerHub : Hub<IWorkerClient>
         using var scope = _scopeFactory.CreateScope();
         var deletionService = scope.ServiceProvider.GetRequiredService<WorkspaceDeletionService>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        RequireWorker(scope, nameof(WorkspaceDeleted));
 
         deletionService.Complete(Context.ConnectionId, name, result);
 
@@ -416,6 +432,17 @@ public class WorkerHub : Hub<IWorkerClient>
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         await workers.UpdateHeartbeatAsync(Context.ConnectionId);
+    }
+
+    private ConnectedWorker RequireWorker(IServiceScope scope, string method)
+    {
+        var worker = scope.ServiceProvider.GetRequiredService<WorkerRepository>().GetByConnectionId(Context.ConnectionId);
+        if (worker == null)
+        {
+            _logger.LogWarning("Rejected {Method} from unauthenticated connection {ConnectionId}", method, Context.ConnectionId);
+            throw new HubException("Worker not authenticated.");
+        }
+        return worker;
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
