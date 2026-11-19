@@ -294,13 +294,10 @@ public class JobRepository
         return rows > 0;
     }
 
-    /// <summary>The Running and Queued jobs, oldest first, which for Queued ones is dispatch order (as <see cref="GetNextQueuedJobIdAsync"/>).</summary>
+    /// <summary>The Running and Queued jobs, the Queued ones in dispatch order (<see cref="InDispatchOrder"/>).</summary>
     public async Task<IReadOnlyList<UnfinishedJob>> GetUnfinishedJobsAsync()
     {
-        return await _db.Jobs
-            .Where(j => j.Status == JobStatus.Running || j.Status == JobStatus.Queued)
-            .OrderBy(j => j.CreatedAt)
-            .ThenBy(j => j.Id)
+        return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Running || j.Status == JobStatus.Queued))
             .Select(j => new UnfinishedJob(j.Status, j.WorkerId, j.RepoUrl, j.ScriptPath, j.StartedAt, j.MinWorkerPriority))
             .ToListAsync();
     }
@@ -496,16 +493,21 @@ public class JobRepository
     }
 
     /// <summary>
-    /// The queued job dispatch should hand a worker of this priority next: the oldest one whose minimum it meets. Null when nothing queued fits.
+    /// The queued job dispatch should hand a worker of this priority next: the first, in dispatch order (<see cref="InDispatchOrder"/>), whose minimum it meets. Null when nothing queued fits.
     /// </summary>
     public async Task<Guid?> GetNextQueuedJobIdAsync(WorkerPriority workerPriority)
     {
-        return await _db.Jobs
-            .Where(j => j.Status == JobStatus.Queued && j.MinWorkerPriority <= workerPriority)
-            .OrderBy(j => j.CreatedAt)
-            .ThenBy(j => j.Id)
+        return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued && j.MinWorkerPriority <= workerPriority))
             .Select(j => (Guid?)j.Id)
             .FirstOrDefaultAsync();
+    }
+
+    /// <summary>The order dispatch takes queued jobs in: oldest first. The queue forecast reads the queue in this same order, so it simulates the dispatch that really happens.</summary>
+    private static IQueryable<Job> InDispatchOrder(IQueryable<Job> jobs)
+    {
+        return jobs
+            .OrderBy(j => j.CreatedAt)
+            .ThenBy(j => j.Id);
     }
 
     /// <summary>
