@@ -61,12 +61,12 @@ public class PipelineRunner : IDisposable
         _client.Dispose();
     }
 
-    /// <summary>
-    /// Write informational message to both console and log output callback.
-    /// </summary>
     /// <summary>The Docker network this run's containers share, once it has one. For tests that need to look at what the run left behind.</summary>
     internal string? NetworkName { get; private set; }
 
+    /// <summary>
+    /// Write informational message to both console and log output callback.
+    /// </summary>
     private void WriteInfo(string message)
     {
         Console.WriteLine(message);
