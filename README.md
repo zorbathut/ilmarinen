@@ -210,6 +210,10 @@ Step("example")
 - Each worker clones the repo, loads the pipeline script, and executes it
 - Job status updates flow back through SignalR
 
+### Pausing a Worker
+
+The Pause button on the Workers page (or a worker's own page) stops the server sending that worker new jobs; a job it is already running carries on. It works whether or not the worker is connected, lasts across reconnects and server restarts, and holds until Unpause. The worker itself is never told. A paused worker doesn't count as available, so jobs only it could take are reported as stuck.
+
 ## Notifications
 
 Ilmarinen includes a notification framework that pushes job completion events to external subscribers. The first built-in subscriber is a Discord bot.

@@ -33,6 +33,14 @@
             <span class="detail-value">
                 <span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span>
                 @WorkerBadge.GetStatusLabel(worker)
+                <button class="btn" style="margin-left: 1rem;" disabled="@savingPause" @onclick="TogglePause"
+                        title="@(worker.IsPaused ? "Let the server send this worker jobs again" : "Send this worker no new jobs; what it is running carries on")">
+                    @(worker.IsPaused ? "Unpause" : "Pause")
+                </button>
+                @if (pauseError != null)
+                {
+                    <span style="margin-left: 1rem; color: var(--error);">@pauseError</span>
+                }
             </span>
 
             <span class="detail-label">Priority</span>
@@ -257,6 +265,8 @@ else
     private HashSet<string> deletingWorkspaces = new();
     private string? deleteError;
     private string? diagnosticError;
+    private bool savingPause;
+    private string? pauseError;
     private Timer? _timer;
 
     private bool IsDiagnosticRunning() =>
@@ -296,6 +306,33 @@ else
         if (d.TotalSeconds < 1) return $"{d.TotalMilliseconds:0}ms";
         if (d.TotalSeconds < 60) return $"{d.TotalSeconds:0.0}s";
         return $"{(int)d.TotalMinutes}m{d.Seconds:00}s";
+    }
+
+    private async Task TogglePause()
+    {
+        if (worker == null)
+        {
+            return;
+        }
+
+        savingPause = true;
+        pauseError = null;
+        try
+        {
+            if (!await Scheduler.SetWorkerPausedAsync(worker.Id, !worker.IsPaused))
+            {
+                pauseError = "Worker not found.";
+            }
+            await RefreshAsync(worker.Id);
+        }
+        catch (Exception ex)
+        {
+            pauseError = $"Failed to change pause: {ex.Message}";
+        }
+        finally
+        {
+            savingPause = false;
+        }
     }
 
     private async Task RunDiagnostic()

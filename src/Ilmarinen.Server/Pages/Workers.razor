@@ -101,6 +101,10 @@
                             <td class="hide-mobile">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm")</td>
                             <td class="hide-mobile">@worker.LastSeen.ToString("HH:mm:ss")</td>
                             <td>
+                                <button class="btn"
+                                        disabled="@IsSavingPause(worker.Id)"
+                                        title="@(worker.IsPaused ? "Let the server send this worker jobs again" : "Send this worker no new jobs; what it is running carries on")"
+                                        @onclick="() => TogglePause(worker)">@(worker.IsPaused ? "Unpause" : "Pause")</button>
                                 <button class="btn btn-danger"
                                         disabled="@IsRevoking(worker.Id)"
                                         @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
@@ -180,6 +184,7 @@
     private HashSet<string> deletingWorkspaces = new();
     private HashSet<string> revokingWorkers = new();
     private HashSet<Guid> savingPriority = new();
+    private HashSet<Guid> savingPause = new();
     private int prioritySaves;
     private string? actionError;
     private string newWorkerName = "";
@@ -228,6 +233,35 @@
 
     private bool IsSavingPriority(Guid workerId) =>
         savingPriority.Contains(workerId);
+
+    private bool IsSavingPause(Guid workerId) =>
+        savingPause.Contains(workerId);
+
+    private async Task TogglePause(WorkerView worker)
+    {
+        savingPause.Add(worker.Id);
+        actionError = null;
+        StateHasChanged();
+
+        try
+        {
+            if (!await Scheduler.SetWorkerPausedAsync(worker.Id, !worker.IsPaused))
+            {
+                actionError = "Worker not found.";
+            }
+
+            workers = await FetchWorkersAsync();
+        }
+        catch (Exception ex)
+        {
+            actionError = $"Failed to change pause: {ex.Message}";
+        }
+        finally
+        {
+            savingPause.Remove(worker.Id);
+            StateHasChanged();
+        }
+    }
 
     private async Task SetPriority(Guid workerId, ChangeEventArgs e)
     {
