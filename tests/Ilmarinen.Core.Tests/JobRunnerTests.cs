@@ -2,7 +2,6 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Worker.Services;
 using Ilmarinen.Worker;
 using LibGit2Sharp;
-using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
 using System.IO;
@@ -16,7 +15,6 @@ public class JobRunnerTests
 {
     private string _root = null!;
     private string _repoDir = null!;
-    private HubConnection _connection = null!;
 
     [SetUp]
     public void SetUp()
@@ -24,16 +22,11 @@ public class JobRunnerTests
         _root = Path.Combine(Path.GetTempPath(), $"jobrunner-test-{Guid.NewGuid():N}");
         _repoDir = Path.Combine(_root, "repo");
         Directory.CreateDirectory(_repoDir);
-
-        // Never started, so the connection is down the whole time — the state a worker is in while the server restarts under it.
-        _connection = new HubConnectionBuilder().WithUrl("http://localhost:1").Build();
     }
 
     [TearDown]
-    public async Task TearDown()
+    public void TearDown()
     {
-        await _connection.DisposeAsync();
-
         if (Directory.Exists(_root))
         {
             ForceDeleteDirectory(_root);
@@ -54,6 +47,7 @@ public class JobRunnerTests
         var job = new JobAssignment
         {
             Id = Guid.NewGuid(),
+            AssignmentId = Guid.NewGuid(),
             RepoUrl = _repoDir,
             Ref = "master",
             // Missing on purpose: the runner stops right after reporting the commit, before anything would need Docker.
@@ -62,7 +56,7 @@ public class JobRunnerTests
 
         var buffer = new MessageBuffer();
         var logger = new LoggerCapture();
-        var sender = new BufferedHubSender(_connection, buffer, logger);
+        var sender = new BufferedHubSender(() => null, buffer, logger);
         var runner = new JobRunner(
             config,
             new WorkspaceManager(config, NullLogger<WorkspaceManager>.Instance),

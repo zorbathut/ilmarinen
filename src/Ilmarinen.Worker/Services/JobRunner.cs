@@ -43,7 +43,7 @@ public class JobRunner
         _logCollector = logCollector;
     }
 
-    public async Task<JobResult> ExecuteAsync(CancellationToken cancellationToken = default)
+    public async Task<JobStatus> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         // New checkouts are built here and, for a persistent workspace, moved into place once complete
         var buildDir = Path.Combine(_config.WorkspacePath, _job.Id.ToString());
@@ -54,7 +54,7 @@ public class JobRunner
             prepared = await PrepareAsync(buildDir);
             if (prepared == null)
             {
-                return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
+                return JobStatus.Failed;
             }
 
             var workDir = prepared.WorkDir;
@@ -66,7 +66,7 @@ public class JobRunner
                 _logger.LogError(
                     "Commit mismatch: expected {Expected} but workspace is at {Actual}",
                     prepared.CommitSha, actualSha);
-                return new JobResult { Id = _job.Id, Status = JobStatus.Failed };
+                return JobStatus.Failed;
             }
 
             // Run pipeline with log streaming and artifact upload
@@ -83,11 +83,7 @@ public class JobRunner
                 onOutput: _logCollector.AsCallback());
             var success = await runner.RunAsync(prepared.Steps, cancellationToken);
 
-            return new JobResult
-            {
-                Id = _job.Id,
-                Status = success ? JobStatus.Success : JobStatus.Failed
-            };
+            return success ? JobStatus.Success : JobStatus.Failed;
         }
         finally
         {

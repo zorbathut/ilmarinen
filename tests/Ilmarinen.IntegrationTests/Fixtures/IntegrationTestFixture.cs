@@ -96,24 +96,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         return _workerBuilder.WorkerId;
     }
 
-    /// <summary>
-    /// Registers a worker without running one, and hands back a hub bound to a connection recorded as its own. For the
-    /// server-side rules — readiness gating, reconnect reconciliation — which are otherwise reachable only by
-    /// orchestrating a real worker into the right state, slowly and with a race in it.
-    /// </summary>
-    public async Task<(Ilmarinen.Server.Hubs.WorkerHub Hub, Guid WorkerId)> CreateHubForRegisteredWorkerAsync(string name, string connectionId)
-    {
-        using var scope = _factory.Services.CreateScope();
-        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
-        var workerId = (await registration.RegisterWorkerAsync(name)).WorkerId;
-
-        var workers = _factory.Services.GetRequiredService<WorkerRepository>();
-        await workers.ConnectAsync(connectionId, workerId, ipAddress: null);
-
-        return (CreateHub(connectionId), workerId);
-    }
-
-    /// <summary>A hub as the given connection would see it, for calling its methods directly.</summary>
+    /// <summary>A hub as the given connection would see it, for calling its methods directly (see <see cref="DirectedWorker"/>).</summary>
     public Ilmarinen.Server.Hubs.WorkerHub CreateHub(string connectionId)
     {
         return new Ilmarinen.Server.Hubs.WorkerHub(
@@ -122,10 +105,23 @@ public class IntegrationTestFixture : IAsyncDisposable
             _factory.Services.GetRequiredService<WorkerBundleService>(),
             _factory.Services.GetRequiredService<UIEventService>(),
             _factory.Services.GetRequiredService<WorkerMessenger>(),
+            _factory.Services.GetRequiredService<WorkerSessions>(),
             _factory.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ilmarinen.Server.Hubs.WorkerHub>>())
         {
             Context = new FakeHubCallerContext(connectionId)
         };
+    }
+
+    public WorkerConnectionControl Connections => _factory.Services.GetRequiredService<WorkerConnectionControl>();
+
+    public RecordingWorkerClients WorkerClients => _factory.Services.GetRequiredService<RecordingWorkerClients>();
+
+    /// <summary>Drops the transport of the worker's current connection, leaving the server's state as it was.</summary>
+    public void DropWorkerConnection(Guid workerId)
+    {
+        var connectionId = _factory.Services.GetRequiredService<WorkerRepository>().FindConnectionIdByWorkerId(workerId)
+            ?? throw new InvalidOperationException($"Worker {workerId} is not connected");
+        Connections.Abort(connectionId);
     }
 
     /// <summary>What the server has sent a connection, once everything already queued for it has gone out.</summary>
@@ -135,12 +131,17 @@ public class IntegrationTestFixture : IAsyncDisposable
         return _factory.Services.GetRequiredService<RecordingWorkerClients>().SentTo(connectionId);
     }
 
-    /// <summary>Marks a job Running against a worker, the state a dispatch would leave it in.</summary>
-    public async Task StartJobOnWorkerAsync(Guid jobId, Guid workerId)
+    /// <summary>Assigns a queued job to the worker's current process, the state a dispatch would leave it in, and returns the assignment.</summary>
+    public async Task<Guid> StartJobOnWorkerAsync(Guid jobId, DirectedWorker worker)
     {
         using var scope = _factory.Services.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        await jobs.UpdateStatusAsync(jobId, JobStatus.Running, workerId);
+        var assignmentId = Guid.NewGuid();
+        if (!await jobs.AssignAsync(jobId, worker.WorkerId, assignmentId, worker.InstanceId))
+        {
+            throw new InvalidOperationException($"Job {jobId} isn't queued");
+        }
+        return assignmentId;
     }
 
     /// <summary>

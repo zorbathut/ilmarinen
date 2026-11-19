@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.SignalR;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Fixtures;
 
@@ -21,6 +22,9 @@ public sealed class RecordingWorkerClients : IWorkerClients
         _hub = new HubWorkerClients(hubContext);
     }
 
+    /// <summary>How long each job assignment waits before it goes out (and holds up what is queued behind it), to force the orderings where it arrives late.</summary>
+    public TimeSpan AssignmentDelay { get; set; } = TimeSpan.Zero;
+
     public IWorkerClient Client(string connectionId)
     {
         return SentTo(connectionId);
@@ -28,7 +32,7 @@ public sealed class RecordingWorkerClients : IWorkerClients
 
     public RecordingWorkerClient SentTo(string connectionId)
     {
-        return _clients.GetOrAdd(connectionId, id => new RecordingWorkerClient(_hub.Client(id)));
+        return _clients.GetOrAdd(connectionId, id => new RecordingWorkerClient(_hub.Client(id), this));
     }
 }
 
@@ -36,10 +40,12 @@ public sealed class RecordingWorkerClients : IWorkerClients
 public sealed class RecordingWorkerClient : IWorkerClient
 {
     private readonly IWorkerClient _inner;
+    private readonly RecordingWorkerClients _owner;
 
-    public RecordingWorkerClient(IWorkerClient inner)
+    public RecordingWorkerClient(IWorkerClient inner, RecordingWorkerClients owner)
     {
         _inner = inner;
+        _owner = owner;
     }
 
     /// <summary>Every message, in the order it was sent.</summary>
@@ -49,11 +55,12 @@ public sealed class RecordingWorkerClient : IWorkerClient
     public int DiagnosticRequests { get; private set; }
     public int OperatorDiagnosticRequests { get; private set; }
 
-    public Task AssignJob(JobAssignment assignment)
+    public async Task AssignJob(JobAssignment assignment)
     {
         Messages.Add($"AssignJob {assignment.Id}");
         Assignments.Add(assignment);
-        return _inner.AssignJob(assignment);
+        await Task.Delay(_owner.AssignmentDelay);
+        await _inner.AssignJob(assignment);
     }
 
     public Task CancelJob(string jobId)

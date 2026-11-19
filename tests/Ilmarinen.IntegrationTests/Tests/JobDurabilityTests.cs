@@ -142,33 +142,69 @@ public class JobDurabilityTests
             "Worker should be ready for new jobs after reconnecting");
     }
 
-    // The backstop for a worker that died without reporting: it comes back not knowing about the job, and the server has
-    // to decide the job is lost rather than leave it Running forever. Driven through the hub, because a worker that
-    // stops gracefully now reports the job itself and never reaches this path.
+    // The backstop for a worker that died without reporting: it comes back as a new process not knowing about the job, which may have partly run, and the server has to decide the job is lost rather than leave it Running forever. Driven through the hub, because a worker that stops gracefully reports the job itself and never reaches this path.
     [Test]
-    public async Task Reconnect_WithoutTheJobTheServerExpects_FailsIt()
+    public async Task Resume_FromANewProcessWithoutTheJob_FailsIt()
     {
-        var (hub, workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("orphan-worker", "conn-orphan");
+        var worker = await DirectedWorker.RegisterAsync(_fixture, "orphan-worker");
+        await worker.ConnectAsync("conn-orphan");
         var jobId = await SubmitAsync();
-        await _fixture.StartJobOnWorkerAsync(jobId, workerId);
+        await _fixture.StartJobOnWorkerAsync(jobId, worker);
 
-        var response = await hub.Reconnect(new WorkerReconnect { RunningJobId = null });
+        worker.Restart();
+        await worker.ConnectAsync("conn-orphan-restarted");
+        await worker.ResumeAsync(worker.Idle());
 
-        Assert.That(response.ExpectedJobId, Is.EqualTo(jobId), "the server should say what it still expects, so a worker that does hold the job keeps it");
         Assert.That((await _fixture.GetJobAsync(jobId)).Status, Is.EqualTo(JobStatus.Failed));
     }
 
-    // The same reconnect from a worker that *is* still running the job must leave it alone.
+    // The same process would have named the job if it had ever arrived, so it never ran: it goes back to the queue instead of failing.
     [Test]
-    public async Task Reconnect_StillHoldingTheJob_LeavesItRunning()
+    public async Task Resume_FromTheSameProcessWithoutTheJob_QueuesItAgain()
     {
-        var (hub, workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("holding-worker", "conn-holding");
+        var worker = await DirectedWorker.RegisterAsync(_fixture, "undelivered-worker");
+        await worker.ConnectAsync("conn-undelivered");
         var jobId = await SubmitAsync();
-        await _fixture.StartJobOnWorkerAsync(jobId, workerId);
+        await _fixture.StartJobOnWorkerAsync(jobId, worker);
 
-        await hub.Reconnect(new WorkerReconnect { RunningJobId = jobId });
+        await worker.ConnectAsync("conn-undelivered-again");
+        await worker.ResumeAsync(worker.Idle());
+
+        var job = await _fixture.GetJobAsync(jobId);
+        Assert.That(job.Status, Is.Not.EqualTo(JobStatus.Failed));
+        Assert.That((await worker.SentAsync()).Assignments.Select(a => a.Id), Does.Contain(jobId), "requeued, and handed straight back to the now-idle worker");
+    }
+
+    [Test]
+    public async Task Resume_StillHoldingTheJob_LeavesItRunning()
+    {
+        var worker = await DirectedWorker.RegisterAsync(_fixture, "holding-worker");
+        await worker.ConnectAsync("conn-holding");
+        var jobId = await SubmitAsync();
+        var assignmentId = await _fixture.StartJobOnWorkerAsync(jobId, worker);
+
+        await worker.ConnectAsync("conn-holding-again");
+        var response = await worker.ResumeAsync(worker.Running(jobId, assignmentId));
 
         Assert.That((await _fixture.GetJobAsync(jobId)).Status, Is.EqualTo(JobStatus.Running));
+        Assert.That(response.AbortAssignments, Is.Empty);
+    }
+
+    // Cancelled while the worker was away: the cancel's own message went to a connection that is gone, so Resume is what tells the worker.
+    [Test]
+    public async Task Resume_RunningAJobTheServerCancelled_TellsTheWorkerToStop()
+    {
+        var worker = await DirectedWorker.RegisterAsync(_fixture, "cancelled-away-worker");
+        await worker.ConnectAsync("conn-cancelled-away");
+        var jobId = await SubmitAsync();
+        var assignmentId = await _fixture.StartJobOnWorkerAsync(jobId, worker);
+        await worker.Hub.OnDisconnectedAsync(null);
+        await _fixture.CancelJobAsync(jobId);
+
+        await worker.ConnectAsync("conn-cancelled-away-again");
+        var response = await worker.ResumeAsync(worker.Running(jobId, assignmentId));
+
+        Assert.That(response.AbortAssignments, Is.EqualTo(new[] { assignmentId }));
     }
 
     private async Task<Guid> SubmitAsync()
@@ -184,12 +220,9 @@ public class JobDurabilityTests
     /// <summary>A job left Running by a worker that is registered but not connected — what a killed or partitioned worker leaves behind.</summary>
     private async Task<Guid> StartJobOnUnreachableWorkerAsync()
     {
-        using var scope = _fixture.Services.CreateScope();
-        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
-        var workerId = (await registration.RegisterWorkerAsync("unreachable-worker")).WorkerId;
-
+        var worker = await DirectedWorker.RegisterAsync(_fixture, "unreachable-worker");
         var jobId = await SubmitAsync();
-        await _fixture.StartJobOnWorkerAsync(jobId, workerId);
+        await _fixture.StartJobOnWorkerAsync(jobId, worker);
         return jobId;
     }
 

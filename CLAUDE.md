@@ -254,18 +254,19 @@ The `IJobContext` interface provides these capabilities to step actions:
 
 ### Server/Worker Communication
 
+The protocol is specified and model-checked in `spec/` (`spec/README.md`; run `scripts/check-protocol.sh` after changing it). Each worker connection is a session identified by (process instance, connection counter); a later epoch supersedes an earlier one, and calls on a superseded connection are answered `SessionAnswer.Fenced`. Readiness is derived from the worker's reported state, never signalled.
+
 SignalR hub methods:
-- `Connect(WorkerConnect)` → `AuthChallenge` - Protocol-hash check, mutual ECDSA challenge; exchanges bundle hashes for launcher-run workers
-- `Authenticate(WorkerAuthenticate)` - Signature verification completes the handshake
-- `Reconnect(WorkerReconnect)` - Job-state reconciliation after reconnection
-- `Ready()` - Worker signals availability for jobs
-- `StreamLogs(LogChunk)` - Worker streams output chunks
-- `JobStarted(jobId)` / `JobCompleted(jobId, result)` - Status updates
-- `Heartbeat(WorkerHeartbeat)` - Connection keepalive
+- `Connect(WorkerConnect)` → `AuthChallenge` - Protocol-hash check, mutual ECDSA challenge bound to the connection's epoch; exchanges bundle hashes for launcher-run workers
+- `Authenticate(WorkerAuthenticate)` → `SessionAnswer` - Signature verification, then the connection becomes the worker's session if its epoch allows
+- `Resume(WorkerResume)` → `ResumeResponse` - First call on a session: the worker's state plus unacknowledged outcomes; the server applies them and reconciles running jobs
+- `ReportState(WorkerState)` / `ReportOutcome(JobOutcome)` - State after each change; a job's completion or hand-back, acknowledged by the answer
+- `StreamLogs(LogChunk)`, `ReportCommit`, `ReportDiagnostic`, `ReportWorkspaceUsage`, `WorkspaceDeleted` - Accepted from the current session
+- `Heartbeat()` → `SessionAnswer` - How a superseded or dead connection is noticed
 
 ### Worker Self-Update (launcher mode)
 
-The server can serve a zipped worker publish output (baked into its image; `ServerConfig.WorkerBundlePath`) at `GET /hub/workers/bundle/manifest` and `/download` on the worker port. The manifest is a frozen JSON contract carrying the bundle's SHA-256 and an ECDSA signature that the launcher verifies with the server public key inside `ILMARINEN_WORKER_KEY`. Workers launched by `Ilmarinen.WorkerLauncher` (env `ILMARINEN_BUNDLE_HASH`) report their bundle hash at auth and drain when it is stale — immediately when idle, after `JobCompleted` delivery when busy — exiting with `WorkerExitCodes.UpdateRequired` so the launcher relaunches them from the current bundle. Classic workers (no bundle hash) are unaffected; the mode is opt-in per host.
+The server can serve a zipped worker publish output (baked into its image; `ServerConfig.WorkerBundlePath`) at `GET /hub/workers/bundle/manifest` and `/download` on the worker port. The manifest is a frozen JSON contract carrying the bundle's SHA-256 and an ECDSA signature that the launcher verifies with the server public key inside `ILMARINEN_WORKER_KEY`. Workers launched by `Ilmarinen.WorkerLauncher` (env `ILMARINEN_BUNDLE_HASH`) report their bundle hash at auth and drain when it is stale — once idle with every outcome acknowledged — exiting with `WorkerExitCodes.UpdateRequired` so the launcher relaunches them from the current bundle. Classic workers (no bundle hash) are unaffected; the mode is opt-in per host.
 
 ### Security
 

@@ -77,8 +77,7 @@ public class WorkerRegistrationService
 
         _db.Workers.Remove(worker);
         await _db.SaveChangesAsync();
-        _workers.ClearDiagnostic(workerId);
-        _workers.ClearWorkspaceUsage(workerId);
+        await _workers.ForgetAsync(workerId);
     }
 }
 

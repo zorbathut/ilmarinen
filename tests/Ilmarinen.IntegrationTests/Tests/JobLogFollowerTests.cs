@@ -190,7 +190,7 @@ public class JobLogFollowerTests
         await follow.WaitForStatusAsync(JobStatus.Queued);
         using (var scope = _fixture.Services.CreateScope())
         {
-            await scope.ServiceProvider.GetRequiredService<JobRepository>().UpdateStatusAsync(jobId, JobStatus.Running);
+            await scope.ServiceProvider.GetRequiredService<JobRepository>().AssignAsync(jobId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
         }
 
         await follow.WaitForStatusAsync(JobStatus.Running);

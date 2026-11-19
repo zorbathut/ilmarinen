@@ -300,15 +300,6 @@
 
         try
         {
-            using var scope = ScopeFactory.CreateScope();
-            var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-
-            var connectionId = workerRepo.FindConnectionIdByWorkerId(workerId);
-            if (connectionId != null)
-            {
-                await workerRepo.SetDisconnectedAsync(connectionId);
-            }
-
             await RegistrationService.RevokeWorkerAsync(workerId);
             workers = await FetchWorkersAsync();
         }

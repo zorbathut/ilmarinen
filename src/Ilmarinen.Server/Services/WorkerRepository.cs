@@ -17,6 +17,7 @@ public class WorkerRepository
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly WorkerSessions _sessions;
+    private readonly WorkerBundleService _bundles;
 
     // Diagnostic state, keyed by worker ID (not connection ID) so it survives reconnects. Cleared on revoke, not disconnect — a reconnecting worker re-pushes its cached diagnostic so the value here is replaced anyway, and keeping it across the brief reconnect window avoids a "no diagnostic" UI flicker.
     private readonly ConcurrentDictionary<Guid, DiagnosticReport> _workerDiagnostics = new();
@@ -24,14 +25,15 @@ public class WorkerRepository
     // Latest workspace disk usage, keyed by worker ID for the same reason as diagnostics: a reconnect shouldn't blank every size until the worker's next measurement lands. The connection-keyed workspace list still decides which workspaces are shown.
     private readonly ConcurrentDictionary<Guid, WorkspaceUsageReport> _workerUsage = new();
 
-    public WorkerRepository(IServiceScopeFactory scopeFactory, WorkerSessions sessions)
+    public WorkerRepository(IServiceScopeFactory scopeFactory, WorkerSessions sessions, WorkerBundleService bundles)
     {
         _scopeFactory = scopeFactory;
         _sessions = sessions;
+        _bundles = bundles;
     }
 
-    /// <summary>Records an authenticated connection as the worker's session (see <see cref="WorkerSessions.Start"/>).</summary>
-    public async Task ConnectAsync(string connectionId, Guid workerId, string? ipAddress)
+    /// <summary>Records an authenticated handshake in the database, and returns whether the worker owes a diagnostic.</summary>
+    public async Task<bool> RecordConnectionAsync(Guid workerId, string? ipAddress)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
@@ -48,8 +50,17 @@ public class WorkerRepository
         }
 
         await db.SaveChangesAsync();
+        return worker.DiagnosticOwed;
+    }
 
-        _sessions.Start(connectionId, workerId);
+    /// <summary>Writes whether the worker owes a diagnostic. Caller holds the worker's session lock and updates <see cref="WorkerSessions"/> to match.</summary>
+    public async Task SetDiagnosticOwedAsync(Guid workerId, bool owed)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        await db.Workers
+            .Where(w => w.Id == workerId)
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.DiagnosticOwed, owed));
     }
 
     public async Task<byte[]?> GetWorkerPublicKeyAsync(Guid workerId)
@@ -61,75 +72,37 @@ public class WorkerRepository
         return worker?.PublicKey;
     }
 
-    public async Task SetDisconnectedAsync(string connectionId)
+    /// <summary>Records when the worker was last heard from.</summary>
+    public async Task TouchLastSeenAsync(Guid workerId)
     {
-        // _workerDiagnostics is intentionally NOT cleared here — keyed on worker ID, it survives reconnects, and the worker re-pushes its cached report on auth.
-        var session = _sessions.End(connectionId);
-        if (session != null)
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-
-            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == session.WorkerId);
-            if (worker != null)
-            {
-                worker.LastSeen = DateTime.UtcNow;
-                await db.SaveChangesAsync();
-            }
-        }
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        await db.Workers
+            .Where(w => w.Id == workerId)
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.LastSeen, DateTime.UtcNow));
     }
 
-    public void SetReady(string connectionId, bool isReady)
+    /// <summary>Whether the worker's current session can be handed a job right now, reading the database for its running jobs.</summary>
+    public async Task<bool> IsReadyAsync(WorkerSession session)
     {
-        var session = _sessions.ByConnection(connectionId);
-        if (session != null)
-        {
-            session.Ready = isReady;
-        }
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        var busy = await db.Jobs.AnyAsync(j => j.WorkerId == session.WorkerId && j.Status == JobStatus.Running);
+        return IsReady(session, busy);
     }
 
-    public async Task UpdateHeartbeatAsync(string connectionId)
+    private bool IsReady(WorkerSession session, bool hasRunningJob)
     {
-        if (_sessions.ByConnection(connectionId) is { } session)
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-
-            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == session.WorkerId);
-            if (worker != null)
-            {
-                worker.LastSeen = DateTime.UtcNow;
-                await db.SaveChangesAsync();
-            }
-        }
-    }
-
-    public ConnectedWorker? GetByConnectionId(string connectionId)
-    {
-        var session = _sessions.ByConnection(connectionId);
-        if (session == null)
-        {
-            return null;
-        }
-
-        return new ConnectedWorker
-        {
-            Id = session.WorkerId,
-            ConnectionId = connectionId,
-            IsReady = session.Ready,
-        };
+        return WorkerReadiness.IsReady(session, _sessions.DiagnosticOwed(session.WorkerId), hasRunningJob, _bundles.CurrentHash);
     }
 
     /// <summary>
-    /// The ready workers' connection IDs and priorities, highest priority first. Ties are ordered arbitrarily. Callers must still re-validate each candidate before assigning: the in-memory ready flag can lag the database, which is the source of truth for whether a worker is busy.
+    /// The ready workers and their priorities, highest priority first. Ties are ordered arbitrarily. A snapshot: dispatch re-checks each candidate under its lock before assigning.
     /// </summary>
-    public async Task<IReadOnlyList<(string ConnectionId, WorkerPriority Priority)>> GetReadyWorkersByPriorityAsync()
+    public async Task<IReadOnlyList<(Guid WorkerId, WorkerPriority Priority)>> GetReadyWorkersByPriorityAsync()
     {
-        var candidates = _sessions.All()
-            .Where(s => s.Ready)
-            .ToDictionary(s => s.WorkerId, s => s.ConnectionId);
-
-        if (candidates.Count == 0)
+        var sessions = _sessions.All();
+        if (sessions.Count == 0)
         {
             return [];
         }
@@ -137,14 +110,25 @@ public class WorkerRepository
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
-        var workerIds = candidates.Keys.ToList();
+        var workerIds = sessions.Select(s => s.WorkerId).ToList();
+        var busy = (await db.Jobs
+            .Where(j => j.Status == JobStatus.Running && j.WorkerId != null && workerIds.Contains(j.WorkerId.Value))
+            .Select(j => j.WorkerId!.Value)
+            .ToListAsync()).ToHashSet();
+
+        var ready = sessions.Where(s => IsReady(s, busy.Contains(s.WorkerId))).Select(s => s.WorkerId).ToList();
+        if (ready.Count == 0)
+        {
+            return [];
+        }
+
         var ordered = await db.Workers
-            .Where(w => workerIds.Contains(w.Id))
+            .Where(w => ready.Contains(w.Id))
             .OrderByDescending(w => w.Priority)
             .Select(w => new { w.Id, w.Priority })
             .ToListAsync();
 
-        return ordered.Select(w => (candidates[w.Id], w.Priority)).ToList();
+        return ordered.Select(w => (w.Id, w.Priority)).ToList();
     }
 
     /// <summary>
@@ -226,19 +210,20 @@ public class WorkerRepository
         return report;
     }
 
-    public void ClearDiagnostic(Guid workerId)
+    /// <summary>Drops everything held in memory about a revoked worker. Its connection, if any, is fenced from then on: every call it makes is refused.</summary>
+    public async Task ForgetAsync(Guid workerId)
     {
+        using (await _sessions.LockAsync(workerId))
+        {
+            _sessions.Forget(workerId);
+        }
         _workerDiagnostics.TryRemove(workerId, out _);
+        _workerUsage.TryRemove(workerId, out _);
     }
 
     public void SetWorkspaceUsage(Guid workerId, WorkspaceUsageReport report)
     {
         _workerUsage[workerId] = report;
-    }
-
-    public void ClearWorkspaceUsage(Guid workerId)
-    {
-        _workerUsage.TryRemove(workerId, out _);
     }
 
     public void RemoveWorkspace(string connectionId, string name)
@@ -248,22 +233,6 @@ public class WorkerRepository
         {
             ImmutableInterlocked.Update(ref session.Workspaces, list => list.RemoveAll(ws => ws.Name == name));
         }
-    }
-
-    public string? FindConnectionIdByJobId(Guid jobId)
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-
-        var workerId = db.Jobs
-            .Where(j => j.Id == jobId && j.Status == JobStatus.Running)
-            .Select(j => j.WorkerId)
-            .FirstOrDefault();
-
-        if (workerId == null)
-            return null;
-
-        return FindConnectionIdByWorkerId(workerId.Value);
     }
 
     public string? FindConnectionIdByWorkerId(Guid workerId)
@@ -288,8 +257,7 @@ public class WorkerRepository
             .Select(j => j.Id)
             .ToListAsync();
 
-        // A worker holding a Running job is never ready, even if the in-memory flag still says so — the flag can lag reality until the next assignment attempt.
-        var isReady = session is { Ready: true } && currentJobIds.Count == 0;
+        var isReady = session != null && IsReady(session, currentJobIds.Count > 0);
 
         return new WorkerView
         {
@@ -330,7 +298,7 @@ public class WorkerRepository
         return workers.Select(w =>
         {
             var session = _sessions.ByWorker(w.Id);
-            var isReady = session is { Ready: true } && !workerToJobs[w.Id].Any();
+            var isReady = session != null && IsReady(session, workerToJobs[w.Id].Any());
             _workerDiagnostics.TryGetValue(w.Id, out var diagnostic);
             _workerUsage.TryGetValue(w.Id, out var usage);
 
@@ -353,13 +321,6 @@ public class WorkerRepository
             };
         }).ToList();
     }
-}
-
-public class ConnectedWorker
-{
-    public required Guid Id { get; init; }
-    public required string ConnectionId { get; init; }
-    public bool IsReady { get; init; }
 }
 
 public class WorkerView

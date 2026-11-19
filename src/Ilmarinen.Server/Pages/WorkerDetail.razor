@@ -12,6 +12,7 @@
 @inject ILogger<WorkerDetail> Logger
 @inject WorkspaceDeletionService DeletionService
 @inject WorkerMessenger Messenger
+@inject JobScheduler Scheduler
 @inject UIEventService UIEvents
 @inject NavigationManager Navigation
 @inject WorkerBundleService BundleService
@@ -303,21 +304,10 @@ else
         if (!Guid.TryParse(Id, out var workerId))
             return;
 
-        using var scope = ScopeFactory.CreateScope();
-        var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-        var connectionId = workerRepo.FindConnectionIdByWorkerId(workerId);
-        if (connectionId == null)
+        if (!await Scheduler.RequestDiagnosticAsync(workerId))
         {
             diagnosticError = "Worker not connected.";
-            return;
         }
-
-        // Mark not-ready before invoking so the scheduler doesn't race a job onto the worker
-        // while the diagnostic is running.
-        workerRepo.SetReady(connectionId, false);
-        UIEvents.NotifyWorkersChanged();
-
-        Messenger.Send(connectionId, "operator diagnostic", client => client.RunDiagnostic());
     }
 
     protected override async Task OnInitializedAsync()

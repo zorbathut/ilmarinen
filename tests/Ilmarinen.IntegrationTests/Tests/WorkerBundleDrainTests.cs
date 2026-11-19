@@ -13,7 +13,7 @@ using System;
 namespace Ilmarinen.IntegrationTests.Tests;
 
 /// <summary>
-/// Covers the self-update drain machinery: a launcher-run worker (WorkerConfig.BundleHash set) learns the server's current bundle hash at auth time and stops itself with UpdateSignal set when stale — immediately when idle, after JobCompleted delivery when busy. Server restarts here reproduce the production update event (new process, new bundle, dropped connections).
+/// Covers the self-update drain machinery: a launcher-run worker (WorkerConfig.BundleHash set) learns the server's current bundle hash at auth time and stops itself with UpdateSignal set when stale — once idle with every outcome acknowledged. Server restarts here reproduce the production update event (new process, new bundle, dropped connections).
 /// </summary>
 [TestFixture]
 [Category("Integration")]
@@ -172,29 +172,20 @@ public class WorkerBundleDrainTests
     }
 
     [Test]
-    public async Task Ready_FromStaleBundleConnection_IsIgnoredServerSide()
+    public async Task IdleReport_FromStaleBundleConnection_DoesNotReadyTheWorker()
     {
-        // The server must not trust a stale worker's own gating — this invokes the hub directly, as an arbitrarily old worker build might.
+        // The server must not trust a stale worker's own gating — this drives the hub directly, as an arbitrarily old worker build might.
         var (_, bundleHashA) = await SetupWithBundleAsync();
+        var worker = await DirectedWorker.RegisterAsync(_fixture, "stale-ready-worker");
 
-        using var scope = _fixture.Services.CreateScope();
-        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
-        var result = await registration.RegisterWorkerAsync("stale-ready-worker");
+        await worker.ConnectAsync("conn-stale-ready", bundleHash: "0000STALE0000");
+        await worker.ResumeAsync(worker.Idle());
+        Assert.That(await worker.IsReadyAsync(), Is.False);
 
-        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
-        const string connectionId = "conn-stale-ready";
-        await workers.ConnectAsync(connectionId, result.WorkerId, ipAddress: null);
-        workers.SetBundleHash(connectionId, "0000STALE0000");
-
-        var hub = _fixture.CreateHub(connectionId);
-
-        await hub.Ready();
-        Assert.That(workers.GetByConnectionId(connectionId)!.IsReady, Is.False);
-
-        // Same connection with the current bundle is accepted
-        workers.SetBundleHash(connectionId, bundleHashA);
-        await hub.Ready();
-        Assert.That(workers.GetByConnectionId(connectionId)!.IsReady, Is.True);
+        // The same worker on the current bundle is
+        await worker.ConnectAsync("conn-current-ready", bundleHash: bundleHashA);
+        await worker.ResumeAsync(worker.Idle());
+        Assert.That(await worker.IsReadyAsync(), Is.True);
     }
 
     private async Task<(string Path, string Hash)> SetupWithBundleAsync()

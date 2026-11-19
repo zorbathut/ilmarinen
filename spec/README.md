@@ -4,51 +4,18 @@ TLA+ models of how the server and a worker agree on who is running what: assignm
 
 Run everything with `scripts/check-protocol.sh` (Java and `tla2tools.jar` v1.7.4: the Arch AUR package `tla-tools`, or the script downloads it).
 
-| File | What it models |
-| --- | --- |
-| `WorkerProtocolLegacy.tla` | The protocol as built before the queue drain. Every safety property is expected to **fail**; it's the record of why the protocol was redesigned. Delete it once the code no longer matches it. |
-| `WorkerProtocol.tla` | The redesigned protocol: fenced sessions with reported worker state. Every property must hold, and every design element must be load-bearing. |
+`WorkerProtocol.tla` models the protocol as built: fenced sessions with reported worker state. Every property must hold, and every design element must be load-bearing (replacing it with its realistic alternative must break a property).
 
-## The incident (legacy model)
+## Why it exists
 
-On 2026-11-18 two workers each failed ~15 queued jobs in milliseconds while really running one job the server had stopped tracking. The server log for worker sst:
+On 2026-11-18 two workers each failed ~15 queued jobs in milliseconds while really running one job the server had stopped tracking. A worker reconnected mid-job; its buffered `JobCompleted` was replayed before its `Reconnect`, dispatched the next job, and `Reconnect`'s snapshot — taken before the worker had processed that assignment — failed it as lost while the worker ran it. Busy rejections, `RecheckHost` and a blocked diagnostic's `Ready` then looped the rest of the queue into Failed. A model of that protocol (`WorkerProtocolLegacy.tla`, in git history at ad74449) breaks every safety property below; this one is what replaced it. `WorkerReconnectTests` reproduces the incident against a real worker.
 
-```
-09:27:23.796 Worker authenticated                              -- reconnect after a silent connection
-09:27:23.798 Job completed: 01a1edde-d8d0 - Success           -- the buffered JobCompleted, replayed before Reconnect
-09:27:23.812 WRN reconnected without job 01a1ede0, marking failed   -- Reconnect's snapshot predates the assignment the replay triggered
-09:27:23.815 Job started: 01a1ede0                             -- the worker runs it anyway
-09:27:23.828… failed job …; re-checking its host / diagnostic: Healthy   -- busy rejection → RecheckHost → blocked diagnostic sends Ready → next assignment
-```
-
-In `WorkerProtocolLegacy.tla` the root is the same: the reconcile snapshot (`WSyncReconnect`, `wSnap = 0`) is taken before the worker processes the assignment its own completion just triggered — SignalR delivers completions apart from queued invocations — so `SrvReconnectAct` fails a job the worker is about to run. TLC's shortest trace reaches it with the completion sent live early in the re-sync (`WReportCompletion` after `SrvAuthenticate`, before `WSyncLock`); the incident's own path, the completion replayed from the buffer (`WSyncReplaySend` → `SrvJobCompleted` → `SrvDispatchFor`), is the same race one step later. The busy-rejection loop follows from `WOnAssign` rejecting with a Failed `JobCompleted`, `SrvJobCompleted` answering with `RecheckHost`, and `WOnDiagnosticRequest`'s blocked branch sending `Ready`.
-
-The legacy model differs from the code in one way that doesn't matter here: `SrvJobCompleted` acknowledges before its dispatch runs, where the C# completes the invocation after `DispatchAsync` returns; moving the acknowledgement after the dispatch reaches the incident just the same. Not modelled: `MessageBuffer`'s caps, `ReportDiagnostic`, `JobStarted`.
-
-### Legacy action ↔ code
-
-| Action | C# |
-| --- | --- |
-| `SrvAuthenticate` | `WorkerHub.Authenticate` → `WorkerRepository.ConnectAsync` |
-| `SrvReady` | `WorkerHub.Ready` |
-| `SrvJobCompleted` | `WorkerHub.JobCompleted` |
-| `SrvReconnectRead` / `SrvReconnectAct` | `WorkerHub.Reconnect`, split at its await |
-| `SrvDispatchFor` / `SrvDispatchElsewhere` | `JobScheduler.DispatchAsync` |
-| `SrvDisconnected` | `WorkerHub.OnDisconnectedAsync` → `WorkerRepository.SetDisconnectedAsync` |
-| `SrvCancel` / `SrvCancelSend` | `JobScheduler.CancelJobAsync` |
-| `SrvOperatorDiagnostic` | `WorkerDetail.RunDiagnostic` |
-| `WOnAssign` | `WorkerService.OnJobAssigned` / `RejectBusyJobAsync` |
-| `WOnDiagnosticRequest` / `WDiagnosticDone` | `WorkerService.OnRecheckHost` → `ExecuteDiagnosticAsync` |
-| `WReportCompletion` | `WorkerService.ReportCompletionAsync` |
-| `WSync*`, `WOnReconnectReply` | `WorkerService.ConnectAndSyncCore` |
-| `WOnAck` | `BufferedHubSender.SendOrBufferAsync`, `MessageBuffer.ReplayAsync` |
-
-## The redesigned protocol (`WorkerProtocol.tla`)
+## The protocol
 
 1. **Per-worker serialization on the server.** One async lock per worker around connect/supersede, `Resume`, state reports, results, hand-backs, dispatch to that worker, cancel, and the operator's diagnostic, with the fence check inside it. This is what lets the model treat each server handler as one atomic step.
 2. **Session epochs without clocks.** A connection is identified by (process instance, a GUID made at start; connection counter, per process), bound into the signed challenge. A later connection of the same process supersedes the current one; so does a process instance not yet superseded, which *retires* the old instance — its handshakes are refused from then on. Anything on a fenced connection is refused with a distinct `Fenced` answer; the worker reconnects rather than counting it as a handshake failure.
 3. **Worker state, not events.** The worker reports `{activity, job, diagnostic status}` after every change. The server derives readiness: resumed session ∧ reported idle and healthy ∧ no diagnostic owed ∧ nothing Running for it. There is no `Ready` message.
-4. **`Resume`** is the first message on a connection: the worker's state plus its unacknowledged results, sent under `_syncLock`. The server applies the results idempotently — host re-checks and notifications only on a real status transition — then reconciles: a job Running for the worker that it didn't mention is re-queued if the same process had it (it never arrived) and failed as lost only if the process changed; a job the worker reports that the server no longer has gets `CancelJob`.
+4. **`Resume`** is the first message on a connection: the worker's state plus its unacknowledged results, sent under the worker's state lock. The server applies the results idempotently — host re-checks and notifications only on a real status transition — then reconciles: a job Running for the worker that it didn't mention is re-queued if the same process had it (it never arrived) and failed as lost only if the process changed; a job the worker reports that the server no longer has gets `CancelJob`.
 5. **Hand back, never fail, on collision.** An assignment the worker can't take goes back with `RejectJob` and is re-queued — but never the job the worker reports running.
 6. **The server says when it gives up**: failing or cancelling a job the worker may be running sends `CancelJob`.
 7. **Diagnostic requests are never folded** into a diagnostic already running: one that arrives during a diagnostic gets a fresh one afterwards.
@@ -61,19 +28,41 @@ Two elements are kept although the model shows them saving churn rather than cor
 
 ### Implementation obligations
 
-The model takes these for granted; the C# has to make them true.
+The model takes these for granted; this is where the C# makes them true.
 
-- **Invocation epochs.** Every invocation carries its connection's epoch, and the worker drops one whose epoch isn't current once it holds its lock. (An `AssignJob` already queued in the client for an old connection can otherwise run after a `Resume` that said "idle", and `AltNoInvocationEpoch` shows what follows.)
-- **Ordered state reports.** A state change and its report happen under one lock, so reports reach the server in the order the changes happened; or reports carry a sequence number and the server keeps the highest. The model relies on per-connection FIFO between results and the state after them.
-- **Locking.** The global dispatch lock is taken before the per-worker lock, never inside it, and dispatch runs after a handler releases the worker's lock. Sends to the worker don't block under the lock on a stalled connection.
-- **Cancel** looks up the job's owner, takes that worker's lock, and re-reads the owner before acting, retrying if it changed.
-- **Heartbeat** is an invocation answered "ok" or "fenced", not today's fire-and-forget send.
-- **`JobStarted`** is removed, or fenced like every other call: today it writes Running with no worker and no authentication check.
-- **Results carry an assignment id**, so two hand-backs of the same job, or a stale one, can't be confused; a requeue clears the job's worker and start time.
-- **Results are kept until acknowledged**, separately from the lossy log buffer. They don't survive a process restart, which Resume treats as a different instance.
-- **Server restart** drops every connection; workers resume and rebuild the session state. The one thing to persist is whether a host re-check is owed, so a restart doesn't skip it.
+- **Handlers are atomic.** `WorkerSessions` holds one async lock per worker; every hub handler that reads or changes a worker's state, dispatch to it, cancel and the operator's diagnostic run under it, with the fence check inside.
+- **Invocations from the current connection only.** The worker builds a fresh `HubConnection` per transport, and registers its handlers on that connection alone, so an invocation is always from the session it arrived on (`WorkerService.HubSession`). Handlers post to the session's inbox, processed in order; those that change the worker's state wait for the state lock (cancel doesn't, as `WOnCancel` needs no lock) — so an invocation that arrives during Resume waits rather than being dropped — and act only if their session is still current and resumed.
+- **Nothing changes during Resume.** The worker holds its state lock from the Resume snapshot until the answer (`WorkerService.SyncAsync`).
+- **Ordered reports.** A state change and the report of it happen under the worker's state lock, onto the session's single ordered outbox; reports also carry a sequence number, and the server keeps the highest.
+- **Ordered sends.** `WorkerMessenger` keeps one queue per connection, written under the worker's lock and drained by one task, so an `AssignJob` and the `CancelJob` after it arrive in that order, and no lock waits on a stalled connection.
+- **Retirement** keeps the last 16 superseded instances per worker, in memory; a server restart forgets them, which costs nothing but a possible round of churn.
+- **Locking.** The global dispatch lock is taken before a worker's lock, never inside it; handlers dispatch after releasing the worker's lock.
+- **Heartbeat** is an invocation answered Ok or Fenced, with a timeout; either failure starts a new session.
+- **Outcomes carry an assignment id** (`Job.AssignmentId`), so a stale completion or hand-back can't touch a later assignment; a requeue clears the job's worker, start time, assignment and instance. The assignment id is what implements the model's hand-back guard.
+- **Outcomes are kept until acknowledged** (`WorkerProtocolState`), apart from the lossy log buffer. They don't survive a process restart, which Resume treats as a different instance (`Job.WorkerInstanceId`).
+- **Every exit from a job records an outcome**, atomically with going idle, so the same instance never comes back idle without having said what became of its job.
+- **Server restart** drops every connection; workers resume and rebuild the session state. Whether a diagnostic is owed is persisted (`Worker.DiagnosticOwed`), set in the same transaction as the Failed that caused it.
+- **Errors as values.** Calls answer `SessionAnswer` rather than throwing, so the worker tells a fenced session from a server fault without parsing messages.
 
-Out of scope: sweeping Running jobs after a server restart, fencing artifact uploads (plain HTTP), log streaming, the bundle-update drain, priorities beyond one competitor, the competitor being cancelled.
+### Model action ↔ code
+
+| Action | C# |
+| --- | --- |
+| `SrvConnect` | `WorkerHub.Connect` + `Authenticate` → `WorkerSessions.TryStart` (`SessionEpoch.Supersedes`) |
+| `SrvResume` | `WorkerHub.Resume` |
+| `SrvState` | `WorkerHub.ReportState` |
+| `SrvResult` | `WorkerHub.ReportOutcome` → `JobScheduler.ApplyOutcomeAsync` |
+| `SrvHeartbeat` | `WorkerHub.Heartbeat` |
+| `SrvDispatch` | `JobScheduler.DispatchAsync` (readiness: `WorkerReadiness.IsReady`) |
+| `SrvCancel` | `JobScheduler.CancelJobAsync` |
+| `SrvOperatorDiagnostic` | `JobScheduler.RequestDiagnosticAsync` |
+| `SrvDisconnected` | `WorkerHub.OnDisconnectedAsync` |
+| `WConnect`, `WOnReply` | `WorkerService.OpenSessionAsync`, `SyncAsync`, `SendAsync` |
+| `WOnAssign`, `WReportCompletion` | `WorkerService.OnJobAssignedAsync`, `FinishJobAsync` (`WorkerProtocolState.Assign`, `FinishJob`) |
+| `WOnDiagnosticRequest`, `WDiagnosticStart`, `WDiagnosticDone` | `WorkerService.OnDiagnosticRequestedAsync`, `TryStartDiagnosticAsync`, `RunDiagnosticAsync` |
+| `WHeartbeat`, `WAbandon` | `WorkerService.KeepAliveAsync`, `EndSession` |
+
+Out of scope: sweeping Running jobs after a server restart, fencing artifact uploads (plain HTTP), log streaming (which needs only a current connection), the bundle-update drain, priorities beyond one competitor, the competitor being cancelled.
 
 ### Modelling choices
 
@@ -87,14 +76,14 @@ Out of scope: sweeping Running jobs after a server restart, fencing artifact upl
 | Property | Meaning |
 | --- | --- |
 | `NoUntrackedRun` | The server never silently gives up on a job the worker is still running. |
-| `NoBusyRejection` (legacy) / `NoUnexplainedFailure` | No job is failed because the worker was busy when it arrived; in the redesign, a job is Failed only because the worker's run of it failed or its process died. |
+| `NoUnexplainedFailure` | A job is Failed only because the worker's run of it failed or its process died — never because the worker was busy when it arrived. |
 | `NoSpuriousFailure` | A job is failed as lost only when the process it was assigned to has died and the live process doesn't have it. |
-| `NoDoubleRun` | Two workers never run the same job (redesign). |
+| `NoDoubleRun` | Two workers never run the same job. |
 | `NotIncident` | The worker never runs a job the server failed as lost while the server considers it ready for more. |
-| `AllJobsSettle` | Every job eventually reaches a final status (redesign, under fairness). |
-| `WorkerNotStranded` | A connected, idle, healthy worker is eventually seen by the server as ready (redesign, under fairness). |
+| `AllJobsSettle` | Every job eventually reaches a final status (under fairness). |
+| `WorkerNotStranded` | A connected, idle, healthy worker is eventually seen by the server as ready (under fairness). |
 
-`NoSpuriousFailure` and `NotIncident` only bite where a job can be failed as lost, which in the redesign takes a process restart; the restart configurations exercise them, and the witness `NeverLosesAJob` checks that they do. `NeverHandsBack` likewise checks that hand-back is exercised.
+`NoSpuriousFailure` and `NotIncident` only bite where a job can be failed as lost, which takes a process restart; the restart configurations exercise them, and the witness `NeverLosesAJob` checks that they do. `NeverHandsBack` likewise checks that hand-back is exercised.
 
 ## Results
 
@@ -102,9 +91,8 @@ Out of scope: sweeping Running jobs after a server restart, fencing artifact upl
 
 | Check | Result |
 | --- | --- |
-| Legacy: `NoUntrackedRun`, `NoBusyRejection`, `NoSpuriousFailure`, `NotIncident` | all violated, as expected |
-| Redesign: base, stall, false timeout, cancel, operator diagnostic, unhealthy retry, competitor, cancel + operator diagnostic, competitor + operator diagnostic, out-of-order handshakes (3 connections), restart with 1 job | every safety property and both liveness properties hold |
-| Redesign: restart with 2 jobs | safety holds; liveness at this size doesn't finish in reasonable time |
+| Base, stall, false timeout, cancel, operator diagnostic, unhealthy retry, competitor, cancel + operator diagnostic, competitor + operator diagnostic, out-of-order handshakes (3 connections), restart with 1 job | every safety property and both liveness properties hold |
+| Restart with 2 jobs | safety holds; liveness at this size doesn't finish in reasonable time |
 | Witnesses `NeverHandsBack` (operator diagnostic), `NeverLosesAJob` (restart, 1 job) | violated, as expected: the guarded paths are taken |
 
 Each design element replaced by its alternative (deadlock checking off, so a bounded run exhausting its reconnects doesn't count):

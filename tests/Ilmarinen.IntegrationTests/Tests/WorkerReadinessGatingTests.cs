@@ -1,11 +1,8 @@
 using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol.Requests;
-using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
-using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using NUnit.Framework;
 using System.Threading.Tasks;
 using System;
@@ -13,18 +10,16 @@ using System;
 namespace Ilmarinen.IntegrationTests.Tests;
 
 /// <summary>
-/// The server's side of readiness: what it will and won't do with a worker whose own diagnostic says it is broken.
+/// The server's side of readiness: derived from what the worker last reported, and held back while a diagnostic the server asked for hasn't started.
 /// Driven through the hub directly, as an arbitrarily old — or arbitrarily wedged — worker build would.
 /// </summary>
 [TestFixture]
 [Category("Integration")]
 public class WorkerReadinessGatingTests
 {
-    private IntegrationTestFixture _fixture = null!;
-    private WorkerRepository _workers = null!;
-    private WorkerHub _hub = null!;
-    private Guid _workerId;
     private const string ConnectionId = "conn-readiness";
+    private IntegrationTestFixture _fixture = null!;
+    private DirectedWorker _worker = null!;
 
     [SetUp]
     public async Task SetUp()
@@ -32,8 +27,8 @@ public class WorkerReadinessGatingTests
         _fixture = new IntegrationTestFixture();
         await _fixture.SetupAsync();
 
-        (_hub, _workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("readiness-worker", ConnectionId);
-        _workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        _worker = await DirectedWorker.RegisterAsync(_fixture, "readiness-worker");
+        await _worker.ConnectAsync(ConnectionId);
     }
 
     [TearDown]
@@ -43,113 +38,163 @@ public class WorkerReadinessGatingTests
     }
 
     [Test]
-    public async Task Ready_FromWorkerWhoseDiagnosticFailed_IsIgnored()
+    public async Task Resumed_IdleAndHealthy_IsReady()
     {
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Unhealthy));
+        await _worker.ResumeAsync(_worker.Idle(DiagnosticStatus.Healthy));
 
-        await _hub.Ready();
-
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False);
+        Assert.That(await _worker.IsReadyAsync(), Is.True);
     }
 
     [Test]
-    public async Task Ready_OnceTheDiagnosticRecovers_IsAccepted()
+    public async Task Resumed_Degraded_IsReady()
     {
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Unhealthy));
-        await _hub.Ready();
+        await _worker.ResumeAsync(_worker.Idle(DiagnosticStatus.Degraded));
 
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
-        await _hub.Ready();
-
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.True);
-    }
-
-    // The placeholder a worker pushes while a diagnostic is still running is not a verdict that it can work.
-    [Test]
-    public async Task Ready_WhileADiagnosticIsStillRunning_IsIgnored()
-    {
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Running));
-
-        await _hub.Ready();
-
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False);
-    }
-
-    // A worker that has never reported one is not presumed broken: on every worker path the report precedes the Ready,
-    // so an absent report means an old build, not a failed check.
-    [Test]
-    public async Task Ready_WithNoDiagnosticReported_IsAccepted()
-    {
-        await _hub.Ready();
-
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.True);
+        Assert.That(await _worker.IsReadyAsync(), Is.True, "degraded means the diagnostic failed to tidy up, not that the worker can't work");
     }
 
     [Test]
-    public async Task JobCompleted_ByWorkerWhoseDiagnosticFailed_LeavesItOutOfTheFleet()
+    public async Task Resumed_Unhealthy_IsNotReady()
     {
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Unhealthy));
-        var jobId = await StartJobAsync();
+        await _worker.ResumeAsync(_worker.Idle(DiagnosticStatus.Unhealthy));
 
-        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Failed));
+        Assert.That(await _worker.IsReadyAsync(), Is.False);
+    }
 
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False);
+    // A worker runs its first diagnostic as soon as it starts; until that has a verdict, nothing says it can work.
+    [Test]
+    public async Task Resumed_WithNoVerdictYet_IsNotReady()
+    {
+        await _worker.ResumeAsync(_worker.Diagnosing(previous: null));
+
+        Assert.That(await _worker.IsReadyAsync(), Is.False);
+    }
+
+    [Test]
+    public async Task Authenticated_ButNotResumed_IsNotReady()
+    {
+        Assert.That(await _worker.IsReadyAsync(), Is.False, "until Resume, the server hasn't reconciled with the worker");
+    }
+
+    [Test]
+    public async Task StateReport_OnceTheDiagnosticRecovers_ReadiesTheWorker()
+    {
+        await _worker.ResumeAsync(_worker.Idle(DiagnosticStatus.Unhealthy));
+
+        await _worker.ReportAsync(_worker.Diagnosing(DiagnosticStatus.Unhealthy));
+        Assert.That(await _worker.IsReadyAsync(), Is.False, "still running");
+        await _worker.ReportAsync(_worker.Idle(DiagnosticStatus.Healthy));
+
+        Assert.That(await _worker.IsReadyAsync(), Is.True);
+    }
+
+    // A report overtaken by a later one mustn't undo it.
+    [Test]
+    public async Task StateReport_OlderThanTheLatest_IsIgnored()
+    {
+        await _worker.ResumeAsync(_worker.Idle(DiagnosticStatus.Healthy));
+        var stale = _worker.Diagnosing();
+        var latest = _worker.Idle(DiagnosticStatus.Healthy);
+
+        await _worker.ReportAsync(latest);
+        await _worker.ReportAsync(stale);
+
+        Assert.That(await _worker.IsReadyAsync(), Is.True);
     }
 
     // The failure may be the host rather than the build, and the worker can't tell the difference — only a fresh
-    // diagnostic can. Until it answers, this worker takes no more work.
+    // diagnostic can. Until one has started and come back healthy, this worker takes no more work.
     [Test]
-    public async Task JobCompleted_Failed_AsksForAFreshDiagnosticInsteadOfTakingMoreWork()
+    public async Task FailedOutcome_AsksForAFreshDiagnosticAndHoldsTheWorkerBackUntilItHasRun()
     {
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
-        var jobId = await StartJobAsync();
+        await _worker.ResumeAsync(_worker.Idle());
+        var (jobId, assignmentId) = await StartJobAsync();
 
-        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Failed));
+        await _worker.ReportAsync(DirectedWorker.Completed(jobId, assignmentId, JobStatus.Failed));
+        await _worker.ReportAsync(_worker.Idle());
 
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False, "a worker that just failed a job must not be handed the next one before its host is re-checked");
-        Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(1));
+        Assert.That((await _worker.SentAsync()).DiagnosticRequests, Is.EqualTo(1));
+        Assert.That(await _worker.IsReadyAsync(), Is.False, "idle and healthy, but the re-check hasn't run");
+
+        await _worker.ReportAsync(_worker.Diagnosing());
+        Assert.That(await _worker.IsReadyAsync(), Is.False, "the re-check is running");
+        await _worker.ReportAsync(_worker.Idle());
+
+        Assert.That(await _worker.IsReadyAsync(), Is.True);
     }
 
-    // A reconnecting worker can deliver the same result twice (once live, once replayed). The first already asked for the re-check; the second must neither ask again nor ready the worker past the re-check it is waiting on.
+    // A reconnecting worker can deliver the same outcome twice (once live, once in its Resume). The first already asked for the re-check.
     [Test]
-    public async Task JobCompleted_FailedDeliveredTwice_AsksForOneDiagnostic()
+    public async Task FailedOutcome_DeliveredTwice_AsksForOneDiagnostic()
     {
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
-        var jobId = await StartJobAsync();
+        await _worker.ResumeAsync(_worker.Idle());
+        var (jobId, assignmentId) = await StartJobAsync();
+        var outcome = DirectedWorker.Completed(jobId, assignmentId, JobStatus.Failed);
 
-        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Failed));
-        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Failed));
+        await _worker.ReportAsync(outcome);
+        await _worker.ReportAsync(outcome);
 
-        Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(1));
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False);
+        Assert.That((await _worker.SentAsync()).DiagnosticRequests, Is.EqualTo(1));
     }
 
     [Test]
-    public async Task JobCompleted_Success_ReadiesTheWorkerWithoutADiagnostic()
+    public async Task SuccessOutcome_ReadiesTheWorkerWithoutADiagnostic()
     {
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
-        var jobId = await StartJobAsync();
+        await _worker.ResumeAsync(_worker.Idle());
+        var (jobId, assignmentId) = await StartJobAsync();
 
-        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Success));
+        await _worker.ReportAsync(DirectedWorker.Completed(jobId, assignmentId, JobStatus.Success));
+        await _worker.ReportAsync(_worker.Idle());
 
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.True);
-        Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(0), "a job that worked is its own proof that the host works");
+        Assert.That(await _worker.IsReadyAsync(), Is.True);
+        Assert.That((await _worker.SentAsync()).DiagnosticRequests, Is.EqualTo(0), "a job that worked is its own proof that the host works");
     }
 
     // A person cancelling a job says nothing about the host it was running on.
     [Test]
-    public async Task JobCompleted_Cancelled_ReadiesTheWorkerWithoutADiagnostic()
+    public async Task CancelledOutcome_ReadiesTheWorkerWithoutADiagnostic()
     {
-        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
-        var jobId = await StartJobAsync();
+        await _worker.ResumeAsync(_worker.Idle());
+        var (jobId, assignmentId) = await StartJobAsync();
 
-        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Cancelled));
+        await _worker.ReportAsync(DirectedWorker.Completed(jobId, assignmentId, JobStatus.Cancelled));
+        await _worker.ReportAsync(_worker.Idle());
 
-        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.True);
-        Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(0));
+        Assert.That(await _worker.IsReadyAsync(), Is.True);
+        Assert.That((await _worker.SentAsync()).DiagnosticRequests, Is.EqualTo(0));
     }
 
-    private async Task<Guid> StartJobAsync()
+    // The one piece of session state that must survive a server restart: without it, the restarted server would hand work to a worker whose host it was in the middle of re-checking.
+    [Test]
+    public async Task OwedDiagnostic_SurvivesAServerRestart()
+    {
+        await _worker.ResumeAsync(_worker.Idle());
+        var (jobId, assignmentId) = await StartJobAsync();
+        await _worker.ReportAsync(DirectedWorker.Completed(jobId, assignmentId, JobStatus.Failed));
+
+        await _fixture.RestartServerAsync(workerBundlePath: null);
+        await _worker.ConnectAsync("conn-after-restart");
+        await _worker.ResumeAsync(_worker.Idle());
+
+        Assert.That(await _worker.IsReadyAsync(), Is.False);
+        Assert.That((await _worker.SentAsync()).DiagnosticRequests, Is.EqualTo(1), "the re-check is asked for again on the new connection");
+    }
+
+    [Test]
+    public async Task OperatorDiagnostic_HoldsTheWorkerBackUntilItHasRun()
+    {
+        await _worker.ResumeAsync(_worker.Idle());
+
+        Assert.That(await _fixture.Services.GetRequiredService<JobScheduler>().RequestDiagnosticAsync(_worker.WorkerId), Is.True);
+
+        Assert.That((await _worker.SentAsync()).OperatorDiagnosticRequests, Is.EqualTo(1));
+        Assert.That(await _worker.IsReadyAsync(), Is.False);
+        await _worker.ReportAsync(_worker.Diagnosing());
+        await _worker.ReportAsync(_worker.Idle());
+        Assert.That(await _worker.IsReadyAsync(), Is.True);
+    }
+
+    private async Task<(Guid JobId, Guid AssignmentId)> StartJobAsync()
     {
         var jobId = await _fixture.SubmitJobAsync(new JobSubmission
         {
@@ -158,28 +203,8 @@ public class WorkerReadinessGatingTests
             ScriptPath = "pipeline.csx"
         });
 
-        await _fixture.StartJobOnWorkerAsync(jobId, _workerId);
-        return jobId;
-    }
-
-    private static JobResult Result(Guid jobId, JobStatus status)
-    {
-        return new JobResult
-        {
-            Id = jobId,
-            Status = status,
-            Duration = TimeSpan.FromSeconds(1)
-        };
-    }
-
-    private static DiagnosticReport Report(DiagnosticStatus status)
-    {
-        return new DiagnosticReport
-        {
-            Status = status,
-            Summary = $"stub {status}",
-            Steps = [],
-            CheckedAt = DateTime.UtcNow
-        };
+        // The worker is ready, so submitting already dispatched the job to it.
+        var assignment = (await _worker.SentAsync()).Assignments.Find(a => a.Id == jobId) ?? throw new InvalidOperationException($"Job {jobId} wasn't dispatched to the worker");
+        return (jobId, assignment.AssignmentId);
     }
 }

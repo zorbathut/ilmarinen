@@ -5,7 +5,8 @@ using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -13,6 +14,9 @@ using System;
 
 namespace Ilmarinen.Server.Hubs;
 
+/// <summary>
+/// The server's end of the worker protocol (spec/README.md). A connection becomes the worker's current session by authenticating with an epoch its current one doesn't outrank; it then sends Resume, and only after that does anything it reports about jobs count. Calls on a connection that isn't current are answered Fenced.
+/// </summary>
 public class WorkerHub : Hub<IWorkerClient>
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -20,17 +24,17 @@ public class WorkerHub : Hub<IWorkerClient>
     private readonly WorkerBundleService _bundles;
     private readonly UIEventService _uiEvents;
     private readonly WorkerMessenger _messenger;
+    private readonly WorkerSessions _sessions;
     private readonly ILogger<WorkerHub> _logger;
 
-    private static readonly ConcurrentDictionary<string, PendingAuth> _pendingAuths = new();
-
-    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, WorkerBundleService bundles, UIEventService uiEvents, WorkerMessenger messenger, ILogger<WorkerHub> logger)
+    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, WorkerBundleService bundles, UIEventService uiEvents, WorkerMessenger messenger, WorkerSessions sessions, ILogger<WorkerHub> logger)
     {
         _scopeFactory = scopeFactory;
         _serverKey = serverKey;
         _bundles = bundles;
         _uiEvents = uiEvents;
         _messenger = messenger;
+        _sessions = sessions;
         _logger = logger;
     }
 
@@ -59,18 +63,19 @@ public class WorkerHub : Hub<IWorkerClient>
         }
 
         var serverNonce = RandomNumberGenerator.GetBytes(32);
-        var challengeData = ServerKeyService.BuildChallengeData(
-            request.WorkerId.ToString(), request.Nonce, serverNonce);
+        var challengeData = HandshakeChallenge.Build(request.WorkerId, request.InstanceId, request.ConnectionCounter, request.Nonce, serverNonce);
         var serverSignature = _serverKey.Sign(challengeData);
 
-        _pendingAuths[Context.ConnectionId] = new PendingAuth
+        _sessions.BeginHandshake(Context.ConnectionId, new PendingHandshake
         {
             WorkerId = request.WorkerId,
+            InstanceId = request.InstanceId,
+            ConnectionCounter = request.ConnectionCounter,
             WorkerNonce = request.Nonce,
             ServerNonce = serverNonce,
             CreatedAt = DateTime.UtcNow,
             BundleHash = request.BundleHash
-        };
+        });
 
         _logger.LogDebug("Issued auth challenge for worker {WorkerId}", request.WorkerId);
 
@@ -83,9 +88,10 @@ public class WorkerHub : Hub<IWorkerClient>
         };
     }
 
-    public async Task Authenticate(WorkerAuthenticate info)
+    /// <summary>Verifies the worker's signature, then makes this connection its current session if the epoch allows. Fenced means a connection with a later epoch already holds it.</summary>
+    public async Task<SessionAnswer> Authenticate(WorkerAuthenticate info)
     {
-        if (!_pendingAuths.TryRemove(Context.ConnectionId, out var pending))
+        if (_sessions.TakeHandshake(Context.ConnectionId) is not { } pending)
         {
             throw new HubException("No pending authentication challenge. Call Connect first.");
         }
@@ -95,7 +101,6 @@ public class WorkerHub : Hub<IWorkerClient>
             throw new HubException("Authentication challenge expired. Call Connect again.");
         }
 
-        // Verify worker signature
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
@@ -108,28 +113,47 @@ public class WorkerHub : Hub<IWorkerClient>
         using var workerEcdsa = ECDsa.Create();
         workerEcdsa.ImportSubjectPublicKeyInfo(publicKeyBytes, out _);
 
-        var challengeData = ServerKeyService.BuildChallengeData(
-            pending.WorkerId.ToString(), pending.WorkerNonce, pending.ServerNonce);
+        var challengeData = HandshakeChallenge.Build(pending.WorkerId, pending.InstanceId, pending.ConnectionCounter, pending.WorkerNonce, pending.ServerNonce);
         if (!workerEcdsa.VerifyData(challengeData, info.Signature, HashAlgorithmName.SHA256))
         {
             _logger.LogWarning("Worker {WorkerId} rejected: invalid signature", pending.WorkerId);
             throw new HubException("Invalid signature. Check that the worker key is correct.");
         }
 
-        // Recorded only after the signature checks out, so an unauthenticated caller can't overwrite a worker's address by claiming its ID.
-
-        // Every reconnect re-runs Connect/Authenticate on a fresh connection ID, so this is the sole point at which the address needs refreshing.
-        var remoteAddress = Context.GetHttpContext()?.Connection.RemoteIpAddress;
-        if (remoteAddress == null)
+        var session = new WorkerSession(pending.WorkerId, Context.ConnectionId, pending.InstanceId, pending.ConnectionCounter)
         {
-            _logger.LogWarning("Worker {WorkerId} authenticated but no peer address was available", pending.WorkerId);
+            BundleHash = pending.BundleHash
+        };
+        if (info.Workspaces != null)
+        {
+            session.Workspaces = [.. info.Workspaces];
         }
 
-        await workers.ConnectAsync(Context.ConnectionId, pending.WorkerId, AddressFormat(remoteAddress));
-        workers.SetBundleHash(Context.ConnectionId, pending.BundleHash);
-        workers.SetWorkspaces(Context.ConnectionId, info.Workspaces);
+        using (await _sessions.LockAsync(pending.WorkerId))
+        {
+            if (!_sessions.TryStart(session, out var superseded))
+            {
+                _logger.LogWarning("Worker {WorkerId} handshake on connection {Counter} of instance {InstanceId} fenced: the worker's current connection outranks it", pending.WorkerId, pending.ConnectionCounter, pending.InstanceId);
+                return SessionAnswer.Fenced;
+            }
+
+            if (superseded != null && superseded.InstanceId != pending.InstanceId)
+            {
+                _logger.LogWarning("Worker {WorkerId} reconnected as a new process instance {InstanceId}, replacing {OldInstanceId} for good (if both are still running, two processes share its key)", pending.WorkerId, pending.InstanceId, superseded.InstanceId);
+            }
+
+            // Recorded only after the signature checks out and the connection got in, so an unauthenticated caller can't overwrite a worker's address by claiming its ID. Every reconnect authenticates afresh, so this is the sole point at which the address needs refreshing.
+            var remoteAddress = Context.GetHttpContext()?.Connection.RemoteIpAddress;
+            if (remoteAddress == null)
+            {
+                _logger.LogWarning("Worker {WorkerId} authenticated but no peer address was available", pending.WorkerId);
+            }
+            _sessions.SetDiagnosticOwed(pending.WorkerId, await workers.RecordConnectionAsync(pending.WorkerId, AddressFormat(remoteAddress)));
+        }
+
         _uiEvents.NotifyWorkersChanged();
-        _logger.LogInformation("Worker authenticated: {WorkerId}", pending.WorkerId);
+        _logger.LogInformation("Worker authenticated: {WorkerId} (connection {Counter} of instance {InstanceId})", pending.WorkerId, pending.ConnectionCounter, pending.InstanceId);
+        return SessionAnswer.Ok;
     }
 
     /// <summary>
@@ -151,338 +175,294 @@ public class WorkerHub : Hub<IWorkerClient>
         return address.ToString();
     }
 
-    public async Task Ready()
+    /// <summary>
+    /// The first call on an authenticated connection: the worker's state and every outcome the server hasn't acknowledged, in one step. Applies the outcomes, then reconciles what the database says the worker is running with what the worker says, then lets the connection report and take work.
+    /// </summary>
+    public async Task<ResumeResponse> Resume(WorkerResume resume)
     {
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
+        {
+            return new ResumeResponse { Answer = SessionAnswer.Fenced };
+        }
+
         using var scope = _scopeFactory.CreateScope();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
 
-        // Enforced server-side rather than trusting the worker: the whole point of self-update is that the connected worker may be running arbitrarily old code.
-        if (HasStaleBundle(workers, Context.ConnectionId))
+        var state = resume.State;
+        var abort = new List<Guid>();
+        using (await _sessions.LockAsync(session.WorkerId))
         {
-            _logger.LogInformation("Ignoring Ready from worker on a stale bundle: {ConnectionId}", Context.ConnectionId);
-            return;
+            if (_sessions.ByConnection(Context.ConnectionId) != session)
+            {
+                return new ResumeResponse { Answer = SessionAnswer.Fenced };
+            }
+
+            var recheck = _sessions.DiagnosticOwed(session.WorkerId);
+            foreach (var outcome in resume.Outcomes)
+            {
+                recheck |= await scheduler.ApplyOutcomeAsync(session, outcome);
+            }
+
+            var reported = state.Activity == WorkerActivity.RunningJob ? state.AssignmentId : null;
+            var running = await jobs.GetRunningAssignmentsAsync(session.WorkerId);
+            foreach (var job in running)
+            {
+                if (job.AssignmentId != null && job.AssignmentId == reported)
+                {
+                    continue;
+                }
+
+                if (job.JobId == state.JobId)
+                {
+                    _logger.LogError("Worker {WorkerId} reports running job {JobId} under assignment {Reported}, but the server has it under {Assigned}", session.WorkerId, job.JobId, reported, job.AssignmentId);
+                }
+
+                // Running for the worker, yet it doesn't say so. The same process instance would have named it if it had ever arrived, so it can go back in the queue unrun; a different instance may have run part of it before dying, so it fails.
+                if (job.WorkerInstanceId == session.InstanceId && job.AssignmentId is { } assignment)
+                {
+                    if (await jobs.RequeueAsync(job.JobId, session.WorkerId, assignment))
+                    {
+                        _logger.LogWarning("Worker {WorkerId} never received job {JobId}; queued it again", session.WorkerId, job.JobId);
+                        _uiEvents.NotifyJobsChanged();
+                    }
+                }
+                else if (await scheduler.FailLostAsync(job.JobId, session.WorkerId))
+                {
+                    _logger.LogWarning("Worker {WorkerId} came back as a new process without job {JobId}; failed it as lost", session.WorkerId, job.JobId);
+                }
+            }
+
+            // The worker runs something the server no longer has running for it — cancelled or failed while it was away. It stops.
+            if (reported is { } runningAssignment && !running.Any(j => j.AssignmentId == runningAssignment))
+            {
+                _logger.LogInformation("Worker {WorkerId} is running job {JobId}, which the server no longer has running for it; telling it to stop", session.WorkerId, state.JobId);
+                abort.Add(runningAssignment);
+            }
+
+            session.State = state;
+            session.Resumed = true;
+
+            if (recheck)
+            {
+                _sessions.SetDiagnosticOwed(session.WorkerId, true);
+                _messenger.Send(Context.ConnectionId, "host re-check", client => client.RecheckHost());
+            }
         }
 
-        var worker = workers.GetByConnectionId(Context.ConnectionId);
-        if (worker == null)
-        {
-            _logger.LogWarning("Rejected Ready from unauthenticated connection {ConnectionId}", Context.ConnectionId);
-            throw new HubException("Worker not authenticated.");
-        }
-
-        if (IsBenchedByDiagnostic(workers, worker.Id, out var status))
-        {
-            _logger.LogWarning("Ignoring Ready from worker {WorkerId}: its last diagnostic was {Status}", worker.Id, status);
-            return;
-        }
-
-        workers.SetReady(Context.ConnectionId, true);
         _uiEvents.NotifyWorkersChanged();
-        _logger.LogInformation("Worker ready: {ConnectionId}", Context.ConnectionId);
+        await scheduler.DispatchAsync();
+        return new ResumeResponse { Answer = SessionAnswer.Ok, AbortAssignments = abort };
+    }
+
+    /// <summary>The worker's state after a change. Readiness is derived from it, so a report can free the worker for the next job.</summary>
+    public async Task<SessionAnswer> ReportState(WorkerState state)
+    {
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
+        {
+            return SessionAnswer.Fenced;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        using (await _sessions.LockAsync(session.WorkerId))
+        {
+            if (_sessions.ByConnection(Context.ConnectionId) != session)
+            {
+                return SessionAnswer.Fenced;
+            }
+            if (!session.Resumed)
+            {
+                return SessionAnswer.NotResumed;
+            }
+            if (session.State is { } latest && state.Seq <= latest.Seq)
+            {
+                return SessionAnswer.Ok;
+            }
+
+            session.State = state;
+
+            // A diagnostic that has started is the one that was owed: the worker runs a fresh one for every request, even one that arrived mid-diagnostic, and readiness still waits for its verdict.
+            if (state.Activity == WorkerActivity.RunningDiagnostic && _sessions.DiagnosticOwed(session.WorkerId))
+            {
+                await workers.SetDiagnosticOwedAsync(session.WorkerId, false);
+                _sessions.SetDiagnosticOwed(session.WorkerId, false);
+            }
+        }
+
+        _uiEvents.NotifyWorkersChanged();
+        await scheduler.DispatchAsync();
+        return SessionAnswer.Ok;
+    }
+
+    /// <summary>What became of one of the worker's assignments. Acknowledged by an Ok; anything else, and the worker keeps it for its next Resume.</summary>
+    public async Task<SessionAnswer> ReportOutcome(JobOutcome outcome)
+    {
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
+        {
+            return SessionAnswer.Fenced;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        using (await _sessions.LockAsync(session.WorkerId))
+        {
+            if (_sessions.ByConnection(Context.ConnectionId) != session)
+            {
+                return SessionAnswer.Fenced;
+            }
+            if (!session.Resumed)
+            {
+                return SessionAnswer.NotResumed;
+            }
+
+            // A failed job is the only evidence the server gets that a host has gone bad, and the worker can't tell a red build from a dead daemon — the diagnostic can. Only a Failed that is new asks for one: the same outcome delivered again already did.
+            if (await scheduler.ApplyOutcomeAsync(session, outcome))
+            {
+                _logger.LogInformation("Worker {WorkerId} failed job {JobId}; re-checking its host before giving it more work", session.WorkerId, outcome.JobId);
+                _sessions.SetDiagnosticOwed(session.WorkerId, true);
+                _messenger.Send(Context.ConnectionId, "host re-check", client => client.RecheckHost());
+            }
+
+            workers.SetWorkspaces(Context.ConnectionId, outcome.Workspaces);
+        }
 
         await scheduler.DispatchAsync();
+        return SessionAnswer.Ok;
     }
 
-    /// <summary>
-    /// A launcher-run worker whose reported bundle differs from the one this server serves is about to exit for an update; it must never be marked ready or handed work. Classic workers report no bundle and are never stale.
-    /// </summary>
-    private bool HasStaleBundle(WorkerRepository workers, string connectionId)
+    /// <summary>Answered Fenced on a connection that has been superseded: how an otherwise quiet worker finds out.</summary>
+    public async Task<SessionAnswer> Heartbeat()
     {
-        var connectionBundle = workers.GetBundleHash(connectionId);
-        return connectionBundle != null && _bundles.CurrentHash != null && connectionBundle != _bundles.CurrentHash;
-    }
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
+        {
+            return SessionAnswer.Fenced;
+        }
 
-    /// <summary>
-    /// Whether the worker's own last diagnostic says it can't run jobs. A worker that has never reported one is not
-    /// presumed broken — on every worker path the report precedes the Ready, so an absent report means an old build
-    /// rather than a failed check, and refusing it would bench a worker with no way back.
-    /// </summary>
-    private static bool IsBenchedByDiagnostic(WorkerRepository workers, Guid workerId, out DiagnosticStatus status)
-    {
-        var diagnostic = workers.GetDiagnostic(workerId);
-        status = diagnostic?.Status ?? DiagnosticStatus.Unknown;
-
-        return diagnostic != null && !DiagnosticStatusPolicy.CanAcceptJobs(diagnostic.Status);
-    }
-
-    /// <summary>
-    /// Called by workers after re-authentication to report their current job state.
-    /// Returns the server's understanding of what the worker should be running
-    /// and the last log sequence persisted so the worker can replay from there.
-    /// </summary>
-    public async Task<ReconnectResponse> Reconnect(WorkerReconnect request)
-    {
         using var scope = _scopeFactory.CreateScope();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-
-        var worker = workers.GetByConnectionId(Context.ConnectionId);
-        if (worker == null)
-        {
-            throw new HubException("Worker not authenticated. Call Connect and Authenticate first.");
-        }
-
-        var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
-
-        if (runningJob != null)
-        {
-            if (request.RunningJobId == runningJob)
-            {
-                // Worker still has the job — all good, it will continue
-                _logger.LogInformation("Worker {WorkerId} reattached with running job {JobId}",
-                    worker.Id, runningJob);
-            }
-            else
-            {
-                // Worker lost the job — fail it
-                _logger.LogWarning(
-                    "Worker {WorkerId} reconnected without job {JobId}, marking failed",
-                    worker.Id, runningJob);
-                var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
-                await scheduler.CompleteJobAsync(runningJob.Value, JobStatus.Failed);
-            }
-        }
-        else if (request.RunningJobId != null)
-        {
-            // Worker thinks it's running a job, but the server has no Running record. It was cancelled/failed while disconnected, or is unknown. ExpectedJobId = null tells the worker to abort — log it for visibility.
-            _logger.LogInformation(
-                "Worker {WorkerId} reports running job {JobId} which server does not consider active",
-                worker.Id, request.RunningJobId.Value);
-        }
-
-        return new ReconnectResponse
-        {
-            ExpectedJobId = runningJob
-        };
+        await scope.ServiceProvider.GetRequiredService<WorkerRepository>().TouchLastSeenAsync(session.WorkerId);
+        return SessionAnswer.Ok;
     }
 
-    public async Task JobStarted(Guid jobId)
+    public async Task<SessionAnswer> ReportCommit(Guid jobId, string commitSha)
     {
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
+        {
+            return SessionAnswer.Fenced;
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        var worker = RequireWorker(scope, nameof(JobStarted));
 
-        if (await jobs.GetAssignedWorkerAsync(jobId) != worker.Id)
+        if (await jobs.GetAssignedWorkerAsync(jobId) != session.WorkerId)
         {
-            _logger.LogWarning("Worker {WorkerId} reported JobStarted for {JobId}, which isn't assigned to it; ignoring", worker.Id, jobId);
-            return;
-        }
-
-        _logger.LogInformation("Job started: {JobId}", jobId);
-        await jobs.UpdateStatusAsync(jobId, JobStatus.Running);
-    }
-
-    public async Task ReportCommit(Guid jobId, string commitSha)
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        var worker = RequireWorker(scope, nameof(ReportCommit));
-
-        if (await jobs.GetAssignedWorkerAsync(jobId) != worker.Id)
-        {
-            _logger.LogWarning("Worker {WorkerId} reported a commit for {JobId}, which isn't assigned to it; ignoring", worker.Id, jobId);
-            return;
+            _logger.LogWarning("Worker {WorkerId} reported a commit for {JobId}, which isn't assigned to it; ignoring", session.WorkerId, jobId);
+            return SessionAnswer.Ok;
         }
 
         _logger.LogInformation("Job {JobId} resolved to commit {CommitSha}", jobId, commitSha);
         await jobs.SetCommitAsync(jobId, commitSha);
         _uiEvents.NotifyJobsChanged();
+        return SessionAnswer.Ok;
     }
 
-    public async Task StreamLogs(LogChunk chunk)
+    public async Task<SessionAnswer> StreamLogs(LogChunk chunk)
     {
+        if (_sessions.ByConnection(Context.ConnectionId) == null)
+        {
+            return SessionAnswer.Fenced;
+        }
+
         using var scope = _scopeFactory.CreateScope();
-        var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
-        RequireWorker(scope, nameof(StreamLogs));
-
-        await logService.ProcessChunkAsync(chunk);
+        await scope.ServiceProvider.GetRequiredService<LogStreamService>().ProcessChunkAsync(chunk);
+        return SessionAnswer.Ok;
     }
 
-    public async Task JobCompleted(Guid jobId, JobResult result)
+    public SessionAnswer WorkspaceDeleted(string name, DeleteWorkspaceResult result)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-
-        var worker = workers.GetByConnectionId(Context.ConnectionId);
-        if (worker == null)
+        if (_sessions.ByConnection(Context.ConnectionId) == null)
         {
-            _logger.LogWarning(
-                "Rejected JobCompleted for {JobId} from unauthenticated connection {ConnectionId}",
-                jobId, Context.ConnectionId);
-            throw new HubException("Worker not authenticated.");
+            return SessionAnswer.Fenced;
         }
 
-        // Only the worker a job was assigned to can say how it went. The assignment outlives a cancel, so a cancelled job's own worker still gets to report the real outcome.
-        if (await jobs.GetAssignedWorkerAsync(jobId) != worker.Id)
-        {
-            _logger.LogWarning("Worker {WorkerId} reported JobCompleted for {JobId}, which isn't assigned to it; ignoring", worker.Id, jobId);
-            return;
-        }
-
-        // A worker runs one job at a time. A JobCompleted naming anything other than its current assignment is a stale or confused message — acting on it would mark the wrong job complete and free a still-busy worker for more work.
-        var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
-        if (runningJob != null && runningJob != jobId)
-        {
-            _logger.LogWarning(
-                "Worker {WorkerId} reported JobCompleted for {JobId} but its running job is {RunningJobId}; ignoring",
-                worker.Id, jobId, runningJob.Value);
-            return;
-        }
-
-        _logger.LogInformation("Job completed: {JobId} - {Status}", jobId, result.Status);
-        var transitioned = await scheduler.CompleteJobAsync(jobId, result.Status);
-
-        if (result.Workspaces != null)
-            workers.SetWorkspaces(Context.ConnectionId, result.Workspaces);
-
-        // A launcher-run worker on a stale bundle will exit for an update right after this call returns. Marking it ready would race a new assignment against that exit, so leave it not-ready and skip the dispatch that exists solely to feed the just-freed worker.
-        if (HasStaleBundle(workers, Context.ConnectionId))
-        {
-            _logger.LogInformation("Worker {WorkerId} completed job {JobId} on a stale bundle; draining for bundle update", worker.Id, jobId);
-            return;
-        }
-
-        if (IsBenchedByDiagnostic(workers, worker.Id, out var status))
-        {
-            _logger.LogWarning("Worker {WorkerId} finished job {JobId} but its last diagnostic was {Status}; leaving it out of the fleet", worker.Id, jobId, status);
-            return;
-        }
-
-        // A failed job is the only evidence the server gets that a host has gone bad, and the worker can't tell a red build from a dead daemon — the diagnostic can. Hold the worker back until it answers: if the host is fine it readies itself a second later, and if it isn't, the gate above keeps it out until it recovers. A cancel says nothing about the host, and a success is its own proof.
-        if (result.Status == JobStatus.Failed)
-        {
-            // A Failed the job already had is the same result delivered again: its first delivery asked for the re-check this worker is still waiting on.
-            if (!transitioned)
-            {
-                _logger.LogInformation("Worker {WorkerId} reported job {JobId} as Failed again; its host re-check is already under way", worker.Id, jobId);
-                return;
-            }
-
-            _logger.LogInformation("Worker {WorkerId} failed job {JobId}; re-checking its host before giving it more work", worker.Id, jobId);
-            _messenger.Send(Context.ConnectionId, "host re-check", client => client.RecheckHost());
-            return;
-        }
-
-        workers.SetReady(Context.ConnectionId, true);
-        await scheduler.DispatchAsync();
-    }
-
-    public Task WorkspaceDeleted(string name, DeleteWorkspaceResult result)
-    {
         using var scope = _scopeFactory.CreateScope();
         var deletionService = scope.ServiceProvider.GetRequiredService<WorkspaceDeletionService>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-        RequireWorker(scope, nameof(WorkspaceDeleted));
 
         deletionService.Complete(Context.ConnectionId, name, result);
-
         if (result.Status == DeleteWorkspaceStatus.Success)
+        {
             workers.RemoveWorkspace(Context.ConnectionId, name);
-
-        return Task.CompletedTask;
-    }
-
-    public Task ReportDiagnostic(DiagnosticReport report)
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-
-        // Reject reports from connections that haven't authenticated. The connection mapping is set in Authenticate(); without it we'd accept reports from any bare SignalR caller.
-        var worker = workers.GetByConnectionId(Context.ConnectionId);
-        if (worker == null)
-        {
-            _logger.LogWarning(
-                "Rejected ReportDiagnostic from unauthenticated connection {ConnectionId}",
-                Context.ConnectionId);
-            throw new HubException("Worker not authenticated.");
         }
 
-        workers.SetDiagnostic(worker.Id, report);
+        return SessionAnswer.Ok;
+    }
+
+    /// <summary>The full report, for the worker page. Readiness goes by the verdict in the worker's state, not by this.</summary>
+    public SessionAnswer ReportDiagnostic(DiagnosticReport report)
+    {
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
+        {
+            return SessionAnswer.Fenced;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetDiagnostic(session.WorkerId, report);
         _uiEvents.NotifyWorkersChanged();
-        _logger.LogInformation("Worker {WorkerId} diagnostic: {Status} - {Summary}",
-            worker.Id, report.Status, report.Summary);
-        return Task.CompletedTask;
+        _logger.LogInformation("Worker {WorkerId} diagnostic: {Status} - {Summary}", session.WorkerId, report.Status, report.Summary);
+        return SessionAnswer.Ok;
     }
 
-    public Task ReportWorkspaceUsage(WorkspaceUsageReport report)
+    public SessionAnswer ReportWorkspaceUsage(WorkspaceUsageReport report)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-
-        var worker = workers.GetByConnectionId(Context.ConnectionId);
-        if (worker == null)
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
         {
-            _logger.LogWarning(
-                "Rejected ReportWorkspaceUsage from unauthenticated connection {ConnectionId}",
-                Context.ConnectionId);
-            throw new HubException("Worker not authenticated.");
+            return SessionAnswer.Fenced;
         }
 
-        workers.SetWorkspaceUsage(worker.Id, report);
+        using var scope = _scopeFactory.CreateScope();
+        scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetWorkspaceUsage(session.WorkerId, report);
         _uiEvents.NotifyWorkersChanged();
-        return Task.CompletedTask;
-    }
-
-    public async Task Heartbeat(WorkerHeartbeat status)
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-
-        await workers.UpdateHeartbeatAsync(Context.ConnectionId);
-    }
-
-    private ConnectedWorker RequireWorker(IServiceScope scope, string method)
-    {
-        var worker = scope.ServiceProvider.GetRequiredService<WorkerRepository>().GetByConnectionId(Context.ConnectionId);
-        if (worker == null)
-        {
-            _logger.LogWarning("Rejected {Method} from unauthenticated connection {ConnectionId}", method, Context.ConnectionId);
-            throw new HubException("Worker not authenticated.");
-        }
-        return worker;
+        return SessionAnswer.Ok;
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        _pendingAuths.TryRemove(Context.ConnectionId, out _);
+        _sessions.TakeHandshake(Context.ConnectionId);
 
-        using var scope = _scopeFactory.CreateScope();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
-
-        var worker = workers.GetByConnectionId(Context.ConnectionId);
-        if (worker != null)
+        if (_sessions.ByConnection(Context.ConnectionId) is { } session)
         {
-            _logger.LogInformation("Worker disconnected: {WorkerId}", worker.Id);
+            using var scope = _scopeFactory.CreateScope();
+            var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+            var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+            var logService = scope.ServiceProvider.GetRequiredService<LogStreamService>();
 
-            // Check if the worker had a running job — it stays Running, awaiting the worker to reconnect and resume or report completion.
-            var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
-            if (runningJob != null)
+            bool ended;
+            using (await _sessions.LockAsync(session.WorkerId))
             {
-                // Flush any buffered logs to DB so they're persisted
-                await logService.FlushJobAsync(runningJob.Value);
-                _logger.LogWarning(
-                    "Worker {WorkerId} disconnected with running job {JobId}, awaiting reconnection",
-                    worker.Id, runningJob.Value);
+                ended = _sessions.End(Context.ConnectionId) != null;
+            }
+
+            if (ended)
+            {
+                _logger.LogInformation("Worker disconnected: {WorkerId}", session.WorkerId);
+                await workers.TouchLastSeenAsync(session.WorkerId);
+
+                // Its jobs stay Running: the worker's next Resume says what became of them.
+                foreach (var job in await jobs.GetRunningAssignmentsAsync(session.WorkerId))
+                {
+                    await logService.FlushJobAsync(job.JobId);
+                    _logger.LogWarning("Worker {WorkerId} disconnected with running job {JobId}, awaiting reconnection", session.WorkerId, job.JobId);
+                }
             }
         }
 
-        await workers.SetDisconnectedAsync(Context.ConnectionId);
         _messenger.Forget(Context.ConnectionId);
         _uiEvents.NotifyWorkersChanged();
         await base.OnDisconnectedAsync(exception);
     }
-}
-
-internal class PendingAuth
-{
-    public required Guid WorkerId { get; init; }
-    public required byte[] WorkerNonce { get; init; }
-    public required byte[] ServerNonce { get; init; }
-    public required DateTime CreatedAt { get; init; }
-    public string? BundleHash { get; init; }
 }

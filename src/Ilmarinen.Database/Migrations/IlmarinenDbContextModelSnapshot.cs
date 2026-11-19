@@ -17,7 +17,7 @@ namespace Ilmarinen.Database.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.14")
+                .HasAnnotation("ProductVersion", "9.0.1")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -26,6 +26,9 @@ namespace Ilmarinen.Database.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AssignmentId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Commit")
@@ -68,6 +71,9 @@ namespace Ilmarinen.Database.Migrations
                         .HasColumnType("integer");
 
                     b.Property<Guid?>("WorkerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("WorkerInstanceId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
@@ -285,6 +291,9 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("DiagnosticOwed")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("LastIpAddress")
                         .HasColumnType("text");

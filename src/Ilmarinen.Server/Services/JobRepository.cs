@@ -110,12 +110,13 @@ public class JobRepository
     /// <summary>
     /// What a worker needs to run this job, git token decrypted.
     /// </summary>
-    public async Task<JobAssignment> GetAssignmentAsync(Guid id)
+    public async Task<JobAssignment> GetAssignmentAsync(Guid id, Guid assignmentId)
     {
         var job = await _db.Jobs.FirstAsync(j => j.Id == id);
         return new JobAssignment
         {
             Id = job.Id,
+            AssignmentId = assignmentId,
             RepoUrl = job.RepoUrl,
             Ref = job.Ref,
             ScriptPath = job.ScriptPath,
@@ -180,10 +181,15 @@ public class JobRepository
     }
 
     /// <summary>
-    /// Applies the status transition, honoring finality rules. Returns false when the write was refused (job missing, already final, or Cancelled and not being overridden) — note a same-value non-terminal write (Running→Running) still counts as true.
+    /// Applies a status transition the server decides on its own, honoring finality rules. Returns false when the write was refused (job missing, already final, or Cancelled and not being overridden). Running goes through <see cref="AssignAsync"/>, and a worker's report through <see cref="CompleteReportedAsync"/>.
     /// </summary>
-    public async Task<bool> UpdateStatusAsync(Guid id, JobStatus status, Guid? workerId = null)
+    public async Task<bool> UpdateStatusAsync(Guid id, JobStatus status)
     {
+        if (status == JobStatus.Running)
+        {
+            throw new ArgumentException("A job becomes Running only by being assigned", nameof(status));
+        }
+
         var now = DateTime.UtcNow;
 
         // One conditional UPDATE so the finality check and the write are atomic — completion paths gate their side effects on the returned bool, and a check-then-write here would let a concurrent cancel be overwritten by Running or let two completion paths both claim the terminal transition. Same idiom as TryCancelAsync below.
@@ -195,14 +201,7 @@ public class JobRepository
             .Where(j => j.Status != JobStatus.Cancelled || status == JobStatus.Success || status == JobStatus.Failed);
 
         int rows;
-        if (status == JobStatus.Running)
-        {
-            rows = await eligible.ExecuteUpdateAsync(s => s
-                .SetProperty(j => j.Status, status)
-                .SetProperty(j => j.WorkerId, j => workerId ?? j.WorkerId)
-                .SetProperty(j => j.StartedAt, now));
-        }
-        else if (status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled)
+        if (status is JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled)
         {
             rows = await eligible.ExecuteUpdateAsync(s => s
                 .SetProperty(j => j.Status, status)
@@ -216,6 +215,92 @@ public class JobRepository
         }
 
         return rows > 0;
+    }
+
+    /// <summary>Hands a queued job to a worker process. Refused (false) unless the job is still Queued — a cancel may have got there first.</summary>
+    public async Task<bool> AssignAsync(Guid id, Guid workerId, Guid assignmentId, Guid workerInstanceId)
+    {
+        var now = DateTime.UtcNow;
+        var rows = await _db.Jobs
+            .Where(j => j.Id == id && j.Status == JobStatus.Queued)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, JobStatus.Running)
+                .SetProperty(j => j.WorkerId, workerId)
+                .SetProperty(j => j.StartedAt, now)
+                .SetProperty(j => j.AssignmentId, assignmentId)
+                .SetProperty(j => j.WorkerInstanceId, workerInstanceId));
+
+        return rows > 0;
+    }
+
+    /// <summary>Puts a job back in the queue, unrun, if it is still Running under this assignment.</summary>
+    public async Task<bool> RequeueAsync(Guid id, Guid workerId, Guid assignmentId)
+    {
+        var rows = await _db.Jobs
+            .Where(j => j.Id == id && j.Status == JobStatus.Running && j.WorkerId == workerId && j.AssignmentId == assignmentId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, JobStatus.Queued)
+                .SetProperty(j => j.WorkerId, (Guid?)null)
+                .SetProperty(j => j.StartedAt, (DateTime?)null)
+                .SetProperty(j => j.AssignmentId, (Guid?)null)
+                .SetProperty(j => j.WorkerInstanceId, (Guid?)null));
+
+        return rows > 0;
+    }
+
+    /// <summary>
+    /// Records a worker's report of how its run of an assignment went: only for that assignment, and with the same finality rules as <see cref="UpdateStatusAsync"/> (so a real outcome still overrides a cancel). A Failed that takes effect also marks the worker as owing a diagnostic, in the same transaction, so a crash between the two can't skip the re-check. Returns whether the status changed.
+    /// </summary>
+    public async Task<bool> CompleteReportedAsync(Guid id, Guid workerId, Guid assignmentId, JobStatus status)
+    {
+        if (status is not (JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled))
+        {
+            throw new ArgumentException($"{status} isn't an outcome", nameof(status));
+        }
+
+        var now = DateTime.UtcNow;
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
+        var rows = await _db.Jobs
+            .Where(j => j.Id == id && j.WorkerId == workerId && j.AssignmentId == assignmentId)
+            .Where(j => j.Status == JobStatus.Running || (j.Status == JobStatus.Cancelled && status != JobStatus.Cancelled))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, status)
+                .SetProperty(j => j.CompletedAt, now)
+                .SetProperty(j => j.EncryptedGitToken, (string?)null));
+
+        if (rows > 0 && status == JobStatus.Failed)
+        {
+            await _db.Workers
+                .Where(w => w.Id == workerId)
+                .ExecuteUpdateAsync(s => s.SetProperty(w => w.DiagnosticOwed, true));
+        }
+
+        await transaction.CommitAsync();
+        return rows > 0;
+    }
+
+    /// <summary>Fails a job as lost with its worker's process, only if it is still Running for that worker.</summary>
+    public async Task<bool> FailLostAsync(Guid id, Guid workerId)
+    {
+        var now = DateTime.UtcNow;
+        var rows = await _db.Jobs
+            .Where(j => j.Id == id && j.Status == JobStatus.Running && j.WorkerId == workerId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, JobStatus.Failed)
+                .SetProperty(j => j.CompletedAt, now)
+                .SetProperty(j => j.EncryptedGitToken, (string?)null));
+
+        return rows > 0;
+    }
+
+    /// <summary>The jobs Running for a worker, with the assignment each is running under.</summary>
+    public async Task<IReadOnlyList<RunningAssignment>> GetRunningAssignmentsAsync(Guid workerId)
+    {
+        return await _db.Jobs
+            .Where(j => j.WorkerId == workerId && j.Status == JobStatus.Running)
+            .Select(j => new RunningAssignment(j.Id, j.AssignmentId, j.WorkerInstanceId))
+            .ToListAsync();
     }
 
     public async Task SetCommitAsync(Guid id, string commitSha)
@@ -233,14 +318,6 @@ public class JobRepository
         return await _db.Jobs
             .Where(j => j.Id == jobId)
             .Select(j => j.WorkerId)
-            .FirstOrDefaultAsync();
-    }
-
-    public async Task<Guid?> GetRunningJobForWorkerAsync(Guid workerId)
-    {
-        return await _db.Jobs
-            .Where(j => j.WorkerId == workerId && j.Status == JobStatus.Running)
-            .Select(j => (Guid?)j.Id)
             .FirstOrDefaultAsync();
     }
 
@@ -487,3 +564,5 @@ public class JobRepository
         };
     }
 }
+
+public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInstanceId);

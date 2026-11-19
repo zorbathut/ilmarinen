@@ -1,4 +1,3 @@
-using Docker.DotNet;
 using Ilmarinen.Docker;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
@@ -13,7 +12,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Text;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Threading;
@@ -21,8 +19,22 @@ using System;
 
 namespace Ilmarinen.Worker.Services;
 
+/// <summary>
+/// The worker's end of the protocol (spec/README.md). Each transport connection is its own session, numbered within this process: it authenticates, replays buffered log output, then sends Resume with the worker's state and unacknowledged outcomes. Only invocations from the current session are acted on, and only once it has resumed; a session the server answers Fenced, or that stops answering heartbeats, is abandoned for a new one.
+/// </summary>
 public class WorkerService : BackgroundService
 {
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(2);
+    // Longer after the server refused the handshake outright: that only happens when another process holds this worker's session, and it won't change in seconds.
+    private static readonly TimeSpan FencedReconnectDelay = TimeSpan.FromSeconds(30);
+    // Each call of the handshake, Resume included, which waits on the server's dispatch. Without a bound, a stuck server-side call would hold the state lock indefinitely while the transport's keepalives kept the connection looking alive.
+    private static readonly TimeSpan HandshakeCallTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan RetryPollInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ShutdownFlushTimeout = TimeSpan.FromSeconds(10);
+
     private readonly WorkerConfig _config;
     private readonly Guid _workerId;
     private readonly WorkspaceManager _workspaceManager;
@@ -32,26 +44,24 @@ public class WorkerService : BackgroundService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<WorkerService> _logger;
     private readonly MessageBuffer _messageBuffer = new();
-    private readonly ResultOutbox _results = new();
-    private HubConnection? _connection;
-    private BufferedHubSender? _sender;
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
+    private readonly BufferedHubSender _sender;
 
-    // Held while a job's result is reported and while a reconnect reconciles state, so the two can't interleave. See ReportCompletionAsync.
-    private readonly SemaphoreSlim _syncLock = new(1, 1);
+    // Identifies this process to the server: its connections are (instance, counter), and a later one supersedes an earlier.
+    private readonly Guid _instanceId = Guid.NewGuid();
+    private long _connectionCounter;
+    private volatile HubSession? _session;
 
-    // Everything the worker has to finish before the process may exit: a job tearing its containers down, or a rejection telling the server about work it can't take. Entries clear themselves, so this stays the size of what is actually in flight.
+    // Guards _state. Held across Resume, so nothing the worker does falls between the snapshot it sends and the server's answer; invocations that arrive meanwhile wait for it.
+    private readonly SemaphoreSlim _stateLock = new(1, 1);
+    private readonly WorkerProtocolState _state = new();
+
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _runningJobs = new();
+
+    // Everything the worker has to finish before the process may exit: a job tearing its containers down and reporting. Entries clear themselves, so this stays the size of what is actually in flight.
     private readonly ConcurrentDictionary<long, Task> _inFlight = new();
     private long _inFlightSequence;
 
-    // Single-activity gate. Job assignment and diagnostic each call TryEnter(...) and refuse if the worker is already doing the other thing.
-    private static readonly TimeSpan RetryPollInterval = TimeSpan.FromSeconds(5);
-
-    private readonly object _activityLock = new();
-    private WorkerActivity _activity = WorkerActivity.Idle;
-    private Guid? _currentJobId;
-
-    // Read by the retry loop while the SignalR dispatch thread writes it.
+    // The latest full report, for the worker page; the verdict that decides readiness travels in the state.
     private volatile DiagnosticReport? _lastDiagnostic;
     private CancellationToken _stoppingToken;
 
@@ -61,33 +71,6 @@ public class WorkerService : BackgroundService
 
     // Requests for a background measurement of workspace disk usage. Capacity one and dropping extras, so requests made while one is pending coalesce into it.
     private readonly Channel<bool> _usageRequests = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
-
-    private Guid? CurrentJobId
-    {
-        get { lock (_activityLock) return _activity == WorkerActivity.RunningJob ? _currentJobId : null; }
-    }
-
-    private bool TryEnterActivity(WorkerActivity activity, Guid? jobId, out WorkerActivity blockingActivity, out Guid? blockingJobId)
-    {
-        lock (_activityLock)
-        {
-            blockingActivity = _activity;
-            blockingJobId = _currentJobId;
-            if (_activity != WorkerActivity.Idle) return false;
-            _activity = activity;
-            _currentJobId = jobId;
-            return true;
-        }
-    }
-
-    private void ExitActivity()
-    {
-        lock (_activityLock)
-        {
-            _activity = WorkerActivity.Idle;
-            _currentJobId = null;
-        }
-    }
 
     public WorkerService(
         WorkerConfig config,
@@ -106,6 +89,7 @@ public class WorkerService : BackgroundService
         _updateSignal = updateSignal;
         _lifetime = lifetime;
         _logger = logger;
+        _sender = new BufferedHubSender(AuthenticatedConnection, _messageBuffer, logger);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -118,100 +102,740 @@ public class WorkerService : BackgroundService
         _config.HostWorkspacePath = hostPath;
         _config.WorkerContainerId = containerId;
 
-        _connection = new HubConnectionBuilder()
-            .WithUrl($"{_config.ServerUrl}/hub/workers")
-            .WithAutomaticReconnect()
-            .AddJsonProtocol(options =>
-            {
-                options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
-            })
-            .Build();
-        _sender = new BufferedHubSender(_connection, _messageBuffer, _logger);
-
-        _connection.KeepAliveInterval = TimeSpan.FromSeconds(15);
-        _connection.ServerTimeout = TimeSpan.FromSeconds(60);
-
-        _connection.On<JobAssignment>("AssignJob", OnJobAssigned);
-        _connection.On<string>("CancelJob", OnCancelJob);
-        _connection.On<string>("DeleteWorkspace", OnDeleteWorkspace);
-        _connection.On("RunDiagnostic", OnRunDiagnostic);
-        _connection.On("RecheckHost", OnRecheckHost);
-
-        _connection.Reconnecting += _ =>
-        {
-            _logger.LogWarning("Connection lost, attempting to reconnect...");
-            return Task.CompletedTask;
-        };
-
-        _connection.Reconnected += async _ =>
-        {
-            _logger.LogInformation("Reconnected to server, re-authenticating...");
-            try
-            {
-                await ConnectAndSync();
-            }
-            catch (Exception ex)
-            {
-                // If post-reconnect sync fails, force the connection to disconnected state so the heartbeat loop manually reconnects rather than leaving us as a zombie (connected, but server doesn't have our auth/diagnostic state).
-                _logger.LogError(ex, "ConnectAndSync after reconnect failed; tearing down connection to retry");
-                try { await _connection!.StopAsync(); } catch { }
-            }
-        };
-
-        await ConnectWithRetryAsync(stoppingToken);
-        try
-        {
-            await ConnectAndSync();
-        }
-        catch (Exception ex)
-        {
-            // ConnectAndSync does significant I/O (diagnostic + ReportDiagnostic). Don't fault the BackgroundService on a transient failure here — let the heartbeat loop notice the disconnected state and retry.
-            _logger.LogError(ex, "Initial ConnectAndSync failed; tearing down to retry via heartbeat loop");
-            try { await _connection.StopAsync(stoppingToken); } catch { }
-        }
-
-        _logger.LogInformation("Worker {WorkerId} connected and ready", _workerId);
+        // The first diagnostic needs no server: it runs while the worker connects, and Resume carries whatever it has reached.
+        await TryStartDiagnosticAsync(unprompted: true, DiagnosticTrigger.Automatic);
 
         var diagnosticRetries = RetryUnhealthyDiagnosticAsync(stoppingToken);
         var usageMeasurements = MeasureWorkspaceUsageAsync(stoppingToken);
 
-        // Heartbeat loop — also handles manual reconnection when auto-reconnect gives up
+        HubSession? session = null;
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            session = await OpenSessionAsync(stoppingToken);
+            if (session == null)
+            {
+                break;
+            }
+
+            var fenced = false;
+            try
+            {
+                if (await SyncAsync(session))
+                {
+                    Interlocked.Exchange(ref _handshakeFailures, 0);
+                    _logger.LogInformation("Worker {WorkerId} connected and resumed (connection {Counter})", _workerId, session.Counter);
+                    await CheckUpdateExitAsync();
+                }
+                else
+                {
+                    fenced = true;
+                    EndSession(session, "the server fenced it");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Still ends the session when stopping, so the drain below runs: a handshake cut short by shutdown is not a failure of the server.
+                if (stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogDebug(ex, "Handshake on connection {Counter} cut short by shutdown", session.Counter);
+                }
+                else
+                {
+                    _logger.LogError(ex, "Handshake on connection {Counter} failed", session.Counter);
+                    await RecordHandshakeFailureAsync();
+                }
+                EndSession(session, "its handshake failed");
+            }
+
+            await KeepAliveAsync(session, stoppingToken);
+            if (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            await session.DisposeAsync();
+            session = null;
+            await DelayUnlessStopping(fenced ? FencedReconnectDelay : ReconnectDelay, stoppingToken);
+        }
+
+        await diagnosticRetries;
+        await usageMeasurements;
+
+        // The session outlives the stop signal so the jobs it just cancelled can still report how they ended.
+        await DrainInFlightWorkAsync();
+        if (session != null)
+        {
+            await session.FlushAsync(ShutdownFlushTimeout);
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        // First: this signals the stopping token and waits for ExecuteAsync, which cancels the running job and waits for it to report. The connection has to outlive that, or the job it just killed would have no way to say so.
+        await base.StopAsync(cancellationToken);
+
+        if (_session is { } session)
+        {
+            await session.DisposeAsync();
+        }
+    }
+
+    private HubConnection? AuthenticatedConnection()
+    {
+        return _session is { Authenticated: true, HasEnded: false } session ? session.Connection : null;
+    }
+
+    /// <summary>Starts a new transport connection as the next session of this process, retrying until one starts or the worker stops.</summary>
+    private async Task<HubSession?> OpenSessionAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var connection = new HubConnectionBuilder()
+                .WithUrl($"{_config.ServerUrl}/hub/workers")
+                .AddJsonProtocol(options =>
+                {
+                    options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
+                })
+                .Build();
+            connection.KeepAliveInterval = TimeSpan.FromSeconds(15);
+            connection.ServerTimeout = TimeSpan.FromSeconds(60);
+
+            var session = new HubSession(connection, Interlocked.Increment(ref _connectionCounter));
+
+            // Registered on this connection only, so an invocation is always from the session it arrived on. Posted rather than handled here: the handlers wait for the state lock, and the connection's receive loop must keep running meanwhile to deliver the answer to a Resume in progress.
+            connection.On<JobAssignment>("AssignJob", assignment => Post(session, "AssignJob", () => OnJobAssignedAsync(session, assignment)));
+            connection.On<string>("CancelJob", jobId => Post(session, "CancelJob", () => OnCancelJob(jobId)));
+            connection.On<string>("DeleteWorkspace", name => Post(session, "DeleteWorkspace", () => OnDeleteWorkspace(session, name)));
+            connection.On("RunDiagnostic", () => Post(session, "RunDiagnostic", () => OnDiagnosticRequestedAsync(session, DiagnosticTrigger.Operator)));
+            connection.On("RecheckHost", () => Post(session, "RecheckHost", () => OnDiagnosticRequestedAsync(session, DiagnosticTrigger.Automatic)));
+            connection.Closed += _ =>
+            {
+                EndSession(session, "the connection closed");
+                return Task.CompletedTask;
+            };
+            session.Start(_logger);
+
+            try
+            {
+                _logger.LogInformation("Connecting to {ServerUrl} (connection {Counter})...", _config.ServerUrl, session.Counter);
+                await connection.StartAsync(stoppingToken);
+                _session = session;
+                return session;
+            }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogError(ex, "Failed to connect, retrying in {Delay}", ConnectRetryDelay);
+                await session.DisposeAsync();
+                await DelayUnlessStopping(ConnectRetryDelay, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                await session.DisposeAsync();
+            }
+        }
+
+        return null;
+    }
+
+    private Task Post(HubSession session, string method, Func<Task> work)
+    {
+        if (!session.Inbox.Writer.TryWrite(work))
+        {
+            _logger.LogDebug("Ignoring {Method} on connection {Counter}: the session has ended", method, session.Counter);
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Whether an invocation that arrived on this session should still be acted on: only from the current session, once it has resumed. Caller holds the state lock.</summary>
+    private bool IsCurrent(HubSession session)
+    {
+        return session == _session && session.Resumed && !session.HasEnded;
+    }
+
+    /// <summary>
+    /// Authenticates the session, replays buffered log output, then sends Resume. Returns false if the server fenced the session; throws if the handshake failed.
+    /// </summary>
+    private async Task<bool> SyncAsync(HubSession session)
+    {
+        using var call = CancellationTokenSource.CreateLinkedTokenSource(session.Ended);
+
+        // Mutual ECDSA challenge-response, bound to this session's instance and counter.
+        var workerNonce = RandomNumberGenerator.GetBytes(32);
+        call.CancelAfter(HandshakeCallTimeout);
+        var challenge = await session.Connection.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
+        {
+            WorkerId = _workerId,
+            ProtocolHash = ProtocolVersion.Hash,
+            Nonce = workerNonce,
+            InstanceId = _instanceId,
+            ConnectionCounter = session.Counter,
+            BundleHash = _config.BundleHash
+        }, call.Token);
+
+        if (challenge.ProtocolHash != ProtocolVersion.Hash)
+        {
+            _logger.LogError(
+                "Protocol mismatch: worker is '{WorkerHash}', server is '{ServerHash}'. Rebuild both with the same protocol definitions.",
+                ProtocolVersion.Hash, challenge.ProtocolHash);
+            throw new InvalidOperationException(
+                $"Protocol mismatch. Worker is '{ProtocolVersion.Hash}', server is '{challenge.ProtocolHash}'. " +
+                "Rebuild both with the same protocol definitions.");
+        }
+
+        var challengeData = HandshakeChallenge.Build(_workerId, _instanceId, session.Counter, workerNonce, challenge.Nonce);
+        using (var serverKey = _config.GetServerPublicKey())
+        {
+            if (!serverKey.VerifyData(challengeData, challenge.ServerSignature, HashAlgorithmName.SHA256))
+            {
+                _logger.LogError("Server signature verification failed — wrong server or MITM?");
+                throw new InvalidOperationException("Server identity verification failed.");
+            }
+        }
+
+        // Act only when the server has an opinion (null = no bundle configured, which must never drain the fleet). Assigning rather than or-ing lets a rollback to our own bundle clear a previously pending update. Note the handshake authenticates the peer, not this field — the channel is plaintext, so a MITM can tamper with it; that only causes spurious or suppressed restarts, never code execution (the launcher verifies bundle signatures).
+        if (_config.BundleHash != null && challenge.CurrentBundleHash != null)
+        {
+            _updatePending = challenge.CurrentBundleHash != _config.BundleHash;
+        }
+
+        byte[] signature;
+        using (var workerKey = _config.GetWorkerPrivateKey())
+        {
+            signature = workerKey.SignData(challengeData, HashAlgorithmName.SHA256);
+        }
+
+        call.CancelAfter(HandshakeCallTimeout);
+        var answer = await session.Connection.InvokeAsync<SessionAnswer>("Authenticate", new WorkerAuthenticate
+        {
+            Signature = signature,
+            Workspaces = SafeDiscoverWorkspaces()
+        }, call.Token);
+        if (answer != SessionAnswer.Ok)
+        {
+            // Every later connection of this process outranks this one, so being fenced here means another process holds the worker's session: a second worker on the same key, or this process replaced and still running.
+            _logger.LogError("The server refused connection {Counter} of process instance {InstanceId} ({Answer}): another process holds this worker's session. Is the worker key in use twice?", session.Counter, _instanceId, answer);
+            return false;
+        }
+        session.Authenticated = true;
+
+        // Log output first, so a job's tail is in before Resume's outcome turns the job terminal.
+        var replayed = await _messageBuffer.ReplayAsync(async message =>
+        {
+            call.CancelAfter(HandshakeCallTimeout);
+            var replayAnswer = await session.Connection.InvokeCoreAsync<SessionAnswer>(message.Method, message.Args, call.Token);
+            if (replayAnswer != SessionAnswer.Ok)
+            {
+                _logger.LogWarning("Server answered {Answer} to a replayed {Method} on connection {Counter}", replayAnswer, message.Method, session.Counter);
+                return false;
+            }
+            return true;
+        }, _logger);
+        if (!replayed)
+        {
+            return false;
+        }
+
+        await _stateLock.WaitAsync();
+        try
+        {
+            // The full report, for the worker page, ahead of the state that makes the worker ready: a reader that sees it ready sees the report it got ready on.
+            if (_lastDiagnostic is { } cached)
+            {
+                call.CancelAfter(HandshakeCallTimeout);
+                var reported = await session.Connection.InvokeAsync<SessionAnswer>("ReportDiagnostic", cached, call.Token);
+                if (reported != SessionAnswer.Ok)
+                {
+                    _logger.LogWarning("Server answered {Answer} to ReportDiagnostic on connection {Counter}", reported, session.Counter);
+                    return false;
+                }
+            }
+
+            var outcomes = _state.PendingOutcomes;
+            call.CancelAfter(HandshakeCallTimeout);
+            var response = await session.Connection.InvokeAsync<ResumeResponse>("Resume", new WorkerResume
+            {
+                State = _state.Snapshot(),
+                Outcomes = outcomes
+            }, call.Token);
+            if (response.Answer != SessionAnswer.Ok)
+            {
+                _logger.LogWarning("Server answered {Answer} to Resume on connection {Counter}", response.Answer, session.Counter);
+                return false;
+            }
+
+            _state.Acknowledge(outcomes);
+            session.Resumed = true;
+
+            if (_state.Job is { } job && response.AbortAssignments.Contains(job.AssignmentId))
+            {
+                _logger.LogInformation("Server no longer has job {JobId} running for this worker (cancelled or failed while it was away); stopping it", job.Id);
+                CancelRunningJob(job.Id);
+            }
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+
+        _usageRequests.Writer.TryWrite(true);
+        return true;
+    }
+
+    /// <summary>Heartbeats the session until it ends or the worker stops. A heartbeat answered Fenced, or not answered in time, ends it: the server has moved on, or the connection has died without either end hearing.</summary>
+    private async Task KeepAliveAsync(HubSession session, CancellationToken stoppingToken)
+    {
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(session.Ended, stoppingToken);
+        while (!session.HasEnded && !stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(HeartbeatInterval, wait.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(session.Ended);
+            timeout.CancelAfter(HeartbeatTimeout);
+            try
+            {
+                var answer = await session.Connection.InvokeAsync<SessionAnswer>("Heartbeat", timeout.Token);
+                if (answer != SessionAnswer.Ok)
+                {
+                    EndSession(session, $"the server answered {answer} to a heartbeat");
+                }
+            }
+            catch (Exception ex) when (!session.HasEnded)
+            {
+                _logger.LogDebug(ex, "Heartbeat on connection {Counter} failed", session.Counter);
+                EndSession(session, "a heartbeat went unanswered");
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    private void EndSession(HubSession session, string reason)
+    {
+        if (session.End())
+        {
+            _logger.LogWarning("Abandoning connection {Counter}: {Reason}; reconnecting", session.Counter, reason);
+        }
+    }
+
+    /// <summary>
+    /// Queues a message on the current session, if it has resumed; sent in order, after the ones queued before it. Without one there is nothing to do: Resume carries the state and outcomes, and the rest is re-derived after it. Callers reporting a state change or outcome hold the state lock, so reports go out in the order the changes happened.
+    /// </summary>
+    private void Report(Func<HubSession, Task> send)
+    {
+        if (_session is { Resumed: true, HasEnded: false } session)
+        {
+            session.Outbox.Writer.TryWrite(() => send(session));
+        }
+    }
+
+    private void ReportState()
+    {
+        var state = _state.Snapshot();
+        Report(session => SendAsync(session, "ReportState", state));
+    }
+
+    private void ReportOutcome(JobOutcome outcome)
+    {
+        Report(async session =>
+        {
+            if (!await SendAsync(session, "ReportOutcome", outcome))
+            {
+                return;
+            }
+
+            await _stateLock.WaitAsync();
+            try
+            {
+                _state.Acknowledge([outcome]);
+            }
+            finally
+            {
+                _stateLock.Release();
+            }
+            await CheckUpdateExitAsync();
+        });
+    }
+
+    /// <summary>Sends one message on the session; anything but Ok abandons it, and what wasn't acknowledged goes with the next Resume.</summary>
+    private async Task<bool> SendAsync(HubSession session, string method, object argument)
+    {
+        try
+        {
+            var answer = await session.Connection.InvokeAsync<SessionAnswer>(method, argument, session.Ended);
+            if (answer == SessionAnswer.Ok)
+            {
+                return true;
+            }
+            EndSession(session, $"the server answered {answer} to {method}");
+        }
+        catch (Exception ex) when (!session.HasEnded)
+        {
+            _logger.LogDebug(ex, "{Method} on connection {Counter} failed", method, session.Counter);
+            EndSession(session, $"{method} failed");
+        }
+        catch (OperationCanceledException)
+        {
+            // The session ended while this was in flight.
+        }
+        return false;
+    }
+
+    private async Task OnJobAssignedAsync(HubSession session, JobAssignment assignment)
+    {
+        await _stateLock.WaitAsync();
+        try
+        {
+            if (!IsCurrent(session))
+            {
+                _logger.LogDebug("Ignoring job {JobId} assigned on connection {Counter}, which is no longer current", assignment.Id, session.Counter);
+                return;
+            }
+
+            // The connection outlives the stop signal so a job in flight can report itself; anything assigned in that window goes back to be run elsewhere.
+            var handBack = _stoppingToken.IsCancellationRequested ? _state.HandBack(assignment) : _state.Assign(assignment);
+            if (handBack != null)
+            {
+                _logger.LogWarning("Handing job {JobId} back: the worker is {Activity}", assignment.Id, _stoppingToken.IsCancellationRequested ? "shutting down" : _state.Activity.ToString());
+                ReportOutcome(handBack);
+                return;
+            }
+
+            ReportState();
+            var cancel = new CancellationTokenSource();
+            _runningJobs[assignment.Id] = cancel;
+            TrackInFlight(ExecuteJobAsync(assignment, cancel));
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+    }
+
+    private Task OnCancelJob(string jobId)
+    {
+        _logger.LogInformation("Received cancel request for job {JobId}", jobId);
+        if (!Guid.TryParse(jobId, out var id) || !CancelRunningJob(id))
+        {
+            _logger.LogInformation("Cancel requested for job {JobId}, which isn't running on this worker", jobId);
+        }
+        return Task.CompletedTask;
+    }
+
+    private bool CancelRunningJob(Guid jobId)
+    {
+        if (!_runningJobs.TryGetValue(jobId, out var cancel))
+        {
+            return false;
+        }
+
+        try
+        {
+            cancel.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The job ended as the request arrived; nothing left to stop.
+        }
+        return true;
+    }
+
+    private Task OnDeleteWorkspace(HubSession session, string name)
+    {
+        _logger.LogInformation("Received workspace deletion request: {WorkspaceName}", name);
+        var result = _workspaceManager.TryDelete(name);
+        if (session == _session)
+        {
+            Report(s => SendAsync(s, "WorkspaceDeleted", name, result));
+        }
+
+        // Deleting one of two workspaces that share files leaves the other as their only holder
+        if (result.Status == DeleteWorkspaceStatus.Success)
+        {
+            _usageRequests.Writer.TryWrite(true);
+        }
+        return Task.CompletedTask;
+    }
+
+    private async Task<bool> SendAsync(HubSession session, string method, object first, object second)
+    {
+        try
+        {
+            var answer = await session.Connection.InvokeAsync<SessionAnswer>(method, first, second, session.Ended);
+            if (answer == SessionAnswer.Ok)
+            {
+                return true;
+            }
+            EndSession(session, $"the server answered {answer} to {method}");
+        }
+        catch (Exception ex) when (!session.HasEnded)
+        {
+            _logger.LogDebug(ex, "{Method} on connection {Counter} failed", method, session.Counter);
+            EndSession(session, $"{method} failed");
+        }
+        catch (OperationCanceledException)
+        {
+            // The session ended while this was in flight.
+        }
+        return false;
+    }
+
+    private async Task ExecuteJobAsync(JobAssignment job, CancellationTokenSource cancel)
+    {
+        var startTime = DateTime.UtcNow;
+        var status = JobStatus.Failed;
+        var logCollector = new LogCollector(job.Id, _sender, _logger);
+        var jobLogger = new LoggerTee(_logger, logCollector);
+
+        try
+        {
+            jobLogger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
+
+            // Two tokens. CancelJob trips the first; the job runs on the second, which the host's shutdown trips as well — otherwise a SIGTERM mid-job leaves the step container running with nothing left to tear it down.
+            using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token, _stoppingToken);
+            try
+            {
+                // Keep the host from auto-suspending out from under us for as long as the job runs.
+                using var inhibitor = await _sleepInhibitor.AcquireAsync($"Ilmarinen job {job.Id}");
+
+                var runner = new JobRunner(_config, _workspaceManager, job, _sender, jobLogger, logCollector);
+                var ran = await runner.ExecuteAsync(jobCts.Token);
+
+                // A pipeline that ran to the end reports what it actually did, even if the worker is on its way out by now.
+                status = cancel.IsCancellationRequested ? JobStatus.Cancelled : ran;
+                jobLogger.LogInformation("Job {JobId} completed with status {Status}", job.Id, status);
+                await logCollector.FlushAsync();
+            }
+            catch (OperationCanceledException) when (jobCts.IsCancellationRequested)
+            {
+                // Cancelled means a person asked for it. A job the worker dropped because its host is going down is a failure, and reporting it as one now is what keeps it from sitting Running until a reconnect that may never come.
+                var abandoned = !cancel.IsCancellationRequested;
+                if (abandoned)
+                {
+                    jobLogger.LogWarning("Job {JobId} abandoned: the worker is shutting down", job.Id);
+                }
+                else
+                {
+                    jobLogger.LogInformation("Job {JobId} was cancelled", job.Id);
+                }
+                status = abandoned ? JobStatus.Failed : JobStatus.Cancelled;
+                await logCollector.FlushAsync();
+            }
+            catch (Exception ex)
+            {
+                status = JobStatus.Failed;
+                jobLogger.LogError(ex, "Job {JobId} failed with exception", job.Id);
+                await logCollector.FlushAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            // Only reachable if the handling above itself threw — a log write, a flush. The job still ends, as Failed: a worker that went idle without recording how would have the server requeue a job that may have partly run.
+            status = JobStatus.Failed;
+            _logger.LogError(ex, "Job {JobId}'s own error handling failed; reporting it as Failed", job.Id);
+        }
+        finally
+        {
+            _runningJobs.TryRemove(job.Id, out _);
+            cancel.Dispose();
+            await FinishJobAsync(job, status, DateTime.UtcNow - startTime);
+        }
+    }
+
+    /// <summary>Records the job's outcome and goes idle in one step under the state lock, reports both, and runs any diagnostic asked for while the job ran.</summary>
+    private async Task FinishJobAsync(JobAssignment job, JobStatus status, TimeSpan duration)
+    {
+        var workspaces = SafeDiscoverWorkspaces();
+        await _stateLock.WaitAsync();
+        try
+        {
+            var outcome = _state.FinishJob(status, duration, workspaces);
+            _logger.LogInformation("Job {JobId} finished: {Status}", job.Id, status);
+            ReportOutcome(outcome);
+            StartDiagnosticIfWanted();
+            ReportState();
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+        _usageRequests.Writer.TryWrite(true);
+    }
+
+    private async Task OnDiagnosticRequestedAsync(HubSession session, DiagnosticTrigger trigger)
+    {
+        await _stateLock.WaitAsync();
+        try
+        {
+            if (!IsCurrent(session))
+            {
+                _logger.LogDebug("Ignoring a diagnostic request on connection {Counter}, which is no longer current", session.Counter);
+                return;
+            }
+
+            if (!_state.RequestDiagnostic())
+            {
+                _logger.LogInformation("Diagnostic requested while the worker is {Activity}; it runs as soon as the worker is idle", _state.Activity);
+                return;
+            }
+
+            ReportState();
+            StartDiagnostic(trigger);
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+    }
+
+    private async Task TryStartDiagnosticAsync(bool unprompted, DiagnosticTrigger trigger)
+    {
+        await _stateLock.WaitAsync();
+        try
+        {
+            if (_state.TryStartDiagnostic(unprompted))
+            {
+                ReportState();
+                StartDiagnostic(trigger);
+            }
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+    }
+
+    /// <summary>Starts a diagnostic asked for while the worker was busy. The caller reports the state afterwards, once, so the server never sees a moment's idleness in between. Caller holds the state lock.</summary>
+    private void StartDiagnosticIfWanted()
+    {
+        if (_state.TryStartDiagnostic(unprompted: false))
+        {
+            StartDiagnostic(DiagnosticTrigger.Automatic);
+        }
+    }
+
+    /// <summary>Runs the diagnostic the state has just moved to. Caller holds the state lock.</summary>
+    private void StartDiagnostic(DiagnosticTrigger trigger)
+    {
+        // The "Running" placeholder only answers an operator who just asked: shown for a diagnostic nobody asked for, it would keep painting an unhealthy worker as busy and grey out the button that reruns it.
+        if (trigger == DiagnosticTrigger.Operator)
+        {
+            var placeholder = new DiagnosticReport
+            {
+                Status = DiagnosticStatus.Running,
+                Summary = "Running diagnostic...",
+                Steps = [],
+                CheckedAt = DateTime.UtcNow
+            };
+            Report(s => SendAsync(s, "ReportDiagnostic", placeholder));
+        }
+
+        TrackInFlight(RunDiagnosticAsync());
+    }
+
+    private async Task RunDiagnosticAsync()
+    {
+        _logger.LogInformation("Running diagnostic...");
+
+        DiagnosticReport? report;
+        try
+        {
+            report = await _diagnostic.RunAsync(_config.WorkerContainerId, _stoppingToken);
+        }
+        catch (OperationCanceledException) when (_stoppingToken.IsCancellationRequested)
+        {
+            // Shutting down is not a verdict on the host.
+            _logger.LogInformation("Diagnostic cancelled by shutdown");
+            report = null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Diagnostic threw");
+            report = new DiagnosticReport
+            {
+                Status = DiagnosticStatus.Unhealthy,
+                Summary = $"Diagnostic threw: {ex.Message}",
+                Steps = [],
+                CheckedAt = DateTime.UtcNow
+            };
+        }
+
+        if (report != null)
+        {
+            _logger.LogInformation("Diagnostic: {Status} - {Summary}", report.Status, report.Summary);
+            if (report.Status == DiagnosticStatus.Degraded)
+            {
+                _logger.LogWarning("Worker is functional but degraded: {Summary}", report.Summary);
+            }
+            else if (!DiagnosticStatusPolicy.CanAcceptJobs(report.Status))
+            {
+                _logger.LogWarning("Worker is online but not functional: {Summary}", report.Summary);
+            }
+            _lastDiagnostic = report;
+        }
+
+        await _stateLock.WaitAsync();
+        try
+        {
+            // The report first, for the same reason as in SyncAsync: the state is what makes the worker ready.
+            if (report != null)
+            {
+                Report(s => SendAsync(s, "ReportDiagnostic", report));
+            }
+            _state.FinishDiagnostic(report?.Status);
+            if (!_stoppingToken.IsCancellationRequested)
+            {
+                StartDiagnosticIfWanted();
+            }
+            ReportState();
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+
+        await CheckUpdateExitAsync();
+    }
+
+    /// <summary>
+    /// Re-runs a diagnostic that came back unhealthy. Nothing else will: the result stands for the life of the process, and only a server request asks for another — so a worker that started while DNS was down, or while the Docker daemon was restarting, stays out of the fleet until someone notices it.
+    /// </summary>
+    private async Task RetryUnhealthyDiagnosticAsync(CancellationToken stoppingToken)
+    {
+        var consecutiveFailures = 0;
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+                if (!ShouldRetryDiagnostic())
+                {
+                    // Nothing to retry now. The count resets so that a worker coming back from an outage waits seconds rather than minutes for its first attempt.
+                    consecutiveFailures = 0;
+                    await Task.Delay(RetryPollInterval, stoppingToken);
+                    continue;
+                }
 
-                if (_connection.State == HubConnectionState.Disconnected)
+                var delay = DiagnosticPolicy.Jitter(DiagnosticPolicy.RetryDelay(consecutiveFailures + 1));
+                await Task.Delay(delay, stoppingToken);
+
+                // Re-checked after the wait: one may have run meanwhile, or the worker may have gone offline or started draining. The count only advances when an attempt actually happens, or a long outage would back the worker off to the ceiling without ever trying.
+                if (!ShouldRetryDiagnostic())
                 {
-                    _logger.LogWarning("Connection lost, reconnecting...");
-                    await ConnectWithRetryAsync(stoppingToken);
-                    try
-                    {
-                        await ConnectAndSync();
-                        _logger.LogInformation("Worker {WorkerId} reconnected and ready", _workerId);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Same zombie hazard as the Reconnected handler: without a teardown, the connection stays Connected-but-unauthenticated and this loop would happily heartbeat into the void forever.
-                        _logger.LogError(ex, "ConnectAndSync after manual reconnect failed; tearing down connection to retry");
-                        try
-                        {
-                            await _connection.StopAsync(stoppingToken);
-                        }
-                        catch (Exception stopEx)
-                        {
-                            _logger.LogDebug(stopEx, "Teardown StopAsync failed; connection state will settle via the next loop iteration");
-                        }
-                    }
+                    continue;
                 }
-                else if (_connection.State == HubConnectionState.Connected)
-                {
-                    await _connection.SendAsync("Heartbeat", new WorkerHeartbeat
-                    {
-                        WorkerId = _workerId
-                    }, stoppingToken);
-                }
+
+                consecutiveFailures++;
+                _logger.LogInformation("Rerunning the diagnostic that left this worker out of the fleet (attempt {Attempt})", consecutiveFailures);
+                await TryStartDiagnosticAsync(unprompted: true, DiagnosticTrigger.Automatic);
             }
             catch (OperationCanceledException)
             {
@@ -219,13 +843,80 @@ public class WorkerService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Heartbeat failed");
+                _logger.LogError(ex, "Diagnostic retry failed");
             }
         }
+    }
 
-        await diagnosticRetries;
-        await usageMeasurements;
-        await DrainInFlightWorkAsync();
+    private bool ShouldRetryDiagnostic()
+    {
+        return DiagnosticPolicy.ShouldRetry(_lastDiagnostic, _session is { Resumed: true, HasEnded: false }, _updatePending);
+    }
+
+    /// <summary>A launcher-run worker on a stale bundle exits once it has nothing left to do or to report, so the launcher can start it from the current one. The server already keeps it from being handed work.</summary>
+    private async Task CheckUpdateExitAsync()
+    {
+        if (!_updatePending)
+        {
+            return;
+        }
+
+        await _stateLock.WaitAsync();
+        try
+        {
+            if (_state.Activity == WorkerActivity.Idle && _state.PendingOutcomes.Count == 0 && _session is { Resumed: true })
+            {
+                RequestUpdateExit($"server bundle differs from running bundle {_config.BundleHash}");
+            }
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// In launcher mode, persistent handshake failure means the server most likely moved to an incompatible build (a protocol break prevents us from ever learning the new bundle hash the normal way), so exit and let the launcher fetch the current bundle. The launcher backs off when the manifest hash turns out unchanged, so a spurious exit here (server down, revoked key) costs nothing but a restart. A fenced handshake is not a failure: it means another connection holds the session.
+    /// </summary>
+    private async Task RecordHandshakeFailureAsync()
+    {
+        if (_config.BundleHash == null)
+        {
+            return;
+        }
+
+        bool busy;
+        bool outcomesPending;
+        await _stateLock.WaitAsync();
+        try
+        {
+            busy = _state.Activity == WorkerActivity.RunningJob;
+            outcomesPending = _state.PendingOutcomes.Count > 0;
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+        if (busy)
+        {
+            return;
+        }
+
+        var failures = Interlocked.Increment(ref _handshakeFailures);
+
+        // An unacknowledged outcome dies with the process, so hold out far longer while one is pending — exiting would mark a finished job Failed. Not forever, though: across a genuine protocol break it is undeliverable anyway.
+        var threshold = outcomesPending ? 20 : 3;
+        if (failures >= threshold)
+        {
+            RequestUpdateExit($"{failures} consecutive handshake failures");
+        }
+    }
+
+    private void RequestUpdateExit(string reason)
+    {
+        _logger.LogInformation("Exiting for bundle update: {Reason}", reason);
+        _updateSignal.UpdateRequired = true;
+        _lifetime.StopApplication();
     }
 
     private void TrackInFlight(Task work)
@@ -236,13 +927,11 @@ public class WorkerService : BackgroundService
     }
 
     /// <summary>
-    /// Waits for work the stop signal just cancelled to tear itself down and report. Best effort: the host's shutdown
-    /// timeout bounds it, and a sync stuck against an unreachable server can run that out, because the worker's hub
-    /// calls don't take the stopping token.
+    /// Waits for work the stop signal just cancelled to tear itself down and report. Best effort: the host's shutdown timeout bounds it.
     /// </summary>
     private async Task DrainInFlightWorkAsync()
     {
-        // Looped rather than a single snapshot: a job assigned in the shutdown window is refused, and that refusal is itself work that has to reach the server. It terminates because nothing new is accepted once the stopping token is set.
+        // Looped rather than a single snapshot: a job's end can start a diagnostic, which is itself in flight. It terminates because nothing new is taken on once the stopping token is set.
         while (true)
         {
             var pending = _inFlight.Values.Where(work => !work.IsCompleted).ToList();
@@ -265,545 +954,7 @@ public class WorkerService : BackgroundService
     }
 
     /// <summary>
-    /// Re-runs a diagnostic that came back unhealthy. Nothing else will: the result is cached for the life of the process, and only an operator clicking the button asks for another — so a worker that started while DNS was down, or while the Docker daemon was restarting, stays out of the fleet until someone notices it.
-    /// </summary>
-    private async Task RetryUnhealthyDiagnosticAsync(CancellationToken stoppingToken)
-    {
-        var consecutiveFailures = 0;
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                if (!ShouldRetryDiagnostic())
-                {
-                    // Nothing to retry now. The count resets so that a worker coming back from an outage waits seconds rather than minutes for its first attempt.
-                    consecutiveFailures = 0;
-                    await Task.Delay(RetryPollInterval, stoppingToken);
-                    continue;
-                }
-
-                var delay = DiagnosticPolicy.Jitter(DiagnosticPolicy.RetryDelay(consecutiveFailures + 1));
-                await Task.Delay(delay, stoppingToken);
-
-                // Re-checked after the wait: an operator may have run one, or the worker may have gone offline or started draining. The count only advances when an attempt actually happens, or a long outage would back the worker off to the ceiling without ever trying.
-                if (!ShouldRetryDiagnostic())
-                {
-                    continue;
-                }
-
-                consecutiveFailures++;
-                _logger.LogInformation("Rerunning the diagnostic that left this worker out of the fleet (attempt {Attempt})", consecutiveFailures);
-                await ExecuteDiagnosticAsync(DiagnosticTrigger.Automatic);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Diagnostic retry failed");
-            }
-        }
-    }
-
-    private bool ShouldRetryDiagnostic()
-    {
-        return DiagnosticPolicy.ShouldRetry(_lastDiagnostic, _connection?.State == HubConnectionState.Connected, _updatePending);
-    }
-
-    private async Task ConnectWithRetryAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                _logger.LogInformation("Connecting to {ServerUrl}...", _config.ServerUrl);
-                await _connection!.StartAsync(ct);
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to connect, retrying in 5 seconds...");
-                await Task.Delay(5000, ct);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Authenticate with the server (mutual ECDSA challenge-response).
-    /// </summary>
-    private async Task Authenticate()
-    {
-        // Step 1: Initiate connection with our nonce, get challenge
-        var workerNonce = RandomNumberGenerator.GetBytes(32);
-        var challenge = await _connection!.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
-        {
-            WorkerId = _workerId,
-            ProtocolHash = ProtocolVersion.Hash,
-            Nonce = workerNonce,
-            BundleHash = _config.BundleHash
-        });
-
-        // Step 2: Verify protocol compatibility
-        if (challenge.ProtocolHash != ProtocolVersion.Hash)
-        {
-            _logger.LogError(
-                "Protocol mismatch: worker is '{WorkerHash}', server is '{ServerHash}'. Rebuild both with the same protocol definitions.",
-                ProtocolVersion.Hash, challenge.ProtocolHash);
-            throw new InvalidOperationException(
-                $"Protocol mismatch. Worker is '{ProtocolVersion.Hash}', server is '{challenge.ProtocolHash}'. " +
-                "Rebuild both with the same protocol definitions.");
-        }
-
-        // Step 3: Verify server identity (server signed both nonces)
-        using var serverKey = _config.GetServerPublicKey();
-        var challengeData = Encoding.UTF8.GetBytes(
-            $"{_workerId}:{Convert.ToBase64String(workerNonce)}:{Convert.ToBase64String(challenge.Nonce)}");
-
-        if (!serverKey.VerifyData(challengeData, challenge.ServerSignature, HashAlgorithmName.SHA256))
-        {
-            _logger.LogError("Server signature verification failed — wrong server or MITM?");
-            throw new InvalidOperationException("Server identity verification failed.");
-        }
-
-        // Act only when the server has an opinion (null = no bundle configured, which must never drain the fleet). Assigning rather than or-ing lets a rollback to our own bundle clear a previously pending update. Note the handshake authenticates the peer, not this field — the channel is plaintext, so a MITM can tamper with it; that only causes spurious or suppressed restarts, never code execution (the launcher verifies bundle signatures).
-        if (_config.BundleHash != null && challenge.CurrentBundleHash != null)
-        {
-            _updatePending = challenge.CurrentBundleHash != _config.BundleHash;
-        }
-
-        // Step 4: Sign the same data and authenticate
-        using var workerKey = _config.GetWorkerPrivateKey();
-        var signature = workerKey.SignData(challengeData, HashAlgorithmName.SHA256);
-
-        await _connection!.SendAsync("Authenticate", new WorkerAuthenticate
-        {
-            Signature = signature,
-            Workspaces = _workspaceManager.DiscoverWorkspaces()
-        });
-    }
-
-    /// <summary>
-    /// Re-authenticate with the server, replay buffered messages, reconcile state,
-    /// run the startup diagnostic on first connect (cached on subsequent connects),
-    /// and signal ready only if no job is running and the diagnostic passed.
-    /// </summary>
-    private async Task ConnectAndSync()
-    {
-        try
-        {
-            await ConnectAndSyncCore();
-            Interlocked.Exchange(ref _handshakeFailures, 0);
-            _usageRequests.Writer.TryWrite(true);
-        }
-        catch
-        {
-            RecordHandshakeFailure();
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// In launcher mode, persistent handshake failure means the server most likely moved to an incompatible build (a protocol break prevents us from ever learning the new bundle hash the normal way), so exit and let the launcher fetch the current bundle. The launcher backs off when the manifest hash turns out unchanged, so a spurious exit here (server down, revoked key) costs nothing but a restart.
-    /// </summary>
-    private void RecordHandshakeFailure()
-    {
-        if (_config.BundleHash == null || CurrentJobId != null)
-        {
-            return;
-        }
-
-        var failures = Interlocked.Increment(ref _handshakeFailures);
-
-        // An unacknowledged job result dies with the process, so hold out far longer while one is pending — exiting would mark a finished job Failed. Not forever, though: across a genuine protocol break it is undeliverable anyway.
-        var threshold = _results.IsEmpty ? 3 : 20;
-        if (failures >= threshold)
-        {
-            RequestUpdateExit($"{failures} consecutive handshake failures");
-        }
-    }
-
-    private void RequestUpdateExit(string reason)
-    {
-        _logger.LogInformation("Exiting for bundle update: {Reason}", reason);
-        _updateSignal.UpdateRequired = true;
-        _lifetime.StopApplication();
-    }
-
-    private async Task ConnectAndSyncCore()
-    {
-        await Authenticate();
-
-        // Ahead of anything the server might act on. A replayed JobCompleted marks this worker ready again, so the server has to know whether we can take that work before it decides — otherwise a worker benched by a failed diagnostic is handed the next job the moment it reconnects.
-        var cached = _lastDiagnostic;
-        if (cached != null)
-        {
-            await _connection!.SendAsync("ReportDiagnostic", cached);
-        }
-
-        // Replaying the buffer and reconciling are one step: a job reporting itself in the middle would be refused as unauthenticated, land back in the buffer after the replay had passed it, and then be contradicted by a Reconnect that says no job is running. Authentication stays outside the lock — it is the part a finishing job has to be able to wait for.
-        Guid? currentJob;
-        ReconnectResponse response;
-        await _syncLock.WaitAsync();
-        try
-        {
-            // Replay buffered messages first so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
-            await _messageBuffer.ReplayAsync(msg => _connection!.InvokeCoreAsync(msg.Method, msg.Args), _logger);
-
-            // After the logs, so a job's tail is in before its result turns it terminal.
-            await _results.ReplayAsync(entry => _connection!.InvokeAsync("JobCompleted", entry.JobId, entry.Result));
-
-            // Reconcile state with server
-            currentJob = CurrentJobId;
-            response = await _connection!.InvokeAsync<ReconnectResponse>("Reconnect", new WorkerReconnect
-            {
-                RunningJobId = currentJob
-            });
-        }
-        finally
-        {
-            _syncLock.Release();
-        }
-
-        // If we're running a job the server doesn't expect, abort it. This happens when the job was cancelled or failed while we were disconnected.
-        if (currentJob != null && response.ExpectedJobId != currentJob)
-        {
-            _logger.LogInformation(
-                "Server does not expect job {JobId} (expected {ExpectedJobId}), aborting",
-                currentJob, response.ExpectedJobId);
-            OnCancelJob(currentJob.Value.ToString());
-
-            // What is left in the buffer was enqueued during this sync — the replay above drained everything older. It is the aborted job's last log output, which is worth keeping: the next sync delivers it, and the server persists chunks for a job that has already finished.
-            return;
-        }
-
-        // If a job is running we don't gate it on the diagnostic — the in-flight job is the source of truth. Skip Ready (the existing contract) and skip the diagnostic.
-        if (currentJob != null)
-            return;
-
-        // Idle on a stale bundle: exit now, before Ready, so the server never dispatches to a worker that is about to vanish. The buffer replay above already delivered anything pending (a buffered JobCompleted included), so nothing is lost.
-        if (_updatePending)
-        {
-            RequestUpdateExit($"server bundle differs from running bundle {_config.BundleHash}");
-            return;
-        }
-
-        // First connect ever: run the diagnostic, which reports its own result and readiness. Subsequent reconnects re-push the cached result (above) so the server reconstructs its state without re-running, and without the per-reconnect cost of an image pull / container run.
-        if (cached == null)
-        {
-            await ExecuteDiagnosticAsync(DiagnosticTrigger.Automatic);
-            return;
-        }
-
-        if (DiagnosticStatusPolicy.CanAcceptJobs(cached.Status))
-        {
-            await _connection!.SendAsync("Ready");
-        }
-    }
-
-    private Task OnRunDiagnostic()
-    {
-        // Fire-and-forget so the SignalR dispatch loop stays unblocked.
-        _ = ExecuteDiagnosticAsync(DiagnosticTrigger.Operator);
-        return Task.CompletedTask;
-    }
-
-    /// <summary>The server asking whether this host is still fit for work, typically after a job failed on it. Same diagnostic, no operator waiting on it.</summary>
-    private Task OnRecheckHost()
-    {
-        _ = ExecuteDiagnosticAsync(DiagnosticTrigger.Automatic);
-        return Task.CompletedTask;
-    }
-
-    private async Task ExecuteDiagnosticAsync(DiagnosticTrigger trigger)
-    {
-        if (!TryEnterActivity(WorkerActivity.RunningDiagnostic, jobId: null, out var blockingActivity, out var blockingJobId))
-        {
-            // Race: a job arrived (or was already running) before the worker received the RunDiagnostic request. The server marked us not-ready preparing to fire the diagnostic, but a job was already in-flight. Re-push the cached report so the UI doesn't sit on stale "Running" or pre-click state, and re-publish ready-on-healthy so the worker can pick up more jobs.
-            _logger.LogInformation("Cannot run diagnostic: worker is {Activity}{JobId}", blockingActivity, blockingJobId != null ? $" ({blockingJobId})" : "");
-            if (_lastDiagnostic != null)
-            {
-                await SendDiagnosticIfConnectedAsync(_lastDiagnostic);
-                if (DiagnosticStatusPolicy.CanAcceptJobs(_lastDiagnostic.Status) && !_updatePending)
-                {
-                    await SendReadyIfConnectedAsync();
-                }
-            }
-            else
-            {
-                _logger.LogWarning("Worker has no diagnostic to report yet; it stays not-ready until it can run one");
-            }
-            return;
-        }
-
-        try
-        {
-            // The "Running" placeholder is a transient UI hint, and only answers an operator who just asked: shown for a diagnostic nobody asked for, it would keep painting an unhealthy worker as busy and grey out the button that reruns it. Don't buffer it either — replaying it after the real report has landed would clobber a final status with a stale "Running".
-            try
-            {
-                if (trigger == DiagnosticTrigger.Operator && _connection?.State == HubConnectionState.Connected)
-                {
-                    await _connection.SendAsync("ReportDiagnostic", new DiagnosticReport
-                    {
-                        Status = DiagnosticStatus.Running,
-                        Summary = "Running diagnostic...",
-                        Steps = [],
-                        CheckedAt = DateTime.UtcNow
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Could not push Running placeholder; will push final report when ready");
-            }
-
-            _logger.LogInformation("Running diagnostic...");
-
-            DiagnosticReport report;
-            try
-            {
-                report = await _diagnostic.RunAsync(_config.WorkerContainerId, _stoppingToken);
-            }
-            catch (OperationCanceledException) when (_stoppingToken.IsCancellationRequested)
-            {
-                // Shutting down is not a verdict on the host, and recording one would leave the server holding a bogus Unhealthy that outlives the disconnect.
-                _logger.LogInformation("Diagnostic cancelled by shutdown");
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Diagnostic threw");
-                report = new DiagnosticReport
-                {
-                    Status = DiagnosticStatus.Unhealthy,
-                    Summary = $"Diagnostic threw: {ex.Message}",
-                    Steps = [],
-                    CheckedAt = DateTime.UtcNow
-                };
-            }
-
-            _logger.LogInformation("Diagnostic: {Status} - {Summary}", report.Status, report.Summary);
-            _lastDiagnostic = report;
-            await SendDiagnosticIfConnectedAsync(report);
-
-            // An operator-initiated run finds the server has already flipped us not-ready. If we can still work, ask to be marked ready again. If we're unhealthy, stay not-ready. And never ask while an update is pending — a draining worker must not attract jobs.
-            if (DiagnosticStatusPolicy.CanAcceptJobs(report.Status) && !_updatePending)
-            {
-                if (report.Status == DiagnosticStatus.Degraded)
-                {
-                    _logger.LogWarning("Worker is functional but degraded: {Summary}", report.Summary);
-                }
-                await SendReadyIfConnectedAsync();
-            }
-            else if (!DiagnosticStatusPolicy.CanAcceptJobs(report.Status))
-            {
-                _logger.LogWarning("Worker is online but not functional: {Summary}", report.Summary);
-            }
-        }
-        finally
-        {
-            ExitActivity();
-        }
-    }
-
-    private Task OnJobAssigned(JobAssignment job)
-    {
-        // The connection outlives the stop signal so a job in flight can report itself, which leaves a window where the server still sees us ready. Taking work now would run it on an already-cancelled token; refuse it outright so it reads as a failure the server can retry rather than a job nobody ever hears about again.
-        if (_stoppingToken.IsCancellationRequested)
-        {
-            TrackInFlight(RejectJobAsync(job, "the worker is shutting down"));
-            return Task.CompletedTask;
-        }
-
-        if (!TryEnterActivity(WorkerActivity.RunningJob, job.Id, out var blockingActivity, out var blockingJobId))
-        {
-            TrackInFlight(RejectBusyJobAsync(job, blockingActivity, blockingJobId));
-            return Task.CompletedTask;
-        }
-
-        // Return immediately so the SignalR dispatch loop stays unblocked (otherwise CancelJob messages can't be delivered while a job is running)
-        TrackInFlight(ExecuteJobAsync(job));
-        return Task.CompletedTask;
-    }
-
-    private async Task RejectBusyJobAsync(JobAssignment job, WorkerActivity blockingActivity, Guid? blockingJobId)
-    {
-        if (blockingJobId == job.Id)
-        {
-            // The server redelivered the job we're already running. Don't write into its live log stream — a second collector for the same job would restart sequence numbers and collide with the running one's chunks.
-            _logger.LogWarning("Job {JobId} assigned but it is already running on this worker. Reporting failure.", job.Id);
-            await ReportRejectionAsync(job);
-            return;
-        }
-
-        await RejectJobAsync(job, $"the worker is busy (current activity: {blockingActivity})");
-    }
-
-    private async Task RejectJobAsync(JobAssignment job, string reason)
-    {
-        var logCollector = new LogCollector(job.Id, _sender!, _logger);
-        var jobLogger = new LoggerTee(_logger, logCollector);
-        jobLogger.LogWarning("Job {JobId} assigned but {Reason}. Reporting failure.", job.Id, reason);
-        await logCollector.FlushAsync();
-
-        await ReportRejectionAsync(job);
-    }
-
-    private async Task ReportRejectionAsync(JobAssignment job)
-    {
-        await DeliverResultAsync(job.Id, new JobResult
-        {
-            Id = job.Id,
-            Status = JobStatus.Failed,
-            Duration = TimeSpan.Zero,
-            Workspaces = SafeDiscoverWorkspaces()
-        });
-    }
-
-    /// <summary>Sends a job's result, keeping it in the outbox until the server has acknowledged it; one that can't be sent now goes at the next re-sync. Returns whether it was acknowledged now. Never throws, for the same reason as <see cref="BufferedHubSender.SendOrBufferAsync"/>.</summary>
-    private async Task<bool> DeliverResultAsync(Guid jobId, JobResult result)
-    {
-        var entry = _results.Add(jobId, result);
-        if (_connection!.State != HubConnectionState.Connected)
-        {
-            return false;
-        }
-
-        try
-        {
-            await _connection.InvokeAsync("JobCompleted", jobId, result);
-            _results.Acknowledge(entry);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to send the result of job {JobId}; it goes again at the next re-sync", jobId);
-            return false;
-        }
-    }
-
-    private async Task ExecuteJobAsync(JobAssignment job)
-    {
-        var startTime = DateTime.UtcNow;
-        var logCollector = new LogCollector(job.Id, _sender!, _logger);
-        var jobLogger = new LoggerTee(_logger, logCollector);
-        var jobKey = job.Id.ToString();
-
-        jobLogger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
-
-        // Two tokens. CancelJob trips the first; the job runs on the second, which the host's shutdown trips as well — otherwise a SIGTERM mid-job leaves the step container running with nothing left to tear it down.
-        using var cancel = new CancellationTokenSource();
-        using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token, _stoppingToken);
-        _runningJobs[jobKey] = cancel;
-
-        // Use try/finally to guarantee activity-state cleanup. If a catch handler itself throws (e.g. WorkspaceManager.DiscoverWorkspaces failing during shutdown), we would otherwise leave _activity stuck at RunningJob and refuse all future work.
-        JobResult result;
-        try
-        {
-            try
-            {
-                // Keep the host from auto-suspending out from under us for as long as the job runs.
-                using var inhibitor = await _sleepInhibitor.AcquireAsync($"Ilmarinen job {job.Id}");
-
-                await _sender!.SendOrBufferAsync("JobStarted", job.Id);
-
-                var runner = new JobRunner(_config, _workspaceManager, job, _sender!, jobLogger, logCollector);
-                var runResult = await runner.ExecuteAsync(jobCts.Token);
-
-                // A pipeline that ran to the end reports what it actually did, even if the worker is on its way out by now.
-                var status = cancel.IsCancellationRequested ? JobStatus.Cancelled : runResult.Status;
-
-                result = runResult with
-                {
-                    Status = status,
-                    Duration = DateTime.UtcNow - startTime,
-                    Workspaces = SafeDiscoverWorkspaces()
-                };
-
-                jobLogger.LogInformation("Job {JobId} completed with status {Status}", job.Id, result.Status);
-                await logCollector.FlushAsync();
-            }
-            catch (OperationCanceledException) when (jobCts.IsCancellationRequested)
-            {
-                // Cancelled means a person asked for it. A job the worker dropped because its host is going down is a failure, and reporting it as one now is what keeps it from sitting Running until a reconnect that may never come.
-                var abandoned = !cancel.IsCancellationRequested;
-                if (abandoned)
-                {
-                    jobLogger.LogWarning("Job {JobId} abandoned: the worker is shutting down", job.Id);
-                }
-                else
-                {
-                    jobLogger.LogInformation("Job {JobId} was cancelled", job.Id);
-                }
-                await logCollector.FlushAsync();
-
-                result = new JobResult
-                {
-                    Id = job.Id,
-                    Status = abandoned ? JobStatus.Failed : JobStatus.Cancelled,
-                    Duration = DateTime.UtcNow - startTime,
-                    Workspaces = SafeDiscoverWorkspaces()
-                };
-            }
-            catch (Exception ex)
-            {
-                jobLogger.LogError(ex, "Job {JobId} failed with exception", job.Id);
-                await logCollector.FlushAsync();
-
-                result = new JobResult
-                {
-                    Id = job.Id,
-                    Status = JobStatus.Failed,
-                    Duration = DateTime.UtcNow - startTime,
-                    Workspaces = SafeDiscoverWorkspaces()
-                };
-            }
-        }
-        catch
-        {
-            // Only reachable if a catch handler above threw — a log write, a workspace scan. The result is lost either way, but the worker must not be left stuck at RunningJob refusing all future work. On every other path ReportCompletionAsync leaves the activity, and it must not be left a second time: by the time it returns, the next job may already have claimed the slot.
-            ExitActivity();
-            throw;
-        }
-        finally
-        {
-            _runningJobs.TryRemove(jobKey, out _);
-        }
-
-        var delivered = await ReportCompletionAsync(job.Id, result);
-
-        // Exit only on confirmed delivery: a buffered JobCompleted dies with this process and the job would be marked Failed on relaunch. When buffered, the reconnect path replays the buffer and then performs this drain itself.
-        if (_updatePending && delivered)
-        {
-            RequestUpdateExit("job finished on a stale bundle");
-        }
-    }
-
-    /// <summary>
-    /// Leaves the activity and reports the result as one indivisible step. A reconnect's reconciliation reads the activity to decide whether this worker still holds its job; run between the two, it finds a worker with no job and no result yet, and the server fails a job that had in fact just finished — permanently, since Failed is final.
-    ///
-    /// Clearing the activity is also what lets the state machine accept the next job, which the server assigns the moment this report lands, so it has to happen before the report rather than after.
-    /// </summary>
-    private async Task<bool> ReportCompletionAsync(Guid jobId, JobResult result)
-    {
-        await _syncLock.WaitAsync();
-        try
-        {
-            ExitActivity();
-
-            // The server's JobCompleted handler marks this worker ready and dispatches the next queued job. Sending an explicit Ready here too would double-trigger dispatch and could stack a second job on this worker.
-            return await DeliverResultAsync(jobId, result);
-        }
-        finally
-        {
-            _syncLock.Release();
-            _usageRequests.Writer.TryWrite(true);
-        }
-    }
-
-    /// <summary>
-    /// Measures workspace disk usage whenever asked, at most once per <see cref="WorkerConfig.WorkspaceUsageInterval"/>, and reports it. Out of band because a measurement can take a while, and nothing should wait on it.
+    /// Measures workspace disk usage whenever asked, at most once per <see cref="WorkerConfig.WorkspaceUsageInterval"/>, and reports it. Out of band because a measurement can take a while, and nothing should wait on it. Like a diagnostic report, it is derived state measured afresh after every resync, so one with no session to go on is dropped.
     /// </summary>
     private async Task MeasureWorkspaceUsageAsync(CancellationToken stoppingToken)
     {
@@ -817,7 +968,7 @@ public class WorkerService : BackgroundService
                     var stopwatch = Stopwatch.StartNew();
                     var report = await _workspaceManager.MeasureUsageAsync(stoppingToken);
                     _logger.LogInformation("Measured disk usage of {Count} workspaces and the mirrors in {ElapsedMs} ms", report.WorkspaceSizes.Count, stopwatch.ElapsedMilliseconds);
-                    await SendWorkspaceUsageIfConnectedAsync(report);
+                    Report(s => SendAsync(s, "ReportWorkspaceUsage", report));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -832,29 +983,12 @@ public class WorkerService : BackgroundService
         }
     }
 
-    /// <summary>
-    /// Like a diagnostic report, disk usage is derived state that is measured afresh after every resync, so one that can't be sent now is dropped rather than buffered. A send can land in the window between a new connection opening and its authentication; the server refuses it, and the measurement the resync requests replaces it.
-    /// </summary>
-    private async Task SendWorkspaceUsageIfConnectedAsync(WorkspaceUsageReport report)
-    {
-        if (_connection?.State != HubConnectionState.Connected)
-        {
-            return;
-        }
-
-        try
-        {
-            await _connection.SendAsync("ReportWorkspaceUsage", report);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not send workspace disk usage; the next resync measures and sends it again");
-        }
-    }
-
     private IReadOnlyList<WorkspaceInfo> SafeDiscoverWorkspaces()
     {
-        try { return _workspaceManager.DiscoverWorkspaces(); }
+        try
+        {
+            return _workspaceManager.DiscoverWorkspaces();
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "DiscoverWorkspaces failed; continuing with empty list");
@@ -862,90 +996,15 @@ public class WorkerService : BackgroundService
         }
     }
 
-    /// <summary>
-    /// Ready is a state hint that ConnectAndSyncCore re-derives on every reconnect, so it must never be buffered: a replayed stale Ready would arrive after re-auth and mark a worker ready past the update-pending gates (same reasoning as the Running placeholder above).
-    /// </summary>
-    private async Task SendReadyIfConnectedAsync()
+    private static async Task DelayUnlessStopping(TimeSpan delay, CancellationToken stoppingToken)
     {
-        if (_connection?.State != HubConnectionState.Connected)
-        {
-            return;
-        }
-
         try
         {
-            await _connection.SendAsync("Ready");
+            await Task.Delay(delay, stoppingToken);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
         {
-            _logger.LogDebug(ex, "Could not send Ready; the next reconnect re-derives it");
-        }
-    }
-
-    /// <summary>
-    /// A report is derived state that the worker re-pushes whenever it re-syncs, so one that can't be sent now is dropped rather than buffered: replayed after a reconnect, it would land on top of a newer report and undo it.
-    /// </summary>
-    private async Task SendDiagnosticIfConnectedAsync(DiagnosticReport report)
-    {
-        if (_connection?.State != HubConnectionState.Connected)
-        {
-            return;
-        }
-
-        try
-        {
-            await _connection.SendAsync("ReportDiagnostic", report);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not send diagnostic report; the next reconnect re-pushes it");
-        }
-    }
-
-    private void OnCancelJob(string jobId)
-    {
-        _logger.LogInformation("Received cancel request for job {JobId}", jobId);
-        if (_runningJobs.TryGetValue(jobId, out var cts))
-        {
-            cts.Cancel();
-        }
-        else
-        {
-            _logger.LogWarning("Cancel requested for job {JobId} but it is not running on this worker", jobId);
-        }
-    }
-
-    private async Task OnDeleteWorkspace(string name)
-    {
-        _logger.LogInformation("Received workspace deletion request: {WorkspaceName}", name);
-        var result = _workspaceManager.TryDelete(name);
-        await _connection!.SendAsync("WorkspaceDeleted", name, result);
-
-        // Deleting one of two workspaces that share files leaves the other as their only holder
-        if (result.Status == DeleteWorkspaceStatus.Success)
-        {
-            _usageRequests.Writer.TryWrite(true);
-        }
-    }
-
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        // First: this signals the stopping token and waits for ExecuteAsync, which cancels the running job and waits for it to report. The connection has to outlive that, or the job it just killed would have no way to say so.
-        await base.StopAsync(cancellationToken);
-
-        if (_connection != null)
-        {
-            try
-            {
-                await _connection.StopAsync(cancellationToken);
-            }
-            catch (ObjectDisposedException) { }
-
-            try
-            {
-                await _connection.DisposeAsync();
-            }
-            catch (ObjectDisposedException) { }
+            // Stopping: the caller's loop condition takes it from here.
         }
     }
 
@@ -978,18 +1037,108 @@ public class WorkerService : BackgroundService
         _logger.LogInformation("Discovered host workspace path: {HostPath} -> {ContainerPath}", hostPath, _config.WorkspacePath);
         return (hostPath, containerId);
     }
+
+    /// <summary>
+    /// One transport connection and what goes over it: invocations from the server, handled in order, and the worker's reports, sent in order. Ends once, for good; the next connection is a new session.
+    /// </summary>
+    private sealed class HubSession : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource _ended = new();
+        private Task _inbox = Task.CompletedTask;
+        private Task _outbox = Task.CompletedTask;
+
+        public HubSession(HubConnection connection, long counter)
+        {
+            Connection = connection;
+            Counter = counter;
+        }
+
+        public HubConnection Connection { get; }
+        public long Counter { get; }
+
+        public volatile bool Authenticated;
+        public volatile bool Resumed;
+
+        public Channel<Func<Task>> Inbox { get; } = Channel.CreateUnbounded<Func<Task>>(new UnboundedChannelOptions { SingleReader = true });
+        public Channel<Func<Task>> Outbox { get; } = Channel.CreateUnbounded<Func<Task>>(new UnboundedChannelOptions { SingleReader = true });
+
+        public CancellationToken Ended { get; private set; }
+
+        public bool HasEnded
+        {
+            get { return _ended.IsCancellationRequested; }
+        }
+
+        public void Start(ILogger logger)
+        {
+            Ended = _ended.Token;
+            _inbox = Drain(Inbox, logger, "an invocation from the server");
+            _outbox = Drain(Outbox, logger, "a report to the server");
+        }
+
+        /// <summary>Returns true the first time, false if it had already ended.</summary>
+        public bool End()
+        {
+            lock (_ended)
+            {
+                if (_ended.IsCancellationRequested)
+                {
+                    return false;
+                }
+                _ended.Cancel();
+            }
+            Inbox.Writer.TryComplete();
+            Outbox.Writer.TryComplete();
+            return true;
+        }
+
+        /// <summary>Waits, up to the timeout, for what is already queued to go out.</summary>
+        public async Task FlushAsync(TimeSpan timeout)
+        {
+            var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!Outbox.Writer.TryWrite(() =>
+                {
+                    flushed.TrySetResult();
+                    return Task.CompletedTask;
+                }))
+            {
+                return;
+            }
+            await Task.WhenAny(flushed.Task, Task.Delay(timeout));
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            End();
+            await Task.WhenAll(_inbox, _outbox);
+            await Connection.DisposeAsync();
+        }
+
+        private async Task Drain(Channel<Func<Task>> channel, ILogger logger, string what)
+        {
+            await foreach (var work in channel.Reader.ReadAllAsync())
+            {
+                if (HasEnded)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await work();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Handling {What} on connection {Counter} failed", what, Counter);
+                }
+            }
+        }
+    }
 }
 
-/// <summary>Who asked for a diagnostic. An operator is waiting for an answer to a click; anything else runs on the worker's own initiative.</summary>
+/// <summary>Who asked for a diagnostic. An operator is waiting for an answer to a click; anything else runs on the worker's own initiative or the server's.</summary>
 internal enum DiagnosticTrigger
 {
     Operator,
     Automatic
-}
-
-internal enum WorkerActivity
-{
-    Idle,
-    RunningJob,
-    RunningDiagnostic
 }

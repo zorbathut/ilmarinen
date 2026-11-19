@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Model-checks the server-worker protocol (spec/, see spec/README.md):
-#   - the legacy protocol must break every safety property;
-#   - the redesigned protocol must keep every property, in each configuration;
+#   - the protocol must keep every property, in each configuration;
 #   - the paths those properties guard must actually be taken (non-vacuity witnesses);
 #   - each design element, replaced by its realistic alternative, must break the property pinned for it.
 #
@@ -76,23 +75,6 @@ expect() {
 }
 
 # ---------------------------------------------------------------------------
-echo "Legacy protocol: every safety property must be violated"
-for inv in NoUntrackedRun NoBusyRejection NoSpuriousFailure NotIncident; do
-    # Deadlock checking off: the legacy model has terminal states it isn't trying to rule out
-    got=$(tlc WorkerProtocolLegacy "legacy-$inv" "SPECIFICATION Spec
-CONSTANTS
-NumJobs = 2
-MaxConns = 2
-MaxStalls = 1
-MaxRestarts = 0
-MaxCancels = 0
-MaxOperatorDiags = 0
-CHECK_DEADLOCK FALSE
-INVARIANTS TypeOK $inv")
-    expect "legacy-$inv" "$got" "$inv"
-done
-
-# ---------------------------------------------------------------------------
 # NumJobs MaxConns MaxStalls MaxFalseTimeouts MaxRestarts MaxCancels MaxOperatorDiags WithCompetitor MaxUnhealthy
 declare -A FEATURE=(
     [base]="2 2 0 0 0 0 0 FALSE 0"
@@ -142,7 +124,7 @@ check() {
 features=("${SMALL[@]}")
 if (( ! QUICK )); then features+=("${LARGE[@]}"); fi
 
-echo "Redesigned protocol: every property must hold"
+echo "The protocol: every property must hold"
 for f in "${features[@]}"; do
     expect "design-$f" "$(check "$f" "" TRUE)" none
 done

@@ -39,7 +39,8 @@ public static class WorkerBadge
 
         // A degraded worker still takes jobs, so Ready/Busy — the thing an operator actually scans this column
         // for — has to survive; degraded rides along rather than replacing it.
-        var label = w.IsReady ? "Ready" : "Busy";
+        // Not ready without being busy is an idle worker the server is holding back: a host re-check owed, a bundle update pending, or a reconnect not yet resumed.
+        var label = w.IsReady ? "Ready" : w.CurrentJobs.Count > 0 || w.Diagnostic?.Status == DiagnosticStatus.Running ? "Busy" : "Not ready";
         if (w.Diagnostic?.Status == DiagnosticStatus.Degraded)
         {
             return $"{label} (degraded)";

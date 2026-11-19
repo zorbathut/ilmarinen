@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 using System.Threading.Tasks;
@@ -7,19 +8,20 @@ using System;
 namespace Ilmarinen.Worker.Services;
 
 /// <summary>
-/// Sends messages to the server with implicit acknowledgment via InvokeCoreAsync. A message that can't be sent — the connection is down, or the send fails — is buffered instead, and replayed when the worker next re-syncs after a reconnect.
+/// Sends log output and commit reports on the worker's current, authenticated connection, acknowledged by the server's answer. A message that can't be sent — no such connection, a failed send, or an answer other than Ok — is buffered instead, and replayed when the worker next re-syncs.
 ///
 /// Give it a plain logger, never a job's LoggerTee: a failed StreamLogs would otherwise log into the job's own log, which sends another chunk that fails the same way.
 /// </summary>
 public class BufferedHubSender
 {
-    private readonly HubConnection _connection;
+    private readonly Func<HubConnection?> _connection;
     private readonly MessageBuffer _buffer;
     private readonly ILogger _logger;
     private int _failing;
     private int _overflowing;
 
-    public BufferedHubSender(HubConnection connection, MessageBuffer buffer, ILogger logger)
+    /// <param name="connection">The connection to send on right now, or null while there is none the server would take these from.</param>
+    public BufferedHubSender(Func<HubConnection?> connection, MessageBuffer buffer, ILogger logger)
     {
         _connection = connection;
         _buffer = buffer;
@@ -31,7 +33,8 @@ public class BufferedHubSender
     /// </summary>
     public async Task<bool> SendOrBufferAsync(string method, params object[] args)
     {
-        if (_connection.State != HubConnectionState.Connected)
+        var connection = _connection();
+        if (connection == null)
         {
             Buffer(method, args);
             return false;
@@ -39,7 +42,14 @@ public class BufferedHubSender
 
         try
         {
-            await _connection.InvokeCoreAsync(method, args);
+            var answer = await connection.InvokeCoreAsync<SessionAnswer>(method, args);
+            if (answer != SessionAnswer.Ok)
+            {
+                _logger.LogDebug("Server answered {Answer} to {Method}, buffering for replay", answer, method);
+                Buffer(method, args);
+                return false;
+            }
+
             Interlocked.Exchange(ref _failing, 0);
             Interlocked.Exchange(ref _overflowing, 0);
             return true;

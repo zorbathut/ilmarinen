@@ -1,8 +1,10 @@
 using Ilmarinen.Database;
+using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -158,6 +160,8 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         builder.Services.AddSingleton(new ServerKeyService(_serverKeyBase64));
         builder.Services.AddSingleton<RecordingWorkerClients>();
         builder.Services.AddSingleton<IWorkerClients>(sp => sp.GetRequiredService<RecordingWorkerClients>());
+        builder.Services.AddSingleton<WorkerConnectionControl>();
+        builder.Services.AddSignalR().AddHubOptions<WorkerHub>(options => options.AddFilter<WorkerConnectionControl>());
         builder.Services.AddHealthChecks();
 
         builder.Environment.EnvironmentName = "Testing";

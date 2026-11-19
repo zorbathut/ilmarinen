@@ -14,25 +14,28 @@ public class JobScheduler
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly WorkerMessenger _messenger;
+    private readonly WorkerSessions _sessions;
     private readonly UIEventService _uiEvents;
     private readonly LogStreamService _logStream;
     private readonly ILogger<JobScheduler> _logger;
 
-    // Serializes the check-and-assign sequence within this process. Assignment is triggered concurrently from multiple places (JobCompleted, Ready, EnqueueJob), and the windows between "is this worker free?" / "which job is next?" and marking them busy / Running must be atomic.
+    // Serializes dispatch: which job goes next, and to which worker. Taken before a worker's session lock (WorkerSessions), never inside one, so a hub handler holding a worker's lock dispatches only after releasing it.
     private readonly SemaphoreSlim _assignLock = new(1, 1);
 
-    // A cancel and the worker's own report of the same job complete concurrently, and each creates notifications only where the other hasn't left one pending; serialized, each sees what the other did. Taken inside _assignLock (dispatch completes jobs it can't start), so nothing may take _assignLock while holding this.
+    // A cancel and the worker's own report of the same job complete concurrently, and each creates notifications only where the other hasn't left one pending; serialized, each sees what the other did. The innermost lock: taken inside _assignLock and inside session locks, so nothing may take either while holding this.
     private readonly SemaphoreSlim _notificationLock = new(1, 1);
 
     public JobScheduler(
         IServiceScopeFactory scopeFactory,
         WorkerMessenger messenger,
+        WorkerSessions sessions,
         UIEventService uiEvents,
         LogStreamService logStream,
         ILogger<JobScheduler> logger)
     {
         _scopeFactory = scopeFactory;
         _messenger = messenger;
+        _sessions = sessions;
         _uiEvents = uiEvents;
         _logStream = logStream;
         _logger = logger;
@@ -53,7 +56,7 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Hands queued jobs to ready workers, highest-priority worker first. Called whenever the pool or the queue changes — a job is submitted, a worker signals Ready, a worker finishes a job, a worker's priority changes — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
+    /// Hands queued jobs to ready workers, highest-priority worker first. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
     /// </summary>
     public async Task DispatchAsync()
     {
@@ -65,25 +68,22 @@ public class JobScheduler
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
             // One pass is enough: each candidate takes at most one job, and after that it is busy. A worker that frees up meanwhile raises its own DispatchAsync, which is waiting on this lock.
-            foreach (var (connectionId, priority) in await workers.GetReadyWorkersByPriorityAsync())
+            foreach (var (workerId, priority) in await workers.GetReadyWorkersByPriorityAsync())
             {
-                var worker = workers.GetByConnectionId(connectionId);
-                if (worker == null || !worker.IsReady)
+                // The list was a snapshot; under the worker's lock nothing about it can change while it is checked and handed a job.
+                using (await _sessions.LockAsync(workerId))
                 {
-                    continue;
-                }
+                    var session = _sessions.ByWorker(workerId);
+                    if (session == null || !await workers.IsReadyAsync(session))
+                    {
+                        continue;
+                    }
 
-                // The in-memory ready flag can be set redundantly — the worker sends an explicit Ready after every JobCompleted, and the JobCompleted handler marks it ready too. The DB is the source of truth for "busy": a worker already running a job must never be handed another, and a stale Ready that put the flag up gets corrected here.
-                if (await jobs.GetRunningJobForWorkerAsync(worker.Id) != null)
-                {
-                    workers.SetReady(connectionId, false);
-                    continue;
-                }
-
-                // Candidates come highest priority first, and a worker qualifies for everything a lower-priority one does, so once nothing queued fits this worker nothing fits the rest.
-                if (!await AssignNextJobAsync(jobs, workers, connectionId, worker.Id, priority))
-                {
-                    return;
+                    // Candidates come highest priority first, and a worker qualifies for everything a lower-priority one does, so once nothing queued fits this worker nothing fits the rest.
+                    if (!await AssignNextJobAsync(jobs, session, priority))
+                    {
+                        return;
+                    }
                 }
             }
         }
@@ -94,16 +94,17 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Takes queued jobs this worker's priority qualifies it for, oldest first, until one is handed to it. Returns false if none fit. Caller holds _assignLock and has already confirmed the worker is idle.
+    /// Takes queued jobs this worker's priority qualifies it for, oldest first, until one is handed to it. Returns false if none fit. Caller holds _assignLock and the worker's session lock, and has confirmed it is ready.
     /// </summary>
-    private async Task<bool> AssignNextJobAsync(JobRepository jobs, WorkerRepository workers, string connectionId, Guid workerId, WorkerPriority workerPriority)
+    private async Task<bool> AssignNextJobAsync(JobRepository jobs, WorkerSession session, WorkerPriority workerPriority)
     {
         while (await jobs.GetNextQueuedJobIdAsync(workerPriority) is { } jobId)
         {
+            var assignmentId = Guid.NewGuid();
             JobAssignment assignment;
             try
             {
-                assignment = await jobs.GetAssignmentAsync(jobId);
+                assignment = await jobs.GetAssignmentAsync(jobId, assignmentId);
             }
             catch (CryptographicException ex)
             {
@@ -113,18 +114,17 @@ public class JobScheduler
                 continue;
             }
 
-            // Gate the assignment on the status write: a refused write means the job went terminal (cancelled) while queued, so skip it. A cancel can still land between this write and the AssignJob send — the worker drops a CancelJob for a job it hasn't yet registered as running, and the override rule reconciles the eventual outcome.
-            if (!await jobs.UpdateStatusAsync(jobId, JobStatus.Running, workerId))
+            // Gate the assignment on the status write: a refused write means the job went terminal (cancelled) while queued, so skip it. A cancel that lands after this write sends its CancelJob under this worker's lock too, so it reaches the worker after the assignment, never before.
+            if (!await jobs.AssignAsync(jobId, session.WorkerId, assignmentId, session.InstanceId))
             {
                 _logger.LogInformation("Skipping queued job {JobId}: cancelled before it could be assigned", jobId);
                 continue;
             }
 
-            workers.SetReady(connectionId, false);
             _uiEvents.NotifyJobsChanged();
 
-            // Queued, not awaited: one unreachable worker must not hold up the jobs the rest of the fleet could take. If the send fails, the job is already marked Running against the worker and is reconciled like any other undelivered job when it reconnects.
-            _messenger.Send(connectionId, $"job {jobId}", client => client.AssignJob(assignment));
+            // Queued, not awaited: one unreachable worker must not hold up the jobs the rest of the fleet could take. If the send fails, the job is already marked Running against the worker, and its next Resume requeues it as never delivered.
+            _messenger.Send(session.ConnectionId, $"job {jobId}", client => client.AssignJob(assignment));
 
             return true;
         }
@@ -180,7 +180,45 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Status-write-gated entry for reported completions (worker JobCompleted, orphaned-job failure on reconnect): persist the terminal status and, if the write actually changed it, emit the completion signal. If the write is refused (the job is already terminal — e.g. the worker's Cancelled report after CancelJobAsync already signalled), the signal is suppressed and only the log buffer is flushed, so chunks streamed after the cancel still persist. EmitCompletionAsync owns the side effects themselves; CancelJobAsync calls it directly because TryCancelAsync is its own atomic terminal transition. Returns whether the status changed.
+    /// Applies a worker's outcome for one of its assignments, idempotently: a completion only for that assignment, a hand-back only while the job is still Running under it. Returns true when the outcome newly failed the job, so the worker now owes a host re-check (already recorded in the database). Caller holds the worker's session lock.
+    /// </summary>
+    public async Task<bool> ApplyOutcomeAsync(WorkerSession session, JobOutcome outcome)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        if (outcome.Kind == JobOutcomeKind.Rejected)
+        {
+            if (await jobs.RequeueAsync(outcome.JobId, session.WorkerId, outcome.AssignmentId))
+            {
+                _logger.LogInformation("Worker {WorkerId} was busy when job {JobId} arrived; queued it again", session.WorkerId, outcome.JobId);
+                _uiEvents.NotifyJobsChanged();
+            }
+            return false;
+        }
+
+        if (outcome.Status is not { } status || status is not (JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled))
+        {
+            _logger.LogWarning("Worker {WorkerId} reported job {JobId} completed with status {Status}; ignoring", session.WorkerId, outcome.JobId, outcome.Status);
+            return false;
+        }
+
+        // Persist the buffered tail before the status turns terminal, as CompleteJobAsync does.
+        await _logStream.FlushJobAsync(outcome.JobId);
+        if (!await jobs.CompleteReportedAsync(outcome.JobId, session.WorkerId, outcome.AssignmentId, status))
+        {
+            _logger.LogInformation("Outcome {Status} of job {JobId} from worker {WorkerId} changed nothing: already applied, or not this assignment", status, outcome.JobId, session.WorkerId);
+            await _logStream.FlushAsync(outcome.JobId);
+            return false;
+        }
+
+        _logger.LogInformation("Job completed: {JobId} - {Status}", outcome.JobId, status);
+        await EmitCompletionAsync(scope, outcome.JobId, status);
+        return status == JobStatus.Failed;
+    }
+
+    /// <summary>
+    /// Status-write-gated entry for completions the server decides on its own (a job lost with its worker's process, one whose token can't be decrypted): persist the terminal status and, if the write actually changed it, emit the completion signal. If the write is refused (the job is already terminal), the signal is suppressed and only the log buffer is flushed, so chunks streamed after the cancel still persist. EmitCompletionAsync owns the side effects themselves; CancelJobAsync calls it directly because TryCancelAsync is its own atomic terminal transition. Returns whether the status changed.
     /// </summary>
     public async Task<bool> CompleteJobAsync(Guid jobId, JobStatus status)
     {
@@ -197,6 +235,25 @@ public class JobScheduler
         }
 
         await EmitCompletionAsync(scope, jobId, status);
+        return true;
+    }
+
+    /// <summary>
+    /// Fails a job the worker's process died with: only while it is still Running for that worker, so a cancel that got there first stands (a server's guess must not override a person's decision, as a real outcome may). Caller holds the worker's session lock.
+    /// </summary>
+    public async Task<bool> FailLostAsync(Guid jobId, Guid workerId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        await _logStream.FlushJobAsync(jobId);
+        if (!await jobs.FailLostAsync(jobId, workerId))
+        {
+            await _logStream.FlushAsync(jobId);
+            return false;
+        }
+
+        await EmitCompletionAsync(scope, jobId, JobStatus.Failed);
         return true;
     }
 
@@ -218,32 +275,102 @@ public class JobScheduler
         _uiEvents.NotifyJobsChanged();
     }
 
+    /// <summary>
+    /// Cancels a job, telling the worker it is assigned to, if any. For an assigned job the whole step runs under that worker's lock, like every other change to a worker's jobs: the CancelJob is queued after any AssignJob for the job, and a Resume can't decide about the job halfway through. Dispatches afterwards, since the worker may now be free.
+    /// </summary>
     public async Task<bool> CancelJobAsync(Guid jobId)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-        // Find the worker running this job before cancelling (status change clears the assignment)
-        var connectionId = workers.FindConnectionIdByJobId(jobId);
+        bool cancelled;
+        while (true)
+        {
+            var owner = await jobs.GetAssignedWorkerAsync(jobId);
+            if (owner == null)
+            {
+                cancelled = await CancelUnderLockAsync(scope, jobs, jobId, owner: null);
+                // Assigned between the read and the cancel: its worker still has to hear about it.
+                if (cancelled && await jobs.GetAssignedWorkerAsync(jobId) is { } assignedMeanwhile)
+                {
+                    using (await _sessions.LockAsync(assignedMeanwhile))
+                    {
+                        SendCancel(assignedMeanwhile, jobId);
+                    }
+                }
+                break;
+            }
 
+            using (await _sessions.LockAsync(owner.Value))
+            {
+                // A requeue and reassignment can move the job between the read and the lock: retry under the right worker.
+                if (await jobs.GetAssignedWorkerAsync(jobId) != owner)
+                {
+                    continue;
+                }
+
+                cancelled = await CancelUnderLockAsync(scope, jobs, jobId, owner);
+            }
+            break;
+        }
+
+        if (cancelled)
+        {
+            await DispatchAsync();
+        }
+        return cancelled;
+    }
+
+    private async Task<bool> CancelUnderLockAsync(IServiceScope scope, JobRepository jobs, Guid jobId, Guid? owner)
+    {
         // The same ordering as CompleteJobAsync, for the same reason.
         await _logStream.FlushJobAsync(jobId);
 
-        var cancelled = await jobs.TryCancelAsync(jobId);
-        if (!cancelled)
-            return false;
-
-        // TryCancelAsync just made the job terminal, so the completion signal fires here; any later JobCompleted report from the worker is suppressed by CompleteJobAsync's refused-write guard (unless it overrides with the real outcome).
-        await EmitCompletionAsync(scope, jobId, JobStatus.Cancelled);
-
-        // If a worker is actively running this job, tell it to stop
-        if (connectionId != null)
+        if (!await jobs.TryCancelAsync(jobId))
         {
-            _logger.LogInformation("Sending CancelJob to worker for job {JobId}", jobId);
-            _messenger.Send(connectionId, $"cancel of job {jobId}", client => client.CancelJob(jobId.ToString()));
+            return false;
         }
 
+        // TryCancelAsync just made the job terminal, so the completion signal fires here; the worker's own later outcome takes effect only if it is a real Success or Failed, which overrides the cancel.
+        await EmitCompletionAsync(scope, jobId, JobStatus.Cancelled);
+        if (owner != null)
+        {
+            SendCancel(owner.Value, jobId);
+        }
+        return true;
+    }
+
+    /// <summary>A worker that isn't running the job ignores it; one that reconnects before it arrives is told by its Resume instead. Caller holds the worker's lock.</summary>
+    private void SendCancel(Guid workerId, Guid jobId)
+    {
+        if (_sessions.ByWorker(workerId) is { } session)
+        {
+            _logger.LogInformation("Sending CancelJob to worker {WorkerId} for job {JobId}", workerId, jobId);
+            _messenger.Send(session.ConnectionId, $"cancel of job {jobId}", client => client.CancelJob(jobId.ToString()));
+        }
+    }
+
+    /// <summary>
+    /// An operator's request for a fresh diagnostic. The worker takes no work until one has started, then until it reports the verdict. Returns false if the worker has no resumed session to ask.
+    /// </summary>
+    public async Task<bool> RequestDiagnosticAsync(Guid workerId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        using (await _sessions.LockAsync(workerId))
+        {
+            if (_sessions.ByWorker(workerId) is not { Resumed: true } session)
+            {
+                return false;
+            }
+
+            await workers.SetDiagnosticOwedAsync(workerId, true);
+            _sessions.SetDiagnosticOwed(workerId, true);
+            _messenger.Send(session.ConnectionId, "operator diagnostic", client => client.RunDiagnostic());
+        }
+
+        _uiEvents.NotifyWorkersChanged();
         return true;
     }
 }

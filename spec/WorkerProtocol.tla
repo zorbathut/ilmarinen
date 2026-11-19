@@ -85,7 +85,7 @@ VARIABLES
     \* Worker
     wInst, wConn, wUp, connsUsed,
     wSync,            \* "none" (live) | "connecting" | "resuming"
-    wLock,            \* _syncLock held by Resume, from its snapshot until its answer
+    wLock,            \* the worker's state lock, held by Resume from its snapshot until its answer
     wAct, wJob, wJobDone, wCancelReq,
     wDiag, wDiagWanted,
     wResults,         \* results not yet acknowledged

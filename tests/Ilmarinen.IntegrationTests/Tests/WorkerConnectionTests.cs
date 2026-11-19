@@ -4,6 +4,7 @@ using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
+using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 using System;
@@ -99,8 +100,8 @@ public class WorkerConnectionTests
         var result = await registration.RegisterWorkerAsync($"addressless-{Guid.NewGuid():N}");
 
         var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
-        await workers.ConnectAsync("conn-with-address", result.WorkerId, "10.0.0.5");
-        await workers.ConnectAsync("conn-without-address", result.WorkerId, ipAddress: null);
+        await workers.RecordConnectionAsync(result.WorkerId, "10.0.0.5");
+        await workers.RecordConnectionAsync(result.WorkerId, ipAddress: null);
 
         var view = await workers.GetByIdAsync(result.WorkerId);
         Assert.That(view!.LastIpAddress, Is.EqualTo("10.0.0.5"), "an address-less connection must not blank out a known address");
@@ -156,39 +157,34 @@ public class WorkerConnectionTests
     [Test]
     public async Task Worker_Reauthenticating_LeavesOnlyItsNewestConnectionDispatchable()
     {
-        using var scope = _fixture.Services.CreateScope();
-        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
-        var workerId = (await registration.RegisterWorkerAsync("reconnecting-worker")).WorkerId;
+        var worker = await DirectedWorker.RegisterAsync(_fixture, "reconnecting-worker");
+        await worker.ConnectAsync("conn-stale");
+        await worker.ResumeAsync(worker.Idle());
+        var staleHub = worker.Hub;
+
+        await worker.ConnectAsync("conn-live");
+        await worker.ResumeAsync(worker.Idle());
 
         var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
-        await workers.ConnectAsync("conn-stale", workerId, ipAddress: null);
-        workers.SetReady("conn-stale", true);
-
-        await workers.ConnectAsync("conn-live", workerId, ipAddress: null);
-        workers.SetReady("conn-live", true);
-
-        Assert.That(workers.GetByConnectionId("conn-stale"), Is.Null, "the superseded connection must not still resolve to the worker");
-        Assert.That(workers.FindConnectionIdByWorkerId(workerId), Is.EqualTo("conn-live"));
+        Assert.That(_fixture.Services.GetRequiredService<WorkerSessions>().ByConnection("conn-stale"), Is.Null, "the superseded connection must not still resolve to the worker");
+        Assert.That(workers.FindConnectionIdByWorkerId(worker.WorkerId), Is.EqualTo("conn-live"));
+        Assert.That(await staleHub.ReportState(worker.Idle()), Is.EqualTo(SessionAnswer.Fenced), "and anything it says is refused");
 
         var candidates = await workers.GetReadyWorkersByPriorityAsync();
-        Assert.That(candidates.Count, Is.EqualTo(1));
-        Assert.That(candidates[0].ConnectionId, Is.EqualTo("conn-live"));
+        Assert.That(candidates.Select(c => c.WorkerId), Is.EqualTo(new[] { worker.WorkerId }));
     }
 
     // The evicted connection's disconnect arrives later and must not unmap the connection that replaced it.
     [Test]
     public async Task Worker_StaleConnectionDisconnecting_DoesNotUnmapTheLiveOne()
     {
-        using var scope = _fixture.Services.CreateScope();
-        var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
-        var workerId = (await registration.RegisterWorkerAsync("late-disconnect-worker")).WorkerId;
+        var worker = await DirectedWorker.RegisterAsync(_fixture, "late-disconnect-worker");
+        await worker.ConnectAsync("conn-stale");
+        var staleHub = worker.Hub;
+        await worker.ConnectAsync("conn-live");
 
-        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
-        await workers.ConnectAsync("conn-stale", workerId, ipAddress: null);
-        await workers.ConnectAsync("conn-live", workerId, ipAddress: null);
+        await staleHub.OnDisconnectedAsync(null);
 
-        await workers.SetDisconnectedAsync("conn-stale");
-
-        Assert.That(workers.FindConnectionIdByWorkerId(workerId), Is.EqualTo("conn-live"));
+        Assert.That(_fixture.Services.GetRequiredService<WorkerRepository>().FindConnectionIdByWorkerId(worker.WorkerId), Is.EqualTo("conn-live"));
     }
 }

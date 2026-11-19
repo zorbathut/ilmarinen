@@ -1,5 +1,4 @@
 using Ilmarinen.Worker.Services;
-using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 using NUnit.Framework;
 using System.Collections.Generic;
@@ -11,7 +10,6 @@ namespace Ilmarinen.Core.Tests;
 [TestFixture]
 public class LoggerTeeTests
 {
-    private HubConnection _connection = null!;
     private MessageBuffer _messageBuffer = null!;
     private LoggerCapture _inner = null!;
     private LogCollector _collector = null!;
@@ -20,17 +18,10 @@ public class LoggerTeeTests
     [SetUp]
     public void SetUp()
     {
-        _connection = new HubConnectionBuilder().WithUrl("http://localhost:1").Build();
         _messageBuffer = new MessageBuffer();
         _inner = new LoggerCapture();
-        _collector = new LogCollector(Guid.NewGuid(), new BufferedHubSender(_connection, _messageBuffer, _inner), _inner);
+        _collector = new LogCollector(Guid.NewGuid(), new BufferedHubSender(() => null, _messageBuffer, _inner), _inner);
         _tee = new LoggerTee(_inner, _collector);
-    }
-
-    [TearDown]
-    public async Task TearDown()
-    {
-        await _connection.DisposeAsync();
     }
 
     private async Task<List<(string Type, string Data)>> FlushAndDrainAsync()

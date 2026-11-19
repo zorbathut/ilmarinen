@@ -72,13 +72,6 @@ public class WorkersController : ControllerBase
     {
         try
         {
-            // Disconnect if currently connected
-            var connectionId = _workers.FindConnectionIdByWorkerId(workerId);
-            if (connectionId != null)
-            {
-                await _workers.SetDisconnectedAsync(connectionId);
-            }
-
             await _registration.RevokeWorkerAsync(workerId);
             return NoContent();
         }

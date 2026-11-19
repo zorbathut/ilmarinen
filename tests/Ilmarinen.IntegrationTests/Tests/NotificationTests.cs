@@ -290,7 +290,7 @@ public class NotificationTests
         var cancelled = await _fixture.CancelJobAsync(jobId);
         Assert.That(cancelled, Is.True);
 
-        // Wait until the worker has aborted and its JobCompleted report has been processed — the worker only turns Ready again inside that handler. The report must not double-notify.
+        // Wait until the worker has aborted and its outcome has been processed — it is ready again only once it has reported the job done. The outcome must not double-notify.
         var workerRepo = _fixture.Services.GetRequiredService<WorkerRepository>();
         var deadline = DateTime.UtcNow.AddSeconds(60);
         var workerReported = false;
@@ -303,7 +303,7 @@ public class NotificationTests
             }
         }
         Assert.That(workerReported, Is.True,
-            "the worker's post-abort JobCompleted report must arrive; without it this test would pass vacuously");
+            "the worker's post-abort outcome must arrive; without it this test would pass vacuously");
 
         var job = await _fixture.GetJobAsync(jobId);
         var notifications = await _fixture.PullNotificationsAsync(subscriber.Id);

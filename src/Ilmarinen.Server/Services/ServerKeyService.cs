@@ -106,12 +106,6 @@ public class ServerKeyService
         return _encryptionKey!;
     }
 
-    public static byte[] BuildChallengeData(string workerId, byte[] workerNonce, byte[] serverNonce)
-    {
-        return Encoding.UTF8.GetBytes(
-            $"{workerId}:{Convert.ToBase64String(workerNonce)}:{Convert.ToBase64String(serverNonce)}");
-    }
-
     private void EnsureEnabled()
     {
         if (_isPlaceholder)

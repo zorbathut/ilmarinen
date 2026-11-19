@@ -17,4 +17,7 @@ public class Worker
     public string? LastIpAddress { get; set; }
 
     public WorkerPriority Priority { get; set; } = WorkerPriority.Medium;
+
+    // A host re-check or operator diagnostic was asked for and hasn't started yet; the worker takes no work until it has. Persisted so a server restart can't skip it.
+    public bool DiagnosticOwed { get; set; }
 }
