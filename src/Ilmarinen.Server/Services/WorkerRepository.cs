@@ -16,18 +16,7 @@ namespace Ilmarinen.Server.Services;
 public class WorkerRepository
 {
     private readonly IServiceScopeFactory _scopeFactory;
-
-    // In-memory mapping of SignalR connection ID to worker ID
-    private readonly ConcurrentDictionary<string, Guid> _connectionToWorker = new();
-
-    // The reverse direction, which is also the rule that a worker has exactly one live connection: authenticating on a new one supersedes whatever it held before.
-    private readonly ConcurrentDictionary<Guid, string> _workerToConnection = new();
-
-    // In-memory set of connection IDs that are ready for work
-    private readonly ConcurrentDictionary<string, bool> _readyWorkers = new();
-
-    // In-memory mapping of connection ID to workspace details
-    private readonly ConcurrentDictionary<string, ImmutableList<WorkspaceInfo>> _workerWorkspaces = new();
+    private readonly WorkerSessions _sessions;
 
     // Diagnostic state, keyed by worker ID (not connection ID) so it survives reconnects. Cleared on revoke, not disconnect — a reconnecting worker re-pushes its cached diagnostic so the value here is replaced anyway, and keeping it across the brief reconnect window avoids a "no diagnostic" UI flicker.
     private readonly ConcurrentDictionary<Guid, DiagnosticReport> _workerDiagnostics = new();
@@ -35,19 +24,13 @@ public class WorkerRepository
     // Latest workspace disk usage, keyed by worker ID for the same reason as diagnostics: a reconnect shouldn't blank every size until the worker's next measurement lands. The connection-keyed workspace list still decides which workspaces are shown.
     private readonly ConcurrentDictionary<Guid, WorkspaceUsageReport> _workerUsage = new();
 
-    // Bundle hash reported at authentication by launcher-run workers; absent for classic workers.
-    private readonly ConcurrentDictionary<string, string> _connectionBundleHashes = new();
-
-    public WorkerRepository(IServiceScopeFactory scopeFactory)
+    public WorkerRepository(IServiceScopeFactory scopeFactory, WorkerSessions sessions)
     {
         _scopeFactory = scopeFactory;
+        _sessions = sessions;
     }
 
-    /// <summary>
-    /// Records an authenticated connection, superseding any the worker still held. A connection can be half-open for as
-    /// long as the SignalR client timeout: left in the maps, it stays a dispatch candidate, and a job handed to it is
-    /// never delivered and never reconciled — the worker is connected, so nothing reconnects to correct it.
-    /// </summary>
+    /// <summary>Records an authenticated connection as the worker's session (see <see cref="WorkerSessions.Start"/>).</summary>
     public async Task ConnectAsync(string connectionId, Guid workerId, string? ipAddress)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -66,29 +49,7 @@ public class WorkerRepository
 
         await db.SaveChangesAsync();
 
-        _connectionToWorker[connectionId] = workerId;
-
-        // One atomic swap that hands back what it replaced, so exactly one connection ends up mapped. The new mapping goes in before the old one comes out, so the worker is never momentarily unmapped. Two connections authenticating at once resolve to whichever lands second rather than to the newer of the two — self-correcting, since the loser's next hub call fails authentication and it re-syncs.
-        string? superseded = null;
-        _workerToConnection.AddOrUpdate(workerId, connectionId, (_, existing) =>
-        {
-            superseded = existing;
-            return connectionId;
-        });
-
-        if (superseded != null && superseded != connectionId)
-        {
-            ForgetConnection(superseded);
-        }
-    }
-
-    /// <summary>Drops everything keyed by a connection that is no longer the worker's. Leaves the reverse mapping alone: it already points at whatever replaced this one.</summary>
-    private void ForgetConnection(string connectionId)
-    {
-        _connectionToWorker.TryRemove(connectionId, out _);
-        _readyWorkers.TryRemove(connectionId, out _);
-        _workerWorkspaces.TryRemove(connectionId, out _);
-        _connectionBundleHashes.TryRemove(connectionId, out _);
+        _sessions.Start(connectionId, workerId);
     }
 
     public async Task<byte[]?> GetWorkerPublicKeyAsync(Guid workerId)
@@ -102,20 +63,14 @@ public class WorkerRepository
 
     public async Task SetDisconnectedAsync(string connectionId)
     {
-        _workerWorkspaces.TryRemove(connectionId, out _);
-        _readyWorkers.TryRemove(connectionId, out _);
-        _connectionBundleHashes.TryRemove(connectionId, out _);
         // _workerDiagnostics is intentionally NOT cleared here — keyed on worker ID, it survives reconnects, and the worker re-pushes its cached report on auth.
-
-        if (_connectionToWorker.TryRemove(connectionId, out var workerId))
+        var session = _sessions.End(connectionId);
+        if (session != null)
         {
-            // Only if this connection is still the worker's. A superseded connection disconnects after the one that replaced it has already been recorded, and unmapping the worker there would read as offline while it is connected and working.
-            _workerToConnection.TryRemove(new KeyValuePair<Guid, string>(workerId, connectionId));
-
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
-            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
+            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == session.WorkerId);
             if (worker != null)
             {
                 worker.LastSeen = DateTime.UtcNow;
@@ -126,20 +81,21 @@ public class WorkerRepository
 
     public void SetReady(string connectionId, bool isReady)
     {
-        if (isReady)
-            _readyWorkers[connectionId] = true;
-        else
-            _readyWorkers.TryRemove(connectionId, out _);
+        var session = _sessions.ByConnection(connectionId);
+        if (session != null)
+        {
+            session.Ready = isReady;
+        }
     }
 
     public async Task UpdateHeartbeatAsync(string connectionId)
     {
-        if (_connectionToWorker.TryGetValue(connectionId, out var workerId))
+        if (_sessions.ByConnection(connectionId) is { } session)
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
-            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId);
+            var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == session.WorkerId);
             if (worker != null)
             {
                 worker.LastSeen = DateTime.UtcNow;
@@ -150,14 +106,17 @@ public class WorkerRepository
 
     public ConnectedWorker? GetByConnectionId(string connectionId)
     {
-        if (!_connectionToWorker.TryGetValue(connectionId, out var workerId))
+        var session = _sessions.ByConnection(connectionId);
+        if (session == null)
+        {
             return null;
+        }
 
         return new ConnectedWorker
         {
-            Id = workerId,
+            Id = session.WorkerId,
             ConnectionId = connectionId,
-            IsReady = _readyWorkers.ContainsKey(connectionId),
+            IsReady = session.Ready,
         };
     }
 
@@ -166,14 +125,9 @@ public class WorkerRepository
     /// </summary>
     public async Task<IReadOnlyList<(string ConnectionId, WorkerPriority Priority)>> GetReadyWorkersByPriorityAsync()
     {
-        var candidates = new Dictionary<Guid, string>();
-        foreach (var (connectionId, _) in _readyWorkers)
-        {
-            if (_connectionToWorker.TryGetValue(connectionId, out var workerId))
-            {
-                candidates[workerId] = connectionId;
-            }
-        }
+        var candidates = _sessions.All()
+            .Where(s => s.Ready)
+            .ToDictionary(s => s.WorkerId, s => s.ConnectionId);
 
         if (candidates.Count == 0)
         {
@@ -198,7 +152,7 @@ public class WorkerRepository
     /// </summary>
     public async Task<WorkerPriority?> GetHighestAvailablePriorityAsync()
     {
-        var connectedIds = _connectionToWorker.Values.Distinct().ToList();
+        var connectedIds = _sessions.All().Select(s => s.WorkerId).ToList();
         if (connectedIds.Count == 0)
         {
             return null;
@@ -240,20 +194,25 @@ public class WorkerRepository
 
     public void SetBundleHash(string connectionId, string? bundleHash)
     {
-        if (bundleHash != null)
-            _connectionBundleHashes[connectionId] = bundleHash;
+        var session = _sessions.ByConnection(connectionId);
+        if (session != null && bundleHash != null)
+        {
+            session.BundleHash = bundleHash;
+        }
     }
 
     public string? GetBundleHash(string connectionId)
     {
-        _connectionBundleHashes.TryGetValue(connectionId, out var hash);
-        return hash;
+        return _sessions.ByConnection(connectionId)?.BundleHash;
     }
 
     public void SetWorkspaces(string connectionId, IReadOnlyList<WorkspaceInfo>? workspaces)
     {
-        if (workspaces != null)
-            _workerWorkspaces[connectionId] = workspaces.ToImmutableList();
+        var session = _sessions.ByConnection(connectionId);
+        if (session != null && workspaces != null)
+        {
+            session.Workspaces = workspaces.ToImmutableList();
+        }
     }
 
     public void SetDiagnostic(Guid workerId, DiagnosticReport report)
@@ -284,10 +243,11 @@ public class WorkerRepository
 
     public void RemoveWorkspace(string connectionId, string name)
     {
-        _workerWorkspaces.AddOrUpdate(
-            connectionId,
-            _ => ImmutableList<WorkspaceInfo>.Empty,
-            (_, list) => list.RemoveAll(ws => ws.Name == name));
+        var session = _sessions.ByConnection(connectionId);
+        if (session != null)
+        {
+            ImmutableInterlocked.Update(ref session.Workspaces, list => list.RemoveAll(ws => ws.Name == name));
+        }
     }
 
     public string? FindConnectionIdByJobId(Guid jobId)
@@ -308,8 +268,7 @@ public class WorkerRepository
 
     public string? FindConnectionIdByWorkerId(Guid workerId)
     {
-        _workerToConnection.TryGetValue(workerId, out var connectionId);
-        return connectionId;
+        return _sessions.ByWorker(workerId)?.ConnectionId;
     }
 
     public async Task<WorkerView?> GetByIdAsync(Guid id)
@@ -320,18 +279,8 @@ public class WorkerRepository
         var w = await db.Workers.FirstOrDefaultAsync(x => x.Id == id);
         if (w == null) return null;
 
-        var connectionId = FindConnectionIdByWorkerId(w.Id);
-        var isConnected = connectionId != null;
-
-        ImmutableList<WorkspaceInfo>? workspaces = null;
-        DiagnosticReport? diagnostic = null;
-        string? bundleHash = null;
-        if (connectionId != null)
-        {
-            _workerWorkspaces.TryGetValue(connectionId, out workspaces);
-            _connectionBundleHashes.TryGetValue(connectionId, out bundleHash);
-        }
-        _workerDiagnostics.TryGetValue(w.Id, out diagnostic);
+        var session = _sessions.ByWorker(w.Id);
+        _workerDiagnostics.TryGetValue(w.Id, out var diagnostic);
         _workerUsage.TryGetValue(w.Id, out var usage);
 
         var currentJobIds = await db.Jobs
@@ -340,26 +289,24 @@ public class WorkerRepository
             .ToListAsync();
 
         // A worker holding a Running job is never ready, even if the in-memory flag still says so — the flag can lag reality until the next assignment attempt.
-        var isReady = connectionId != null
-            && _readyWorkers.ContainsKey(connectionId)
-            && currentJobIds.Count == 0;
+        var isReady = session is { Ready: true } && currentJobIds.Count == 0;
 
         return new WorkerView
         {
             Id = w.Id,
             Name = w.Name,
-            IsConnected = isConnected,
+            IsConnected = session != null,
             IsReady = isReady,
             CurrentJobs = currentJobIds,
             RegisteredAt = w.RegisteredAt,
             LastSeen = w.LastSeen,
             LastIpAddress = w.LastIpAddress,
             Priority = w.Priority,
-            Workspaces = WorkspaceView.Join(workspaces ?? [], usage),
+            Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
             MirrorsSizeBytes = usage?.MirrorsSizeBytes,
             UsageMeasured = usage != null,
             Diagnostic = diagnostic,
-            BundleHash = bundleHash
+            BundleHash = session?.BundleHash
         };
     }
 
@@ -382,39 +329,27 @@ public class WorkerRepository
 
         return workers.Select(w =>
         {
-            var connectionId = FindConnectionIdByWorkerId(w.Id);
-            var isConnected = connectionId != null;
-            var isReady = connectionId != null
-                && _readyWorkers.ContainsKey(connectionId)
-                && !workerToJobs[w.Id].Any();
-
-            ImmutableList<WorkspaceInfo>? workspaces = null;
-            DiagnosticReport? diagnostic = null;
-            string? bundleHash = null;
-            if (connectionId != null)
-            {
-                _workerWorkspaces.TryGetValue(connectionId, out workspaces);
-                _connectionBundleHashes.TryGetValue(connectionId, out bundleHash);
-            }
-            _workerDiagnostics.TryGetValue(w.Id, out diagnostic);
+            var session = _sessions.ByWorker(w.Id);
+            var isReady = session is { Ready: true } && !workerToJobs[w.Id].Any();
+            _workerDiagnostics.TryGetValue(w.Id, out var diagnostic);
             _workerUsage.TryGetValue(w.Id, out var usage);
 
             return new WorkerView
             {
                 Id = w.Id,
                 Name = w.Name,
-                IsConnected = isConnected,
+                IsConnected = session != null,
                 IsReady = isReady,
                 CurrentJobs = workerToJobs[w.Id].ToList(),
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 LastIpAddress = w.LastIpAddress,
                 Priority = w.Priority,
-                Workspaces = WorkspaceView.Join(workspaces ?? [], usage),
+                Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
                 MirrorsSizeBytes = usage?.MirrorsSizeBytes,
                 UsageMeasured = usage != null,
                 Diagnostic = diagnostic,
-                BundleHash = bundleHash
+                BundleHash = session?.BundleHash
             };
         }).ToList();
     }
