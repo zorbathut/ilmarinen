@@ -1,8 +1,6 @@
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
-using Ilmarinen.Server.Hubs;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
@@ -15,7 +13,7 @@ namespace Ilmarinen.Server.Services;
 public class JobScheduler
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
+    private readonly WorkerMessenger _messenger;
     private readonly UIEventService _uiEvents;
     private readonly LogStreamService _logStream;
     private readonly ILogger<JobScheduler> _logger;
@@ -28,13 +26,13 @@ public class JobScheduler
 
     public JobScheduler(
         IServiceScopeFactory scopeFactory,
-        IHubContext<WorkerHub, IWorkerClient> hubContext,
+        WorkerMessenger messenger,
         UIEventService uiEvents,
         LogStreamService logStream,
         ILogger<JobScheduler> logger)
     {
         _scopeFactory = scopeFactory;
-        _hubContext = hubContext;
+        _messenger = messenger;
         _uiEvents = uiEvents;
         _logStream = logStream;
         _logger = logger;
@@ -125,15 +123,8 @@ public class JobScheduler
             workers.SetReady(connectionId, false);
             _uiEvents.NotifyJobsChanged();
 
-            // Only a failed send is the worker's fault. One unreachable worker must not strand the jobs the rest of the fleet could still take: its job is already marked Running against it, and is reconciled like any other undelivered job when the worker reconnects.
-            try
-            {
-                await _hubContext.Clients.Client(connectionId).AssignJob(assignment);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send job {JobId} to worker {WorkerId}; trying the next candidate", jobId, workerId);
-            }
+            // Queued, not awaited: one unreachable worker must not hold up the jobs the rest of the fleet could take. If the send fails, the job is already marked Running against the worker and is reconciled like any other undelivered job when it reconnects.
+            _messenger.Send(connectionId, $"job {jobId}", client => client.AssignJob(assignment));
 
             return true;
         }
@@ -249,7 +240,7 @@ public class JobScheduler
         if (connectionId != null)
         {
             _logger.LogInformation("Sending CancelJob to worker for job {JobId}", jobId);
-            await _hubContext.Clients.Client(connectionId).CancelJob(jobId.ToString());
+            _messenger.Send(connectionId, $"cancel of job {jobId}", client => client.CancelJob(jobId.ToString()));
         }
 
         return true;

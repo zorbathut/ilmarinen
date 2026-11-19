@@ -19,16 +19,18 @@ public class WorkerHub : Hub<IWorkerClient>
     private readonly ServerKeyService _serverKey;
     private readonly WorkerBundleService _bundles;
     private readonly UIEventService _uiEvents;
+    private readonly WorkerMessenger _messenger;
     private readonly ILogger<WorkerHub> _logger;
 
     private static readonly ConcurrentDictionary<string, PendingAuth> _pendingAuths = new();
 
-    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, WorkerBundleService bundles, UIEventService uiEvents, ILogger<WorkerHub> logger)
+    public WorkerHub(IServiceScopeFactory scopeFactory, ServerKeyService serverKey, WorkerBundleService bundles, UIEventService uiEvents, WorkerMessenger messenger, ILogger<WorkerHub> logger)
     {
         _scopeFactory = scopeFactory;
         _serverKey = serverKey;
         _bundles = bundles;
         _uiEvents = uiEvents;
+        _messenger = messenger;
         _logger = logger;
     }
 
@@ -331,7 +333,7 @@ public class WorkerHub : Hub<IWorkerClient>
         if (result.Status == JobStatus.Failed)
         {
             _logger.LogInformation("Worker {WorkerId} failed job {JobId}; re-checking its host before giving it more work", worker.Id, jobId);
-            await Clients.Caller.RecheckHost();
+            _messenger.Send(Context.ConnectionId, "host re-check", client => client.RecheckHost());
             return;
         }
 
@@ -429,6 +431,7 @@ public class WorkerHub : Hub<IWorkerClient>
         }
 
         await workers.SetDisconnectedAsync(Context.ConnectionId);
+        _messenger.Forget(Context.ConnectionId);
         _uiEvents.NotifyWorkersChanged();
         await base.OnDisconnectedAsync(exception);
     }

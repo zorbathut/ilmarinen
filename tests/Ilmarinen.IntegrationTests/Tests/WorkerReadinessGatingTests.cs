@@ -22,7 +22,6 @@ public class WorkerReadinessGatingTests
 {
     private IntegrationTestFixture _fixture = null!;
     private WorkerRepository _workers = null!;
-    private FakeHubCallerClients _clients = null!;
     private WorkerHub _hub = null!;
     private Guid _workerId;
     private const string ConnectionId = "conn-readiness";
@@ -33,8 +32,7 @@ public class WorkerReadinessGatingTests
         _fixture = new IntegrationTestFixture();
         await _fixture.SetupAsync();
 
-        _clients = new FakeHubCallerClients();
-        (_hub, _workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("readiness-worker", ConnectionId, _clients);
+        (_hub, _workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("readiness-worker", ConnectionId);
         _workers = _fixture.Services.GetRequiredService<WorkerRepository>();
     }
 
@@ -109,7 +107,7 @@ public class WorkerReadinessGatingTests
         await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Failed));
 
         Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False, "a worker that just failed a job must not be handed the next one before its host is re-checked");
-        Assert.That(_clients.CallerClient.DiagnosticRequests, Is.EqualTo(1));
+        Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(1));
     }
 
     [Test]
@@ -121,7 +119,7 @@ public class WorkerReadinessGatingTests
         await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Success));
 
         Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.True);
-        Assert.That(_clients.CallerClient.DiagnosticRequests, Is.EqualTo(0), "a job that worked is its own proof that the host works");
+        Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(0), "a job that worked is its own proof that the host works");
     }
 
     // A person cancelling a job says nothing about the host it was running on.
@@ -134,7 +132,7 @@ public class WorkerReadinessGatingTests
         await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Cancelled));
 
         Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.True);
-        Assert.That(_clients.CallerClient.DiagnosticRequests, Is.EqualTo(0));
+        Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(0));
     }
 
     private async Task<Guid> StartJobAsync()

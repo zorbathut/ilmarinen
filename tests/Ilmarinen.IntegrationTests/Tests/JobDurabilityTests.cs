@@ -148,7 +148,7 @@ public class JobDurabilityTests
     [Test]
     public async Task Reconnect_WithoutTheJobTheServerExpects_FailsIt()
     {
-        var (hub, workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("orphan-worker", "conn-orphan", new FakeHubCallerClients());
+        var (hub, workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("orphan-worker", "conn-orphan");
         var jobId = await SubmitAsync();
         await _fixture.StartJobOnWorkerAsync(jobId, workerId);
 
@@ -162,7 +162,7 @@ public class JobDurabilityTests
     [Test]
     public async Task Reconnect_StillHoldingTheJob_LeavesItRunning()
     {
-        var (hub, workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("holding-worker", "conn-holding", new FakeHubCallerClients());
+        var (hub, workerId) = await _fixture.CreateHubForRegisteredWorkerAsync("holding-worker", "conn-holding");
         var jobId = await SubmitAsync();
         await _fixture.StartJobOnWorkerAsync(jobId, workerId);
 

@@ -5,7 +5,6 @@ using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Ilmarinen.Worker.Services;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using NUnit.Framework;
 using System.Threading.Tasks;
 using System.Threading;
@@ -187,15 +186,7 @@ public class WorkerBundleDrainTests
         await workers.ConnectAsync(connectionId, result.WorkerId, ipAddress: null);
         workers.SetBundleHash(connectionId, "0000STALE0000");
 
-        var hub = new WorkerHub(
-            _fixture.Services.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
-            _fixture.Services.GetRequiredService<ServerKeyService>(),
-            _fixture.Services.GetRequiredService<WorkerBundleService>(),
-            _fixture.Services.GetRequiredService<UIEventService>(),
-            _fixture.Services.GetRequiredService<ILogger<WorkerHub>>())
-        {
-            Context = new FakeHubCallerContext(connectionId)
-        };
+        var hub = _fixture.CreateHub(connectionId);
 
         await hub.Ready();
         Assert.That(workers.GetByConnectionId(connectionId)!.IsReady, Is.False);

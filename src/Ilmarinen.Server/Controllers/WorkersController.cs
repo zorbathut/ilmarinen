@@ -1,10 +1,8 @@
 using Ilmarinen.Models;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
-using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System;
@@ -18,20 +16,20 @@ public class WorkersController : ControllerBase
     private readonly WorkerRepository _workers;
     private readonly WorkerRegistrationService _registration;
     private readonly WorkspaceDeletionService _deletionService;
-    private readonly IHubContext<WorkerHub, IWorkerClient> _hubContext;
+    private readonly WorkerMessenger _messenger;
     private readonly JobScheduler _scheduler;
 
     public WorkersController(
         WorkerRepository workers,
         WorkerRegistrationService registration,
         WorkspaceDeletionService deletionService,
-        IHubContext<WorkerHub, IWorkerClient> hubContext,
+        WorkerMessenger messenger,
         JobScheduler scheduler)
     {
         _workers = workers;
         _registration = registration;
         _deletionService = deletionService;
-        _hubContext = hubContext;
+        _messenger = messenger;
         _scheduler = scheduler;
     }
 
@@ -102,7 +100,7 @@ public class WorkersController : ControllerBase
 
         var key = _deletionService.CreatePending(connectionId, workspaceName);
 
-        await _hubContext.Clients.Client(connectionId).DeleteWorkspace(workspaceName);
+        _messenger.Send(connectionId, $"deletion of workspace {workspaceName}", client => client.DeleteWorkspace(workspaceName));
 
         var result = await _deletionService.WaitForResultAsync(key, TimeSpan.FromSeconds(30));
 

@@ -156,6 +156,8 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         builder.Services.AddIlmarinenServer();
         // Pin the key: AddIlmarinenServer's registration reads the ambient env var, which parallel fixtures race on. Last registration wins.
         builder.Services.AddSingleton(new ServerKeyService(_serverKeyBase64));
+        builder.Services.AddSingleton<RecordingWorkerClients>();
+        builder.Services.AddSingleton<IWorkerClients>(sp => sp.GetRequiredService<RecordingWorkerClients>());
         builder.Services.AddHealthChecks();
 
         builder.Environment.EnvironmentName = "Testing";

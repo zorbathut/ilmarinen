@@ -101,7 +101,7 @@ public class IntegrationTestFixture : IAsyncDisposable
     /// server-side rules — readiness gating, reconnect reconciliation — which are otherwise reachable only by
     /// orchestrating a real worker into the right state, slowly and with a race in it.
     /// </summary>
-    public async Task<(Ilmarinen.Server.Hubs.WorkerHub Hub, Guid WorkerId)> CreateHubForRegisteredWorkerAsync(string name, string connectionId, FakeHubCallerClients clients)
+    public async Task<(Ilmarinen.Server.Hubs.WorkerHub Hub, Guid WorkerId)> CreateHubForRegisteredWorkerAsync(string name, string connectionId)
     {
         using var scope = _factory.Services.CreateScope();
         var registration = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
@@ -110,18 +110,29 @@ public class IntegrationTestFixture : IAsyncDisposable
         var workers = _factory.Services.GetRequiredService<WorkerRepository>();
         await workers.ConnectAsync(connectionId, workerId, ipAddress: null);
 
-        var hub = new Ilmarinen.Server.Hubs.WorkerHub(
+        return (CreateHub(connectionId), workerId);
+    }
+
+    /// <summary>A hub as the given connection would see it, for calling its methods directly.</summary>
+    public Ilmarinen.Server.Hubs.WorkerHub CreateHub(string connectionId)
+    {
+        return new Ilmarinen.Server.Hubs.WorkerHub(
             _factory.Services.GetRequiredService<IServiceScopeFactory>(),
             _factory.Services.GetRequiredService<ServerKeyService>(),
             _factory.Services.GetRequiredService<WorkerBundleService>(),
             _factory.Services.GetRequiredService<UIEventService>(),
+            _factory.Services.GetRequiredService<WorkerMessenger>(),
             _factory.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Ilmarinen.Server.Hubs.WorkerHub>>())
         {
-            Context = new FakeHubCallerContext(connectionId),
-            Clients = clients
+            Context = new FakeHubCallerContext(connectionId)
         };
+    }
 
-        return (hub, workerId);
+    /// <summary>What the server has sent a connection, once everything already queued for it has gone out.</summary>
+    public async Task<RecordingWorkerClient> SentToAsync(string connectionId)
+    {
+        await _factory.Services.GetRequiredService<WorkerMessenger>().DrainedAsync(connectionId);
+        return _factory.Services.GetRequiredService<RecordingWorkerClients>().SentTo(connectionId);
     }
 
     /// <summary>Marks a job Running against a worker, the state a dispatch would leave it in.</summary>

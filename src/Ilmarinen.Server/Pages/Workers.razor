@@ -1,15 +1,13 @@
 @page "/workers"
 @using Ilmarinen.Protocol
-@using Ilmarinen.Server.Hubs
 @using Ilmarinen.Server.Services
 @using Ilmarinen.Models
-@using Microsoft.AspNetCore.SignalR
 @using Microsoft.Extensions.DependencyInjection
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
 @inject WorkerRegistrationService RegistrationService
 @inject WorkspaceDeletionService DeletionService
-@inject IHubContext<WorkerHub, IWorkerClient> HubContext
+@inject WorkerMessenger Messenger
 @inject JobScheduler Scheduler
 @inject UIEventService UIEvents
 @inject WorkerBundleService BundleService
@@ -351,7 +349,7 @@
             }
 
             var key = DeletionService.CreatePending(connectionId, workspace);
-            await HubContext.Clients.Client(connectionId).DeleteWorkspace(workspace);
+            Messenger.Send(connectionId, $"deletion of workspace {workspace}", client => client.DeleteWorkspace(workspace));
             var result = await DeletionService.WaitForResultAsync(key, TimeSpan.FromSeconds(30));
 
             if (result.Status == Ilmarinen.Protocol.DeleteWorkspaceStatus.Success)

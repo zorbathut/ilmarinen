@@ -7,10 +7,8 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
@@ -85,15 +83,10 @@ public class JobSchedulingTests
         return (await db.Jobs.FirstAsync(j => j.Id == jobId)).Status;
     }
 
-    private WorkerHub MakeHub(string connectionId) => new(
-        _fixture.Services.GetRequiredService<IServiceScopeFactory>(),
-        _fixture.Services.GetRequiredService<ServerKeyService>(),
-        _fixture.Services.GetRequiredService<WorkerBundleService>(),
-        _fixture.Services.GetRequiredService<UIEventService>(),
-        _fixture.Services.GetRequiredService<ILogger<WorkerHub>>())
+    private WorkerHub MakeHub(string connectionId)
     {
-        Context = new FakeHubCallerContext(connectionId)
-    };
+        return _fixture.CreateHub(connectionId);
+    }
 
     [Test]
     public async Task JobCompletedThenReady_AssignsOnlyOneJob()
