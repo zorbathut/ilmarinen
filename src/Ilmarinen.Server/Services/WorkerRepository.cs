@@ -132,33 +132,37 @@ public class WorkerRepository
     }
 
     /// <summary>
-    /// The highest priority among available workers, or null when there are none. What counts as available is defined on UnsatisfiableJobsReport. The ready half is dispatch's own candidate list, so the two can't disagree about which workers are ready.
+    /// The workers that can take work now or soon: connected, and either ready or running a job (the definition on UnsatisfiableJobsReport). The ready half is dispatch's own candidate list, so the two can't disagree about which workers are ready.
     /// </summary>
-    public async Task<WorkerPriority?> GetHighestAvailablePriorityAsync()
+    public async Task<IReadOnlyList<AvailableWorker>> GetAvailableWorkersAsync()
     {
         var connectedIds = _sessions.All().Select(s => s.WorkerId).ToList();
         if (connectedIds.Count == 0)
         {
-            return null;
+            return [];
         }
 
         var ready = await GetReadyWorkersByPriorityAsync();
-        WorkerPriority? highestReady = ready.Count > 0 ? ready[0].Priority : null;
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
         // Joined through the workers table, like the ready candidates, so a revoked worker still holding a connection doesn't count.
-        var highestBusy = await db.Workers
+        var busy = await db.Workers
             .Where(w => connectedIds.Contains(w.Id) && db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running))
-            .MaxAsync(w => (WorkerPriority?)w.Priority);
+            .Select(w => new { w.Id, w.Priority })
+            .ToListAsync();
 
-        if (highestReady == null || highestBusy > highestReady)
-        {
-            return highestBusy;
-        }
+        return ready.Select(r => new AvailableWorker(r.WorkerId, r.Priority))
+            .Concat(busy.Where(b => !ready.Any(r => r.WorkerId == b.Id)).Select(b => new AvailableWorker(b.Id, b.Priority)))
+            .ToList();
+    }
 
-        return highestReady;
+    /// <summary>The highest priority among available workers (<see cref="GetAvailableWorkersAsync"/>), or null when there are none.</summary>
+    public async Task<WorkerPriority?> GetHighestAvailablePriorityAsync()
+    {
+        var available = await GetAvailableWorkersAsync();
+        return available.Count == 0 ? null : available.Max(w => w.Priority);
     }
 
     /// <summary>
@@ -322,6 +326,8 @@ public class WorkerRepository
         }).ToList();
     }
 }
+
+public record AvailableWorker(Guid WorkerId, WorkerPriority Priority);
 
 public class WorkerView
 {
