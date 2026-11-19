@@ -179,6 +179,7 @@ public class WorkerPauseTests
         var report = await GetUnsatisfiableJobsAsync();
         Assert.That(report.HighestAvailableWorkerPriority, Is.Null);
         Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { queued }));
+        Assert.That(report.PausedWorkers, Is.EqualTo(new[] { "pause-conn-pause-busy" }));
 
         var estimate = await _fixture.HttpClient.GetFromJsonAsync<QueueEstimate>("/api/jobs/queue/estimate");
         Assert.That(estimate!.AvailableWorkers, Is.Zero);
@@ -187,7 +188,7 @@ public class WorkerPauseTests
     }
 
     [Test]
-    public async Task APausedHighWorker_LeavesAHighJobStuck_AtTheLowWorkersPriority()
+    public async Task TheStuckReport_NamesOnlyPausedWorkersThatCouldTakeTheJobs()
     {
         var high = await ReadyWorkerAsync("conn-pause-report-high", WorkerPriority.High);
         var low = await ReadyWorkerAsync("conn-pause-report-low", WorkerPriority.Low);
@@ -200,7 +201,38 @@ public class WorkerPauseTests
         var report = await GetUnsatisfiableJobsAsync();
         Assert.That(report.HighestAvailableWorkerPriority, Is.EqualTo(WorkerPriority.Low));
         Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { jobId }));
+        Assert.That(report.PausedWorkers, Is.EqualTo(new[] { "pause-conn-pause-report-high" }), "the paused Low worker couldn't take it either way");
         Assert.That((await low.SentAsync()).Assignments, Is.Empty);
+    }
+
+    // Unpausing either of these wouldn't free the job: one is unhealthy, the other isn't connected.
+    [Test]
+    public async Task TheStuckReport_NamesNoPausedWorkerThatUnpausingWouldntFree()
+    {
+        var unhealthy = await DirectedWorker.RegisterAsync(_fixture, "pause-unhealthy");
+        await unhealthy.ConnectAsync("conn-pause-unhealthy");
+        await unhealthy.ResumeAsync(unhealthy.Idle(DiagnosticStatus.Unhealthy));
+        var offline = await DirectedWorker.RegisterAsync(_fixture, "pause-offline-report");
+        Assert.That(await Scheduler.SetWorkerPausedAsync(unhealthy.WorkerId, true), Is.True);
+        Assert.That(await Scheduler.SetWorkerPausedAsync(offline.WorkerId, true), Is.True);
+
+        var jobId = await Scheduler.EnqueueJobAsync(Submission());
+
+        var report = await GetUnsatisfiableJobsAsync();
+        Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { jobId }));
+        Assert.That(report.PausedWorkers, Is.Empty);
+    }
+
+    [Test]
+    public async Task NothingStuck_NamesNoPausedWorker()
+    {
+        var worker = await ReadyWorkerAsync("conn-pause-nothing-stuck");
+        await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true);
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        Assert.That(report.Jobs, Is.Empty);
+        Assert.That(report.PausedWorkers, Is.Empty);
     }
 
     [Test]

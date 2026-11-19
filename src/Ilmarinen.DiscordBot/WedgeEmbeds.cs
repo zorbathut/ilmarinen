@@ -11,6 +11,7 @@ namespace Ilmarinen.DiscordBot;
 public static class WedgeEmbeds
 {
     private const int MaxListedJobs = 10;
+    private const int MaxListedWorkers = 10;
     private const int MaxTextLength = 100;
 
     /// <summary>
@@ -22,6 +23,12 @@ public static class WedgeEmbeds
         var cause = report.HighestAvailableWorkerPriority is { } highest
             ? $"The highest available worker priority is {highest}."
             : "No worker is available at all.";
+        if (report.PausedWorkers.Count > 0)
+        {
+            var names = string.Join(", ", report.PausedWorkers.Take(MaxListedWorkers).Select(name => Truncate(Format.Sanitize(name))));
+            var more = report.PausedWorkers.Count > MaxListedWorkers ? $" and {report.PausedWorkers.Count - MaxListedWorkers} more" : "";
+            cause += $" Paused workers that could take them: {names}{more}.";
+        }
 
         var embed = new EmbedBuilder()
             .WithTitle("Jobs Stuck")

@@ -13,4 +13,9 @@ public record UnsatisfiableJobsReport
     public WorkerPriority? HighestAvailableWorkerPriority { get; init; }
 
     public required IReadOnlyList<JobInfo> Jobs { get; init; }
+
+    /// <summary>
+    /// Connected workers an operator has paused that, unpaused, would be available and could take at least one of these jobs. Empty when there are none.
+    /// </summary>
+    public required IReadOnlyList<string> PausedWorkers { get; init; }
 }

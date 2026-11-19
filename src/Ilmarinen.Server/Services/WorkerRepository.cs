@@ -162,13 +162,14 @@ public class WorkerRepository
     }
 
     /// <summary>
-    /// The available workers (<see cref="GetAvailableWorkersAsync"/>), and from the same read how many workers are connected at all.
+    /// The available workers (<see cref="GetAvailableWorkersAsync"/>), and from the same read the paused workers that would be available if they were unpaused, with how many workers are connected at all.
     /// </summary>
     public async Task<WorkerAvailability> GetAvailabilityAsync()
     {
         var connected = await GetConnectedWorkersAsync();
         return new WorkerAvailability(
             connected.Where(IsAvailable).Select(w => new AvailableWorker(w.Session.WorkerId, w.Priority)).ToList(),
+            connected.Where(w => w.Paused && IsAvailable(w with { Paused = false })).OrderBy(w => w.Name).Select(w => new PausedWorker(w.Name, w.Priority)).ToList(),
             connected.Count);
     }
 
@@ -353,7 +354,9 @@ public class WorkerRepository
 
 public record AvailableWorker(Guid WorkerId, WorkerPriority Priority);
 
-public record WorkerAvailability(IReadOnlyList<AvailableWorker> Available, int Connected);
+public record PausedWorker(string Name, WorkerPriority Priority);
+
+public record WorkerAvailability(IReadOnlyList<AvailableWorker> Available, IReadOnlyList<PausedWorker> PausedButOtherwiseAvailable, int Connected);
 
 public class WorkerView
 {

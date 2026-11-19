@@ -218,7 +218,7 @@ Ilmarinen includes a notification framework that pushes job completion events to
 
 The Discord bot posts build results (success/failure) to a Discord channel as rich embeds showing repository, branch, duration, and pipeline info.
 
-It also watches for stuck jobs: queued jobs that no available worker can take, either because no worker is available or because none has the minimum worker priority a job requires. A worker is available when it is connected, not paused, and either ready for work or already running a job, so a worker busy with a long job still counts. Once jobs have been stuck for 5 minutes, the bot posts an alert listing them and it posts again when none are.
+It also watches for stuck jobs: queued jobs that no available worker can take, either because no worker is available or because none has the minimum worker priority a job requires. A worker is available when it is connected, not paused, and either ready for work or already running a job, so a worker busy with a long job still counts. Once jobs have been stuck for 5 minutes, the bot posts an alert listing them, naming any paused workers that could take them, and it posts again when none are.
 
 The bot learns this by polling `GET /api/jobs/unsatisfiable` and keeps no record of what it has posted. After a restart it alerts again about jobs that are still stuck, and if the jobs come unstuck while the bot is down, no recovery message is posted.
 
