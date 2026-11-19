@@ -294,6 +294,17 @@ public class JobRepository
         return rows > 0;
     }
 
+    /// <summary>The Running and Queued jobs, oldest first, which for Queued ones is dispatch order (as <see cref="GetNextQueuedJobIdAsync"/>).</summary>
+    public async Task<IReadOnlyList<UnfinishedJob>> GetUnfinishedJobsAsync()
+    {
+        return await _db.Jobs
+            .Where(j => j.Status == JobStatus.Running || j.Status == JobStatus.Queued)
+            .OrderBy(j => j.CreatedAt)
+            .ThenBy(j => j.Id)
+            .Select(j => new UnfinishedJob(j.Status, j.WorkerId, j.RepoUrl, j.ScriptPath, j.StartedAt, j.MinWorkerPriority))
+            .ToListAsync();
+    }
+
     /// <summary>The jobs Running for a worker, with the assignment each is running under.</summary>
     public async Task<IReadOnlyList<RunningAssignment>> GetRunningAssignmentsAsync(Guid workerId)
     {
@@ -618,3 +629,5 @@ public class JobRepository
 public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInstanceId);
 
 public record ScriptEstimates(IReadOnlyDictionary<(Guid WorkerId, string RepoUrl, string ScriptPath), TimeSpan> PerWorker, IReadOnlyDictionary<(string RepoUrl, string ScriptPath), TimeSpan> AcrossWorkers);
+
+public record UnfinishedJob(JobStatus Status, Guid? WorkerId, string RepoUrl, string ScriptPath, DateTime? StartedAt, WorkerPriority MinWorkerPriority);

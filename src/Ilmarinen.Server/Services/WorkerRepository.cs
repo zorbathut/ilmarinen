@@ -158,6 +158,20 @@ public class WorkerRepository
             .ToList();
     }
 
+    /// <summary>Workers with a session, joined through the workers table like <see cref="GetAvailableWorkersAsync"/>, so a revoked worker still holding a connection doesn't count.</summary>
+    public async Task<int> CountConnectedWorkersAsync()
+    {
+        var connectedIds = _sessions.All().Select(s => s.WorkerId).ToList();
+        if (connectedIds.Count == 0)
+        {
+            return 0;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        return await db.Workers.CountAsync(w => connectedIds.Contains(w.Id));
+    }
+
     /// <summary>The highest priority among available workers (<see cref="GetAvailableWorkersAsync"/>), or null when there are none.</summary>
     public async Task<WorkerPriority?> GetHighestAvailablePriorityAsync()
     {

@@ -4,6 +4,8 @@ using Ilmarinen.Protocol.Responses;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -177,6 +179,32 @@ public class JobScheduler
             HighestAvailableWorkerPriority = highestAvailablePriority,
             Jobs = await jobs.GetUnsatisfiableJobsAsync(highestAvailablePriority)
         };
+    }
+
+    /// <summary>
+    /// How long the fleet will take to get through everything running and queued now (<see cref="QueueForecast"/>). A read-only snapshot, taken without locks, like <see cref="GetUnsatisfiableJobsAsync"/>.
+    /// </summary>
+    public async Task<QueueEstimate> GetQueueEstimateAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        var available = await workers.GetAvailableWorkersAsync();
+        var unfinished = await jobs.GetUnfinishedJobsAsync();
+        var now = DateTime.UtcNow;
+
+        var running = unfinished
+            .Where(j => j.Status == JobStatus.Running)
+            .Select(j => new QueueForecast.RunningJob(j.WorkerId, j.RepoUrl, j.ScriptPath, now - (j.StartedAt ?? now)))
+            .ToList();
+        var queued = unfinished
+            .Where(j => j.Status == JobStatus.Queued)
+            .Select(j => new QueueForecast.QueuedJob(j.MinWorkerPriority, j.RepoUrl, j.ScriptPath))
+            .ToList();
+        var estimates = await jobs.GetScriptEstimatesAsync(unfinished.Select(j => (j.RepoUrl, j.ScriptPath)));
+
+        return QueueForecast.Estimate(available, await workers.CountConnectedWorkersAsync(), running, queued, estimates);
     }
 
     /// <summary>

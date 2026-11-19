@@ -129,6 +129,15 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
+    /// How long the fleet will take to get through what is running and queued now, with the counts behind it.
+    /// </summary>
+    [HttpGet("queue/estimate")]
+    public async Task<ActionResult<QueueEstimate>> GetQueueEstimate()
+    {
+        return Ok(await _scheduler.GetQueueEstimateAsync());
+    }
+
+    /// <summary>
     /// Download a job's whole stored log as plain text. For a running job that means everything
     /// persisted so far — a snapshot, not a live stream.
     /// </summary>

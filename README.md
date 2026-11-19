@@ -273,6 +273,21 @@ The server exposes subscriber management via REST:
 - `POST /api/subscribers/{id}/notifications` — pull pending notifications
 - `POST /api/subscribers/{id}/notifications/ack` — acknowledge processed notifications
 
+### Watching the Queue
+
+`GET /api/jobs/queue/estimate` reports how backed up the fleet is, for a status-bar widget or similar:
+
+```json
+{ "runningJobs": 2, "queuedJobs": 5, "connectedWorkers": 3, "availableWorkers": 3,
+  "estimatedDrainSeconds": 742, "unestimatedJobs": 1, "unsatisfiableJobs": 0 }
+```
+
+`estimatedDrainSeconds` is how long until everything running or queued now has finished, simulating dispatch over the available workers (connected, and ready or running a job) with each job's duration estimated from that worker's past runs of the same script, or other workers' when it has too few. It is optimistic: jobs with no estimate either way (`unestimatedJobs`) count as no time, a worker is taken to be free the moment its job ends, and queued jobs no available worker qualifies for (`unsatisfiableJobs`) are left out — those are the ones `GET /api/jobs/unsatisfiable` lists. Each request runs a handful of queries however long the queue is, but they read job history, so poll every 15–30 seconds rather than every second:
+
+```bash
+curl -s "$SERVER/api/jobs/queue/estimate" | jq -r '"\(.queuedJobs) queued · ~\((.estimatedDrainSeconds / 60) | ceil)m"'
+```
+
 ## Development
 
 ```bash
