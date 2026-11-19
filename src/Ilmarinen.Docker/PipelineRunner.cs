@@ -23,6 +23,8 @@ public class PipelineRunner : IDisposable
     private readonly Func<string, string?> _secretProvider;
     private readonly Func<string, string?, Task<ArtifactRef>>? _artifactSaver;
     private readonly Action<string, string>? _onOutput;
+    private readonly Func<PipelineEvent, Task>? _onEvent;
+    private volatile PipelineProgress? _progress;
     private readonly string? _userSpec;
     private readonly uint? _dockerSocketGid;
 
@@ -37,13 +39,15 @@ public class PipelineRunner : IDisposable
     /// <param name="secretProvider">Function to resolve secrets (defaults to environment variables)</param>
     /// <param name="artifactSaver">Optional custom artifact saver. If not provided, uses local filesystem storage.</param>
     /// <param name="onOutput">Optional callback for log output. First parameter is type ("o" for stdout, "e" for stderr), second is data.</param>
+    /// <param name="onEvent">Optional observer of step and pull events, awaited in place: StepContainerEnding holds up the container's removal until it returns.</param>
     public PipelineRunner(
         string? workDir = null,
         string? hostWorkDir = null,
         string? workerContainerId = null,
         Func<string, string?>? secretProvider = null,
         Func<string, string?, Task<ArtifactRef>>? artifactSaver = null,
-        Action<string, string>? onOutput = null)
+        Action<string, string>? onOutput = null,
+        Func<PipelineEvent, Task>? onEvent = null)
     {
         _client = DockerClientFactory.Create();
         _workDir = workDir ?? Directory.GetCurrentDirectory();
@@ -52,6 +56,7 @@ public class PipelineRunner : IDisposable
         _secretProvider = secretProvider ?? (name => Environment.GetEnvironmentVariable(name));
         _artifactSaver = artifactSaver;
         _onOutput = onOutput;
+        _onEvent = onEvent;
         _userSpec = LinuxInterop.GetUserSpec();
         _dockerSocketGid = LinuxInterop.GetDockerSocketGid();
     }
@@ -63,6 +68,20 @@ public class PipelineRunner : IDisposable
 
     /// <summary>The Docker network this run's containers share, once it has one. For tests that need to look at what the run left behind.</summary>
     internal string? NetworkName { get; private set; }
+
+    /// <summary>Where the run is now; null until its network exists. Safe to read from another thread.</summary>
+    public PipelineProgress? Progress
+    {
+        get { return _progress; }
+    }
+
+    private async Task RaiseAsync(PipelineEvent e)
+    {
+        if (_onEvent != null)
+        {
+            await _onEvent(e);
+        }
+    }
 
     /// <summary>
     /// Write informational message to both console and log output callback.
@@ -95,11 +114,16 @@ public class PipelineRunner : IDisposable
 
         // Create a network for this pipeline run
         await CreateNetworkAsync(networkName);
+        _progress = new PipelineProgress(networkName, null, null, null);
+
+        // Images earlier steps returned, so a step that runs one is known to depend on the step that made it.
+        var producedImages = new HashSet<string>();
 
         try
         {
-            foreach (var step in steps)
+            for (var index = 0; index < steps.Count; index++)
             {
+                var step = steps[index];
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // Resolve image lazily (may depend on previous step outputs)
@@ -108,23 +132,42 @@ public class PipelineRunner : IDisposable
                 WriteInfo($"=== Step: {step.Name} ===");
                 WriteInfo($"Image: {image}");
 
+                _progress = new PipelineProgress(networkName, index, step.Name, null);
+                await RaiseAsync(new PipelineEvent
+                {
+                    Kind = PipelineEventKind.StepStarted,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    StepIndex = index,
+                    StepName = step.Name,
+                    Image = image.Reference,
+                    ImageFromEarlierStep = producedImages.Contains(image.Reference)
+                });
+
+                string status;
                 try
                 {
-                    await RunStepAsync(step, image, branch, commit, networkName, apiServer, artifactSaver, cancellationToken);
+                    if (await RunStepAsync(step, index, image, branch, commit, networkName, apiServer, artifactSaver, cancellationToken) is ImageRef produced)
+                    {
+                        producedImages.Add(produced.Reference);
+                    }
+                    status = "Success";
                     WriteInfo($"=== {step.Name}: SUCCESS ===");
                     WriteInfo("");
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     WriteInfo($"=== {step.Name}: CANCELLED ===");
+                    await RaiseStepEndedAsync(index, step.Name, "Cancelled");
                     throw;
                 }
                 catch (Exception ex)
                 {
                     WriteInfo($"=== {step.Name}: FAILED ===");
                     WriteInfo($"Error: {ex.Message}");
+                    await RaiseStepEndedAsync(index, step.Name, "Failed");
                     return false;
                 }
+                await RaiseStepEndedAsync(index, step.Name, status);
             }
 
             WriteInfo("All steps completed successfully!");
@@ -132,9 +175,23 @@ public class PipelineRunner : IDisposable
         }
         finally
         {
+            _progress = new PipelineProgress(networkName, null, null, null);
+
             // Clean up the network
             await RemoveNetworkAsync(networkName);
         }
+    }
+
+    private async Task RaiseStepEndedAsync(int index, string name, string status)
+    {
+        await RaiseAsync(new PipelineEvent
+        {
+            Kind = PipelineEventKind.StepEnded,
+            Timestamp = DateTimeOffset.UtcNow,
+            StepIndex = index,
+            StepName = name,
+            Status = status
+        });
     }
 
     internal const string ShellScript = """
@@ -472,7 +529,8 @@ public class PipelineRunner : IDisposable
         }
     }
 
-    private async Task RunStepAsync(Step<object?> step, ImageRef image, string branch, string commit,
+    /// <summary>Runs one step in its own container and returns what its action returned.</summary>
+    private async Task<object?> RunStepAsync(Step<object?> step, int index, ImageRef image, string branch, string commit,
         string networkName, AgentApiServer apiServer, Func<string, string?, Task<ArtifactRef>> artifactSaver,
         CancellationToken cancellationToken = default)
     {
@@ -483,6 +541,7 @@ public class PipelineRunner : IDisposable
 
         // Create and start the container
         var containerId = await CreateContainerAsync(image.Reference, networkName, apiServer);
+        _progress = new PipelineProgress(networkName, index, step.Name, containerId);
 
         try
         {
@@ -523,7 +582,7 @@ public class PipelineRunner : IDisposable
                     _ = KillContainerOnCancelAsync(containerId);
                 });
 
-                await step.Action(context);
+                return await step.Action(context);
             }
             finally
             {
@@ -532,6 +591,15 @@ public class PipelineRunner : IDisposable
         }
         finally
         {
+            await RaiseAsync(new PipelineEvent
+            {
+                Kind = PipelineEventKind.StepContainerEnding,
+                Timestamp = DateTimeOffset.UtcNow,
+                StepIndex = index,
+                StepName = step.Name,
+                ContainerId = containerId
+            });
+
             // Force-remove the container, which kills it outright. Don't stop it gracefully first: SIGTERM reaches only the container's PID 1, never the processes the step exec'd, so a graceful stop gives nothing a chance to clean up and just waits out its timeout. Best-effort: a failure here means a leaked container, so leave a breadcrumb.
             try
             {
@@ -566,14 +634,22 @@ public class PipelineRunner : IDisposable
         catch (DockerImageNotFoundException)
         {
             WriteInfo($"Pulling image: {image}");
-            await _client.Images.CreateImageAsync(
-                new ImagesCreateParameters { FromImage = image },
-                null,
-                new Progress<JSONMessage>(m =>
-                {
-                    if (!string.IsNullOrEmpty(m.Status))
-                        WriteInfo($"  {m.Status}");
-                }));
+            await RaiseAsync(new PipelineEvent { Kind = PipelineEventKind.PullStarted, Timestamp = DateTimeOffset.UtcNow, Image = image });
+            try
+            {
+                await _client.Images.CreateImageAsync(
+                    new ImagesCreateParameters { FromImage = image },
+                    null,
+                    new Progress<JSONMessage>(m =>
+                    {
+                        if (!string.IsNullOrEmpty(m.Status))
+                            WriteInfo($"  {m.Status}");
+                    }));
+            }
+            finally
+            {
+                await RaiseAsync(new PipelineEvent { Kind = PipelineEventKind.PullEnded, Timestamp = DateTimeOffset.UtcNow, Image = image });
+            }
         }
     }
 
