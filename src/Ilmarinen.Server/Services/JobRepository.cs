@@ -31,6 +31,7 @@ public class JobRepository
         string? resolvedRef = submission.Ref;
         string? resolvedScriptPath = submission.ScriptPath;
         WorkerPriority? resolvedMinWorkerPriority = submission.MinWorkerPriority;
+        JobPriority? resolvedPriority = submission.Priority;
         string? resolvedGitToken = null;
 
         if (submission.PipelineId != null)
@@ -46,6 +47,7 @@ public class JobRepository
             resolvedRef ??= pipeline.DefaultRef;
             resolvedScriptPath ??= pipeline.ScriptPath;
             resolvedMinWorkerPriority ??= pipeline.MinWorkerPriority;
+            resolvedPriority ??= pipeline.Priority;
 
             if (submission.GitTokenMode == GitTokenMode.Inherit)
                 resolvedGitToken = _encryption.Decrypt(pipeline.Repository?.EncryptedGitToken);
@@ -72,7 +74,8 @@ public class JobRepository
             EncryptedGitToken = _encryption.Encrypt(resolvedGitToken),
             GitTokenMode = submission.GitTokenMode,
             PipelineId = submission.PipelineId,
-            MinWorkerPriority = resolvedMinWorkerPriority ?? WorkerPriority.Low
+            MinWorkerPriority = resolvedMinWorkerPriority ?? WorkerPriority.Low,
+            Priority = resolvedPriority ?? JobPriority.Medium
         };
 
         _db.Jobs.Add(job);
@@ -147,7 +150,8 @@ public class JobRepository
                     Ref = job.Ref,
                     ScriptPath = job.ScriptPath,
                     GitTokenMode = GitTokenMode.None,
-                    MinWorkerPriority = job.MinWorkerPriority
+                    MinWorkerPriority = job.MinWorkerPriority,
+                    Priority = job.Priority
                 };
 
             case GitTokenMode.Inherit:
@@ -168,7 +172,8 @@ public class JobRepository
                     Ref = job.Ref,
                     ScriptPath = job.ScriptPath,
                     GitTokenMode = GitTokenMode.Inherit,
-                    MinWorkerPriority = job.MinWorkerPriority
+                    MinWorkerPriority = job.MinWorkerPriority,
+                    Priority = job.Priority
                 };
             }
 
@@ -502,11 +507,12 @@ public class JobRepository
             .FirstOrDefaultAsync();
     }
 
-    /// <summary>The order dispatch takes queued jobs in: oldest first. The queue forecast reads the queue in this same order, so it simulates the dispatch that really happens.</summary>
+    /// <summary>The order dispatch takes queued jobs in: highest priority first, oldest first among equals. The queue forecast reads the queue in this same order, so it simulates the dispatch that really happens.</summary>
     private static IQueryable<Job> InDispatchOrder(IQueryable<Job> jobs)
     {
         return jobs
-            .OrderBy(j => j.CreatedAt)
+            .OrderByDescending(j => j.Priority)
+            .ThenBy(j => j.CreatedAt)
             .ThenBy(j => j.Id);
     }
 
@@ -622,6 +628,7 @@ public class JobRepository
             PipelineId = job.PipelineId,
             PipelineName = pipelineName,
             MinWorkerPriority = job.MinWorkerPriority,
+            Priority = job.Priority,
             CanRetry = canRetry,
             RetryBlockedReason = retryBlockedReason
         };

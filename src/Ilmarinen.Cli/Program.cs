@@ -151,7 +151,8 @@ internal class Commands
         [Option("ref", Description = "Git ref")] string gitRef = "main",
         [Option(Description = "Script path")] string script = "pipeline.csx",
         [Option('t', Description = "Git token for HTTPS authentication (or set ILMARINEN_GIT_TOKEN)")] string? token = null,
-        [Option("min-worker-priority", Description = "Only run on workers of at least this priority")] WorkerPriority? minWorkerPriority = null)
+        [Option("min-worker-priority", Description = "Only run on workers of at least this priority")] WorkerPriority? minWorkerPriority = null,
+        [Option("priority", Description = "Job priority: higher-priority queued jobs are dispatched first")] JobPriority? priority = null)
     {
         // Use environment variable as fallback for token
         var gitToken = token ?? Environment.GetEnvironmentVariable("ILMARINEN_GIT_TOKEN");
@@ -168,7 +169,8 @@ internal class Commands
             ScriptPath = script,
             GitTokenMode = gitToken != null ? GitTokenMode.Explicit : GitTokenMode.None,
             GitToken = gitToken,
-            MinWorkerPriority = minWorkerPriority
+            MinWorkerPriority = minWorkerPriority,
+            Priority = priority
         };
 
         var response = await http.PostAsJsonAsync($"{server}/api/jobs", submission);
@@ -195,6 +197,7 @@ internal class Commands
         [Argument(Description = "Pipeline ID")] Guid pipelineId,
         [Option("ref", Description = "Git ref (defaults to the pipeline's own)")] string? gitRef = null,
         [Option("min-worker-priority", Description = "Only run on workers of at least this priority")] WorkerPriority? minWorkerPriority = null,
+        [Option("priority", Description = "Job priority: higher-priority queued jobs are dispatched first")] JobPriority? priority = null,
         [Option('f', Description = "Stream the job's log until it finishes; " + FollowExitCodes + ". Interrupting cancels the job")] bool follow = false)
     {
         var serverUrl = NormalizeServerUrl(server);
@@ -211,7 +214,8 @@ internal class Commands
         var trigger = new PipelineTrigger
         {
             Ref = gitRef,
-            MinWorkerPriority = minWorkerPriority
+            MinWorkerPriority = minWorkerPriority,
+            Priority = priority
         };
 
         var response = await http.PostAsJsonAsync($"{serverUrl}/api/pipelines/{pipelineId}/trigger", trigger);
@@ -441,6 +445,7 @@ internal class Commands
         Console.WriteLine($"Ref:        {job.Ref}");
         Console.WriteLine($"Worker:     {job.WorkerId?.ToString() ?? "(none)"}");
         Console.WriteLine($"Min worker: {job.MinWorkerPriority} priority");
+        Console.WriteLine($"Priority:   {job.Priority} (job)");
         Console.WriteLine($"Created:    {job.CreatedAt:u}");
         if (job.StartedAt.HasValue)
             Console.WriteLine($"Started:    {job.StartedAt:u}");

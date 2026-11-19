@@ -67,6 +67,16 @@
                     </select>
                 </span>
 
+                <span class="detail-label">Job Priority</span>
+                <span class="detail-value">
+                    <select @bind="editPriority">
+                        @foreach (var priority in Enum.GetValues<JobPriority>())
+                        {
+                            <option value="@priority">@priority</option>
+                        }
+                    </select>
+                </span>
+
                 <span class="detail-label">Notifications</span>
                 <span class="detail-value">
                     <select @bind="editNotificationPolicy">
@@ -131,6 +141,9 @@
                     <span class="detail-label">Min Worker Priority</span>
                     <span class="detail-value">@pipeline.MinWorkerPriority</span>
 
+                    <span class="detail-label">Job Priority</span>
+                    <span class="detail-value">@pipeline.Priority</span>
+
                     <span class="detail-label">Notifications</span>
                     <span class="detail-value">@pipeline.NotificationPolicy</span>
 
@@ -164,6 +177,16 @@
                 <select @bind="triggerMinWorkerPriority">
                     <option value="">Pipeline default (@pipeline.MinWorkerPriority)</option>
                     @foreach (var priority in Enum.GetValues<WorkerPriority>())
+                    {
+                        <option value="@priority">@priority</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label>Job priority</label>
+                <select @bind="triggerPriority">
+                    <option value="">Pipeline default (@pipeline.Priority)</option>
+                    @foreach (var priority in Enum.GetValues<JobPriority>())
                     {
                         <option value="@priority">@priority</option>
                     }
@@ -227,6 +250,7 @@ else
     private IReadOnlyList<RepositoryInfo>? repositories;
     private string refOverride = "";
     private WorkerPriority? triggerMinWorkerPriority;
+    private JobPriority? triggerPriority;
     private bool loading = true;
     private bool triggering;
 
@@ -242,6 +266,7 @@ else
     private string editSchedule = "";
     private bool clearingSchedule;
     private WorkerPriority editMinWorkerPriority;
+    private JobPriority editPriority;
     private NotificationPolicy editNotificationPolicy;
 
     protected override async Task OnInitializedAsync()
@@ -306,7 +331,8 @@ else
                 PipelineId = ulid,
                 Ref = string.IsNullOrWhiteSpace(refOverride) ? null : refOverride.Trim(),
                 GitTokenMode = Ilmarinen.Protocol.GitTokenMode.Inherit,
-                MinWorkerPriority = triggerMinWorkerPriority
+                MinWorkerPriority = triggerMinWorkerPriority,
+                Priority = triggerPriority
             };
 
             var jobId = await Scheduler.EnqueueJobAsync(submission);
@@ -331,6 +357,7 @@ else
         editSchedule = "";
         clearingSchedule = false;
         editMinWorkerPriority = pipeline.MinWorkerPriority;
+        editPriority = pipeline.Priority;
         editNotificationPolicy = pipeline.NotificationPolicy;
         editError = null;
         editing = true;
@@ -363,6 +390,7 @@ else
                 ClearSchedule = clearingSchedule,
                 Schedule = clearingSchedule ? null : ConvertScheduleToUtc(editSchedule),
                 MinWorkerPriority = editMinWorkerPriority != pipeline.MinWorkerPriority ? editMinWorkerPriority : null,
+                Priority = editPriority != pipeline.Priority ? editPriority : null,
                 NotificationPolicy = editNotificationPolicy != pipeline.NotificationPolicy ? editNotificationPolicy : null
             };
 

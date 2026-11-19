@@ -38,6 +38,11 @@
                             <td><JobLink JobId="job.Id" /></td>
                             <td>
                                 <span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span>
+                                @* Medium is the default, so only a job that differs says so: what dispatch takes first should be visible from the queue. *@
+                                @if (job.Priority != JobPriority.Medium)
+                                {
+                                    <span class="status-badge job-priority-@job.Priority.ToString().ToLower()" title="Job priority">@job.Priority</span>
+                                }
                                 @if (job.Status is JobStatus.Failed or JobStatus.Cancelled)
                                 {
                                     @if (job.CanRetry)

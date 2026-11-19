@@ -23,4 +23,5 @@ public class Job
     public GitTokenMode GitTokenMode { get; set; }
     public Guid? PipelineId { get; set; }
     public WorkerPriority MinWorkerPriority { get; set; }
+    public JobPriority Priority { get; set; }
 }

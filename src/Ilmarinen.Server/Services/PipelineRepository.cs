@@ -33,6 +33,7 @@ public class PipelineRepository
             CreatedAt = DateTime.UtcNow,
             Schedule = submission.Schedule,
             MinWorkerPriority = submission.MinWorkerPriority,
+            Priority = submission.Priority,
             NotificationPolicy = submission.NotificationPolicy
         };
 
@@ -96,6 +97,10 @@ public class PipelineRepository
         {
             pipeline.MinWorkerPriority = update.MinWorkerPriority.Value;
         }
+        if (update.Priority != null)
+        {
+            pipeline.Priority = update.Priority.Value;
+        }
         if (update.NotificationPolicy != null)
         {
             pipeline.NotificationPolicy = update.NotificationPolicy.Value;
@@ -141,6 +146,7 @@ public class PipelineRepository
         Schedule = pipeline.Schedule,
         LastTriggeredAt = pipeline.LastTriggeredAt,
         MinWorkerPriority = pipeline.MinWorkerPriority,
+        Priority = pipeline.Priority,
         NotificationPolicy = pipeline.NotificationPolicy
     };
 }

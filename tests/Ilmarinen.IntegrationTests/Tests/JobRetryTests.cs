@@ -111,7 +111,7 @@ public class JobRetryTests
     }
 
     [Test]
-    public async Task RetryJob_NoneMode_PreservesMinWorkerPriority()
+    public async Task RetryJob_NoneMode_PreservesBothPriorities()
     {
         var jobId = await _fixture.SubmitJobAsync(new JobSubmission
         {
@@ -119,14 +119,15 @@ public class JobRetryTests
             Ref = "master",
             ScriptPath = "pipeline.csx",
             GitTokenMode = GitTokenMode.None,
-            MinWorkerPriority = WorkerPriority.High
+            MinWorkerPriority = WorkerPriority.High,
+            Priority = JobPriority.High
         });
 
-        await AssertRetryPreservesMinWorkerPriorityAsync(jobId);
+        await AssertRetryPreservesBothPrioritiesAsync(jobId);
     }
 
     [Test]
-    public async Task RetryJob_InheritMode_PreservesMinWorkerPriority()
+    public async Task RetryJob_InheritMode_PreservesBothPriorities()
     {
         var repository = await _fixture.CreateRepositoryAsync(new RepositorySubmission
         {
@@ -146,13 +147,14 @@ public class JobRetryTests
         {
             PipelineId = pipeline.Id,
             GitTokenMode = GitTokenMode.Inherit,
-            MinWorkerPriority = WorkerPriority.High
+            MinWorkerPriority = WorkerPriority.High,
+            Priority = JobPriority.High
         });
 
-        await AssertRetryPreservesMinWorkerPriorityAsync(jobId);
+        await AssertRetryPreservesBothPrioritiesAsync(jobId);
     }
 
-    private async Task AssertRetryPreservesMinWorkerPriorityAsync(Guid jobId)
+    private async Task AssertRetryPreservesBothPrioritiesAsync(Guid jobId)
     {
         // No worker is started, so the job stays queued; cancelling it is enough to make it retryable.
         Assert.That(await _fixture.CancelJobAsync(jobId), Is.True);
@@ -160,6 +162,7 @@ public class JobRetryTests
         var retryJob = await _fixture.GetJobAsync(await _fixture.RetryJobAsync(jobId));
 
         Assert.That(retryJob.MinWorkerPriority, Is.EqualTo(WorkerPriority.High));
+        Assert.That(retryJob.Priority, Is.EqualTo(JobPriority.High), "the job's own priority, not its pipeline's");
     }
 
     [Test]

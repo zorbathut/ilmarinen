@@ -5,7 +5,7 @@
 EXTENDS Naturals, Sequences, FiniteSets, TLC
 
 CONSTANTS
-    NumJobs,            \* jobs, all queued at the start; ids 1..NumJobs, oldest first
+    NumJobs,            \* jobs, all queued at the start; ids 1..NumJobs, dispatched lowest id first (standing in for the server's dispatch order; which queued job goes first affects no property)
     MaxConns,           \* hub connections the worker may open, the first included
     MaxStalls,          \* connections that may go silent while both ends think they are up
     MaxFalseTimeouts,   \* times the server may time out a connection that is in fact working

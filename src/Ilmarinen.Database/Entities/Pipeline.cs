@@ -14,6 +14,7 @@ public class Pipeline
     public string? Schedule { get; set; }
     public DateTime? LastTriggeredAt { get; set; }
     public WorkerPriority MinWorkerPriority { get; set; }
+    public JobPriority Priority { get; set; }
     public NotificationPolicy NotificationPolicy { get; set; }
 
     public Repository? Repository { get; set; }

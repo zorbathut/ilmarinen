@@ -210,6 +210,10 @@ Step("example")
 - Each worker clones the repo, loads the pipeline script, and executes it
 - Job status updates flow back through SignalR
 
+### Job Priority
+
+Every job has a priority, Low, Medium or High (Medium unless set). Whenever a worker is free, it takes the highest-priority queued job it qualifies for, and the oldest among equals. Priority only decides what starts next: a running job is never stopped to make room. A pipeline's priority is what its jobs get unless a trigger overrides it, and `submit` and `trigger` take `--priority`. It is a strict order, so under steady higher-priority load a Low job waits until the queue above it is empty.
+
 ### Pausing a Worker
 
 The Pause button on the Workers page (or a worker's own page) stops the server sending that worker new jobs; a job it is already running carries on. It works whether or not the worker is connected, lasts across reconnects and server restarts, and holds until Unpause. The worker itself is never told. A paused worker doesn't count as available, so jobs only it could take are reported as stuck.

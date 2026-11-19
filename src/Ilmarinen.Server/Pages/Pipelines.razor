@@ -54,6 +54,15 @@
             </select>
         </div>
         <div>
+            <label>Job Priority</label>
+            <select @bind="newPriority">
+                @foreach (var priority in Enum.GetValues<JobPriority>())
+                {
+                    <option value="@priority">@priority</option>
+                }
+            </select>
+        </div>
+        <div>
             <label>Notifications</label>
             <select @bind="newNotificationPolicy">
                 @foreach (var policy in Enum.GetValues<NotificationPolicy>())
@@ -111,6 +120,7 @@
     private string newScriptPath = "";
     private string newSchedule = "";
     private WorkerPriority newMinWorkerPriority = WorkerPriority.Low;
+    private JobPriority newPriority = JobPriority.Medium;
     private NotificationPolicy newNotificationPolicy = NotificationPolicy.All;
     private string? error;
     private bool creating;
@@ -162,6 +172,7 @@
                 ScriptPath = newScriptPath.Trim(),
                 Schedule = ConvertScheduleToUtc(newSchedule),
                 MinWorkerPriority = newMinWorkerPriority,
+                Priority = newPriority,
                 NotificationPolicy = newNotificationPolicy
             };
 
@@ -173,6 +184,7 @@
             newScriptPath = "";
             newSchedule = "";
             newMinWorkerPriority = WorkerPriority.Low;
+            newPriority = JobPriority.Medium;
             newNotificationPolicy = NotificationPolicy.All;
 
             pipelines = await PipelineRepo.GetAllAsync();

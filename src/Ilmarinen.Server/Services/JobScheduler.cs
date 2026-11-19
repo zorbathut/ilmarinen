@@ -58,7 +58,9 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Hands queued jobs to ready workers, highest-priority worker first. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
+    /// Hands queued jobs to ready workers, highest-priority worker first, each taking the highest-priority job it qualifies for, oldest first among equals. Nothing running is ever displaced for a higher-priority job. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
+    ///
+    /// The matching is greedy: a worker visited first takes its best job even when a later worker could have run that one and only the first can run another, which then waits.
     /// </summary>
     public async Task DispatchAsync()
     {
@@ -96,7 +98,7 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Takes queued jobs this worker's priority qualifies it for, oldest first, until one is handed to it. Returns false if none fit. Caller holds _assignLock and the worker's session lock, and has confirmed it is ready.
+    /// Takes queued jobs this worker's priority qualifies it for, in dispatch order (highest job priority, then oldest), until one is handed to it. Returns false if none fit. Caller holds _assignLock and the worker's session lock, and has confirmed it is ready.
     /// </summary>
     private async Task<bool> AssignNextJobAsync(JobRepository jobs, WorkerSession session, WorkerPriority workerPriority)
     {

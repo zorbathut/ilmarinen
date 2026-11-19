@@ -7,4 +7,6 @@ public record PipelineTrigger
     public string? Ref { get; init; }
     [EnumDataType(typeof(WorkerPriority))]
     public WorkerPriority? MinWorkerPriority { get; init; }
+    [EnumDataType(typeof(JobPriority))]
+    public JobPriority? Priority { get; init; }
 }

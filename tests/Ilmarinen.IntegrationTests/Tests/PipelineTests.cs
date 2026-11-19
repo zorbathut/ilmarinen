@@ -486,6 +486,101 @@ public class PipelineTests
         Assert.That(jobs, Is.Empty, "a rejected trigger must not leave a job behind");
     }
 
+    // Over the wire, not through PipelineSubmission: a pipeline created by a client that never heard of priority must be Medium.
+    [Test]
+    public async Task CreatePipeline_WithoutAPriority_IsMedium()
+    {
+        var body = $$"""{"name":"priority-omitted","repositoryId":"{{_repository.Id}}","ref":"master","scriptPath":"pipeline.csx"}""";
+        var response = await _fixture.HttpClient.PostAsync("/api/pipelines", new StringContent(body, Encoding.UTF8, "application/json"));
+        response.EnsureSuccessStatusCode();
+
+        var pipeline = (await _fixture.GetAllPipelinesAsync()).Single();
+        Assert.That(pipeline.Priority, Is.EqualTo(JobPriority.Medium));
+    }
+
+    [Test]
+    public async Task PipelinePriority_RoundTripsThroughCreateAndUpdate()
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "priority-round-trip",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            Priority = JobPriority.High
+        });
+        Assert.That((await _fixture.GetPipelineAsync(pipeline.Id)).Priority, Is.EqualTo(JobPriority.High));
+
+        var lowered = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate { Priority = JobPriority.Low });
+        Assert.That(lowered.Priority, Is.EqualTo(JobPriority.Low));
+
+        var renamed = await _fixture.UpdatePipelineAsync(pipeline.Id, new PipelineUpdate { Name = "priority-renamed" });
+        Assert.That(renamed.Priority, Is.EqualTo(JobPriority.Low), "an update that doesn't mention the priority must not reset it");
+    }
+
+    [TestCase(JobPriority.High, null, JobPriority.High)]
+    [TestCase(JobPriority.High, JobPriority.Low, JobPriority.Low)]
+    [TestCase(JobPriority.Medium, JobPriority.High, JobPriority.High)]
+    public async Task TriggerPipeline_Priority_OverrideWinsOverPipeline(JobPriority pipelinePriority, JobPriority? triggerPriority, JobPriority expected)
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = "priority-trigger",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            Priority = pipelinePriority
+        });
+
+        var jobId = await _fixture.TriggerPipelineAsync(pipeline.Id, new PipelineTrigger { Priority = triggerPriority });
+
+        Assert.That((await _fixture.GetJobAsync(jobId)).Priority, Is.EqualTo(expected));
+    }
+
+    [Test]
+    public async Task SubmitJob_WithoutAPipelineOrPriority_IsMedium_AndAnExplicitOneIsKept()
+    {
+        var plain = $$"""{"repoUrl":"{{_repo.Url}}","ref":"master","scriptPath":"pipeline.csx"}""";
+        var high = $$"""{"repoUrl":"{{_repo.Url}}","ref":"master","scriptPath":"pipeline.csx","priority":{{(int)JobPriority.High}}}""";
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        var plainResponse = await _fixture.HttpClient.PostAsync("/api/jobs", new StringContent(plain, Encoding.UTF8, "application/json"));
+        var highResponse = await _fixture.HttpClient.PostAsync("/api/jobs", new StringContent(high, Encoding.UTF8, "application/json"));
+        var plainId = (await plainResponse.Content.ReadFromJsonAsync<JobSubmissionResult>(options))!.Id;
+        var highId = (await highResponse.Content.ReadFromJsonAsync<JobSubmissionResult>(options))!.Id;
+
+        Assert.That((await _fixture.GetJobAsync(plainId)).Priority, Is.EqualTo(JobPriority.Medium));
+        Assert.That((await _fixture.GetJobAsync(highId)).Priority, Is.EqualTo(JobPriority.High));
+    }
+
+    // System.Text.Json deserializes any number into an enum; priority 99 would put a job ahead of everything, and -5 behind it.
+    [TestCase(99)]
+    [TestCase(-5)]
+    public async Task OutOfRangePriority_Returns400_OnEveryWayIn(int priority)
+    {
+        var pipeline = await _fixture.CreatePipelineAsync(new PipelineSubmission
+        {
+            Name = $"priority-out-of-range{priority}",
+            RepositoryId = _repository.Id,
+            Ref = "master",
+            ScriptPath = "pipeline.csx",
+            Priority = JobPriority.High
+        });
+
+        var create = await _fixture.HttpClient.PostAsync("/api/pipelines", new StringContent($$"""{"name":"priority-99","repositoryId":"{{_repository.Id}}","ref":"master","scriptPath":"pipeline.csx","priority":{{priority}}}""", Encoding.UTF8, "application/json"));
+        var update = await _fixture.HttpClient.PutAsync($"/api/pipelines/{pipeline.Id}", new StringContent($$"""{"priority":{{priority}}}""", Encoding.UTF8, "application/json"));
+        var trigger = await _fixture.HttpClient.PostAsync($"/api/pipelines/{pipeline.Id}/trigger", new StringContent($$"""{"priority":{{priority}}}""", Encoding.UTF8, "application/json"));
+        var submit = await _fixture.HttpClient.PostAsync("/api/jobs", new StringContent($$"""{"repoUrl":"{{_repo.Url}}","ref":"master","scriptPath":"pipeline.csx","priority":{{priority}}}""", Encoding.UTF8, "application/json"));
+
+        Assert.That((int)create.StatusCode, Is.EqualTo(400), "create");
+        Assert.That((int)update.StatusCode, Is.EqualTo(400), "update");
+        Assert.That((int)trigger.StatusCode, Is.EqualTo(400), "trigger");
+        Assert.That((int)submit.StatusCode, Is.EqualTo(400), "submit");
+        Assert.That((await _fixture.GetPipelineAsync(pipeline.Id)).Priority, Is.EqualTo(JobPriority.High), "a rejected update must not change the stored priority");
+        var jobs = await _fixture.HttpClient.GetFromJsonAsync<List<JobInfo>>("/api/jobs", new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Assert.That(jobs, Is.Empty, "a rejected trigger or submission must not leave a job behind");
+    }
+
     [Test]
     public async Task CreatePipeline_DuplicateName_Returns409OrError()
     {

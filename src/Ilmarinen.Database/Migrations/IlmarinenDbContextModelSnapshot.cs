@@ -52,6 +52,9 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<Guid?>("PipelineId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Ref")
                         .IsRequired()
                         .HasColumnType("text");
@@ -208,6 +211,9 @@ namespace Ilmarinen.Database.Migrations
                         .HasColumnType("text");
 
                     b.Property<int>("NotificationPolicy")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Priority")
                         .HasColumnType("integer");
 
                     b.Property<Guid>("RepositoryId")

@@ -73,7 +73,8 @@ public class PipelinesController : ControllerBase
             PipelineId = id,
             Ref = trigger?.Ref,
             GitTokenMode = GitTokenMode.Inherit,
-            MinWorkerPriority = trigger?.MinWorkerPriority
+            MinWorkerPriority = trigger?.MinWorkerPriority,
+            Priority = trigger?.Priority
         };
 
         var jobId = await _scheduler.EnqueueJobAsync(submission);

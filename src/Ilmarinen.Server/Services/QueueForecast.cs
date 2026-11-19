@@ -30,14 +30,14 @@ public record QueueEstimate
 }
 
 /// <summary>
-/// Simulates the server's dispatch over what is running and queued now: whenever a worker frees up, the highest-priority free worker takes the oldest queued job it qualifies for, as JobScheduler.DispatchAsync does, and holds it for that job's estimated duration.
+/// Simulates the server's dispatch over what is running and queued now: whenever a worker frees up, the highest-priority free worker takes the first queued job in dispatch order (highest job priority, then oldest) that it qualifies for, as JobScheduler.DispatchAsync does, and holds it for that job's estimated duration.
 /// </summary>
 public static class QueueForecast
 {
     /// <summary>A Running job: on which worker (absent from the available ones if that worker isn't there to take more), and how long it has been running.</summary>
     public sealed record RunningJob(Guid? WorkerId, string RepoUrl, string ScriptPath, TimeSpan Elapsed);
 
-    /// <summary>A Queued job, listed in dispatch order (oldest first).</summary>
+    /// <summary>A Queued job, listed in dispatch order (JobRepository.GetUnfinishedJobsAsync).</summary>
     public sealed record QueuedJob(WorkerPriority MinWorkerPriority, string RepoUrl, string ScriptPath);
 
     /// <param name="estimates">A job's duration is its worker's own estimate for the script, else the estimate across all workers, else unknown (JobRepository.GetScriptEstimatesAsync).</param>
