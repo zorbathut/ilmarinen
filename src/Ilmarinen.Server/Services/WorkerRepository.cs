@@ -82,24 +82,28 @@ public class WorkerRepository
             .ExecuteUpdateAsync(s => s.SetProperty(w => w.LastSeen, DateTime.UtcNow));
     }
 
-    /// <summary>Whether the worker's current session can be handed a job right now, reading the database for its running jobs.</summary>
+    /// <summary>Whether the worker's current session can be handed a job right now, reading the database for its pause and its running jobs. A worker with no row (revoked) is never ready.</summary>
     public async Task<bool> IsReadyAsync(WorkerSession session)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-        var busy = await db.Jobs.AnyAsync(j => j.WorkerId == session.WorkerId && j.Status == JobStatus.Running);
-        return IsReady(session, busy);
+        var row = await db.Workers
+            .Where(w => w.Id == session.WorkerId)
+            .Select(w => new { w.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .FirstOrDefaultAsync();
+        return row != null && IsReady(session, row.Paused, row.Busy);
     }
 
-    private bool IsReady(WorkerSession session, bool hasRunningJob)
+    private bool IsReady(WorkerSession session, bool paused, bool hasRunningJob)
     {
-        return WorkerReadiness.IsReady(session, _sessions.DiagnosticOwed(session.WorkerId), hasRunningJob, _bundles.CurrentHash);
+        return WorkerReadiness.IsReady(session, _sessions.DiagnosticOwed(session.WorkerId), paused, hasRunningJob, _bundles.CurrentHash);
     }
 
-    /// <summary>
-    /// The ready workers and their priorities, highest priority first. Ties are ordered arbitrarily. A snapshot: dispatch re-checks each candidate under its lock before assigning.
-    /// </summary>
-    public async Task<IReadOnlyList<(Guid WorkerId, WorkerPriority Priority)>> GetReadyWorkersByPriorityAsync()
+    /// <summary>A connected worker as of one read of the sessions and the database: everything readiness and availability are decided from.</summary>
+    private sealed record ConnectedWorker(WorkerSession Session, string Name, WorkerPriority Priority, bool Paused, bool Busy);
+
+    /// <summary>Every worker with a session, read through the workers table so a revoked worker still holding a connection never appears.</summary>
+    private async Task<IReadOnlyList<ConnectedWorker>> GetConnectedWorkersAsync()
     {
         var sessions = _sessions.All();
         if (sessions.Count == 0)
@@ -111,72 +115,61 @@ public class WorkerRepository
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
         var workerIds = sessions.Select(s => s.WorkerId).ToList();
-        var busy = (await db.Jobs
-            .Where(j => j.Status == JobStatus.Running && j.WorkerId != null && workerIds.Contains(j.WorkerId.Value))
-            .Select(j => j.WorkerId!.Value)
-            .ToListAsync()).ToHashSet();
+        var rows = (await db.Workers
+            .Where(w => workerIds.Contains(w.Id))
+            .Select(w => new { w.Id, w.Name, w.Priority, w.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .ToListAsync()).ToDictionary(w => w.Id);
 
-        var ready = sessions.Where(s => IsReady(s, busy.Contains(s.WorkerId))).Select(s => s.WorkerId).ToList();
-        if (ready.Count == 0)
-        {
-            return [];
-        }
-
-        var ordered = await db.Workers
-            .Where(w => ready.Contains(w.Id))
-            .OrderByDescending(w => w.Priority)
-            .Select(w => new { w.Id, w.Priority })
-            .ToListAsync();
-
-        return ordered.Select(w => (w.Id, w.Priority)).ToList();
-    }
-
-    /// <summary>
-    /// The workers that can take work now or soon: connected, and either ready or running a job (the definition on UnsatisfiableJobsReport). The ready half is dispatch's own candidate list, so the two can't disagree about which workers are ready.
-    /// </summary>
-    public async Task<IReadOnlyList<AvailableWorker>> GetAvailableWorkersAsync()
-    {
-        var connectedIds = _sessions.All().Select(s => s.WorkerId).ToList();
-        if (connectedIds.Count == 0)
-        {
-            return [];
-        }
-
-        var ready = await GetReadyWorkersByPriorityAsync();
-
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-
-        // Joined through the workers table, like the ready candidates, so a revoked worker still holding a connection doesn't count.
-        var busy = await db.Workers
-            .Where(w => connectedIds.Contains(w.Id) && db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running))
-            .Select(w => new { w.Id, w.Priority })
-            .ToListAsync();
-
-        return ready.Select(r => new AvailableWorker(r.WorkerId, r.Priority))
-            .Concat(busy.Where(b => !ready.Any(r => r.WorkerId == b.Id)).Select(b => new AvailableWorker(b.Id, b.Priority)))
+        return sessions
+            .Where(s => rows.ContainsKey(s.WorkerId))
+            .Select(s =>
+            {
+                var row = rows[s.WorkerId];
+                return new ConnectedWorker(s, row.Name, row.Priority, row.Paused, row.Busy);
+            })
             .ToList();
     }
 
-    /// <summary>Workers with a session, joined through the workers table like <see cref="GetAvailableWorkersAsync"/>, so a revoked worker still holding a connection doesn't count.</summary>
-    public async Task<int> CountConnectedWorkersAsync()
+    private bool IsReady(ConnectedWorker w)
     {
-        var connectedIds = _sessions.All().Select(s => s.WorkerId).ToList();
-        if (connectedIds.Count == 0)
-        {
-            return 0;
-        }
-
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-        return await db.Workers.CountAsync(w => connectedIds.Contains(w.Id));
+        return IsReady(w.Session, w.Paused, w.Busy);
     }
 
-    /// <summary>The highest priority among available workers (<see cref="GetAvailableWorkersAsync"/>), or null when there are none.</summary>
-    public async Task<WorkerPriority?> GetHighestAvailablePriorityAsync()
+    /// <summary>Available as UnsatisfiableJobsReport defines it: connected, not paused, and either ready or running a job.</summary>
+    private bool IsAvailable(ConnectedWorker w)
     {
-        var available = await GetAvailableWorkersAsync();
-        return available.Count == 0 ? null : available.Max(w => w.Priority);
+        return IsReady(w) || (w.Busy && !w.Paused);
+    }
+
+    /// <summary>
+    /// The ready workers and their priorities, highest priority first. Ties are ordered arbitrarily. A snapshot: dispatch re-checks each candidate under its lock before assigning.
+    /// </summary>
+    public async Task<IReadOnlyList<(Guid WorkerId, WorkerPriority Priority)>> GetReadyWorkersByPriorityAsync()
+    {
+        return (await GetConnectedWorkersAsync())
+            .Where(IsReady)
+            .OrderByDescending(w => w.Priority)
+            .Select(w => (w.Session.WorkerId, w.Priority))
+            .ToList();
+    }
+
+    /// <summary>
+    /// The workers that can take work now or soon: connected, not paused, and either ready or running a job (the definition on UnsatisfiableJobsReport). Decided from the same readiness as dispatch's candidates, so the two can't disagree about which workers are ready.
+    /// </summary>
+    public async Task<IReadOnlyList<AvailableWorker>> GetAvailableWorkersAsync()
+    {
+        return (await GetAvailabilityAsync()).Available;
+    }
+
+    /// <summary>
+    /// The available workers (<see cref="GetAvailableWorkersAsync"/>), and from the same read how many workers are connected at all.
+    /// </summary>
+    public async Task<WorkerAvailability> GetAvailabilityAsync()
+    {
+        var connected = await GetConnectedWorkersAsync();
+        return new WorkerAvailability(
+            connected.Where(IsAvailable).Select(w => new AvailableWorker(w.Session.WorkerId, w.Priority)).ToList(),
+            connected.Count);
     }
 
     /// <summary>
@@ -190,6 +183,21 @@ public class WorkerRepository
         var rows = await db.Workers
             .Where(w => w.Id == workerId)
             .ExecuteUpdateAsync(s => s.SetProperty(w => w.Priority, priority));
+
+        return rows > 0;
+    }
+
+    /// <summary>
+    /// Writes the stored pause and nothing else. To pause or unpause a worker use JobScheduler.SetWorkerPausedAsync, which keeps the write from racing a dispatch and dispatches afterwards.
+    /// </summary>
+    public async Task<bool> SetPausedAsync(Guid workerId, bool paused)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var rows = await db.Workers
+            .Where(w => w.Id == workerId)
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.Paused, paused));
 
         return rows > 0;
     }
@@ -275,7 +283,7 @@ public class WorkerRepository
             .Select(j => j.Id)
             .ToListAsync();
 
-        var isReady = session != null && IsReady(session, currentJobIds.Count > 0);
+        var isReady = session != null && IsReady(session, w.Paused, currentJobIds.Count > 0);
 
         return new WorkerView
         {
@@ -288,6 +296,7 @@ public class WorkerRepository
             LastSeen = w.LastSeen,
             LastIpAddress = w.LastIpAddress,
             Priority = w.Priority,
+            IsPaused = w.Paused,
             Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
             MirrorsSizeBytes = usage?.MirrorsSizeBytes,
             UsageMeasured = usage != null,
@@ -316,7 +325,7 @@ public class WorkerRepository
         return workers.Select(w =>
         {
             var session = _sessions.ByWorker(w.Id);
-            var isReady = session != null && IsReady(session, workerToJobs[w.Id].Any());
+            var isReady = session != null && IsReady(session, w.Paused, workerToJobs[w.Id].Any());
             _workerDiagnostics.TryGetValue(w.Id, out var diagnostic);
             _workerUsage.TryGetValue(w.Id, out var usage);
 
@@ -331,6 +340,7 @@ public class WorkerRepository
                 LastSeen = w.LastSeen,
                 LastIpAddress = w.LastIpAddress,
                 Priority = w.Priority,
+                IsPaused = w.Paused,
                 Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
                 MirrorsSizeBytes = usage?.MirrorsSizeBytes,
                 UsageMeasured = usage != null,
@@ -343,6 +353,8 @@ public class WorkerRepository
 
 public record AvailableWorker(Guid WorkerId, WorkerPriority Priority);
 
+public record WorkerAvailability(IReadOnlyList<AvailableWorker> Available, int Connected);
+
 public class WorkerView
 {
     public required Guid Id { get; init; }
@@ -354,6 +366,7 @@ public class WorkerView
     public DateTime LastSeen { get; init; }
     public string? LastIpAddress { get; init; }
     public WorkerPriority Priority { get; init; }
+    public bool IsPaused { get; init; }
     public IReadOnlyList<WorkspaceView> Workspaces { get; init; } = [];
 
     /// <summary>

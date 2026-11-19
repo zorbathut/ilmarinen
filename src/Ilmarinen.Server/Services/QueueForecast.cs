@@ -14,7 +14,7 @@ public record QueueEstimate
     public required int QueuedJobs { get; init; }
     public required int ConnectedWorkers { get; init; }
 
-    /// <summary>Connected and either ready or running a job — the workers the queue can go to (as UnsatisfiableJobsReport defines them).</summary>
+    /// <summary>Connected, not paused, and either ready or running a job — the workers the queue can go to (as UnsatisfiableJobsReport defines them).</summary>
     public required int AvailableWorkers { get; init; }
 
     /// <summary>

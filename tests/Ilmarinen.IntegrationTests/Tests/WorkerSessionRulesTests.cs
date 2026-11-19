@@ -50,7 +50,7 @@ public class WorkerSessionRulesTests
     [Test]
     public void IsReady_ResumedIdleAndHealthy()
     {
-        Assert.That(WorkerReadiness.IsReady(Session(Idle(DiagnosticStatus.Healthy)), diagnosticOwed: false, hasRunningJob: false, serverBundleHash: null), Is.True);
+        Assert.That(Ready(Session(Idle(DiagnosticStatus.Healthy))), Is.True);
     }
 
     [Test]
@@ -59,23 +59,29 @@ public class WorkerSessionRulesTests
         var ready = Idle(DiagnosticStatus.Healthy);
         Assert.Multiple(() =>
         {
-            Assert.That(WorkerReadiness.IsReady(Session(ready, resumed: false), false, false, null), Is.False, "not resumed");
-            Assert.That(WorkerReadiness.IsReady(Session(null), false, false, null), Is.False, "no state");
-            Assert.That(WorkerReadiness.IsReady(Session(ready with { Activity = WorkerActivity.RunningJob }), false, false, null), Is.False, "running a job");
-            Assert.That(WorkerReadiness.IsReady(Session(ready with { Activity = WorkerActivity.RunningDiagnostic }), false, false, null), Is.False, "running a diagnostic");
-            Assert.That(WorkerReadiness.IsReady(Session(Idle(DiagnosticStatus.Unhealthy)), false, false, null), Is.False, "unhealthy");
-            Assert.That(WorkerReadiness.IsReady(Session(Idle(null)), false, false, null), Is.False, "no verdict yet");
-            Assert.That(WorkerReadiness.IsReady(Session(ready), diagnosticOwed: true, false, null), Is.False, "a diagnostic owed");
-            Assert.That(WorkerReadiness.IsReady(Session(ready), false, hasRunningJob: true, null), Is.False, "a job Running for it");
-            Assert.That(WorkerReadiness.IsReady(Session(ready, bundleHash: "OLD"), false, false, serverBundleHash: "NEW"), Is.False, "a stale bundle");
+            Assert.That(Ready(Session(ready, resumed: false)), Is.False, "not resumed");
+            Assert.That(Ready(Session(null)), Is.False, "no state");
+            Assert.That(Ready(Session(ready with { Activity = WorkerActivity.RunningJob })), Is.False, "running a job");
+            Assert.That(Ready(Session(ready with { Activity = WorkerActivity.RunningDiagnostic })), Is.False, "running a diagnostic");
+            Assert.That(Ready(Session(Idle(DiagnosticStatus.Unhealthy))), Is.False, "unhealthy");
+            Assert.That(Ready(Session(Idle(null))), Is.False, "no verdict yet");
+            Assert.That(Ready(Session(ready), diagnosticOwed: true), Is.False, "a diagnostic owed");
+            Assert.That(Ready(Session(ready), paused: true), Is.False, "paused by an operator");
+            Assert.That(Ready(Session(ready), hasRunningJob: true), Is.False, "a job Running for it");
+            Assert.That(Ready(Session(ready, bundleHash: "OLD"), serverBundleHash: "NEW"), Is.False, "a stale bundle");
         });
     }
 
     [Test]
     public void IsReady_DegradedOrClassicWorker_StillReady()
     {
-        Assert.That(WorkerReadiness.IsReady(Session(Idle(DiagnosticStatus.Degraded)), false, false, null), Is.True);
-        Assert.That(WorkerReadiness.IsReady(Session(Idle(DiagnosticStatus.Healthy)), false, false, serverBundleHash: "NEW"), Is.True, "a classic worker reports no bundle and is never stale");
+        Assert.That(Ready(Session(Idle(DiagnosticStatus.Degraded))), Is.True);
+        Assert.That(Ready(Session(Idle(DiagnosticStatus.Healthy)), serverBundleHash: "NEW"), Is.True, "a classic worker reports no bundle and is never stale");
+    }
+
+    private static bool Ready(WorkerSession session, bool diagnosticOwed = false, bool paused = false, bool hasRunningJob = false, string? serverBundleHash = null)
+    {
+        return WorkerReadiness.IsReady(session, diagnosticOwed: diagnosticOwed, paused: paused, hasRunningJob: hasRunningJob, serverBundleHash: serverBundleHash);
     }
 
     private static WorkerState Idle(DiagnosticStatus? diagnostic)

@@ -20,4 +20,7 @@ public class Worker
 
     // A host re-check or operator diagnostic was asked for and hasn't started yet; the worker takes no work until it has. Persisted so a server restart can't skip it.
     public bool DiagnosticOwed { get; set; }
+
+    // The operator has held this worker back from new jobs; what it is running carries on.
+    public bool Paused { get; set; }
 }

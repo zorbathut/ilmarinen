@@ -58,7 +58,7 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Hands queued jobs to ready workers, highest-priority worker first. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
+    /// Hands queued jobs to ready workers, highest-priority worker first. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
     /// </summary>
     public async Task DispatchAsync()
     {
@@ -165,6 +165,39 @@ public class JobScheduler
     }
 
     /// <summary>
+    /// Pauses or unpauses a worker; unpausing dispatches, since the worker may be ready for a job that is waiting. A paused worker is sent no new jobs, connected or not; what it is running carries on. Returns false if the worker doesn't exist.
+    /// </summary>
+    public async Task<bool> SetWorkerPausedAsync(Guid workerId, bool paused)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        // Under the dispatch lock, so once a pause returns no dispatch can still be acting on the worker as unpaused.
+        bool updated;
+        await _assignLock.WaitAsync();
+        try
+        {
+            updated = await workers.SetPausedAsync(workerId, paused);
+        }
+        finally
+        {
+            _assignLock.Release();
+        }
+
+        if (!updated)
+        {
+            return false;
+        }
+
+        _uiEvents.NotifyWorkersChanged();
+        if (!paused)
+        {
+            await DispatchAsync();
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Queued jobs no available worker can take, with the highest priority on offer. Taken without _assignLock: it is a read-only snapshot, and a momentary disagreement with an in-flight dispatch clears on the next read.
     /// </summary>
     public async Task<UnsatisfiableJobsReport> GetUnsatisfiableJobsAsync()
@@ -173,7 +206,8 @@ public class JobScheduler
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-        var highestAvailablePriority = await workers.GetHighestAvailablePriorityAsync();
+        var availability = await workers.GetAvailabilityAsync();
+        var highestAvailablePriority = availability.Available.Count == 0 ? (WorkerPriority?)null : availability.Available.Max(w => w.Priority);
         return new UnsatisfiableJobsReport
         {
             HighestAvailableWorkerPriority = highestAvailablePriority,
@@ -190,7 +224,8 @@ public class JobScheduler
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-        var available = await workers.GetAvailableWorkersAsync();
+        var availability = await workers.GetAvailabilityAsync();
+        var available = availability.Available;
         var unfinished = await jobs.GetUnfinishedJobsAsync();
         var now = DateTime.UtcNow;
 
@@ -204,7 +239,7 @@ public class JobScheduler
             .ToList();
         var estimates = await jobs.GetScriptEstimatesAsync(unfinished.Select(j => (j.RepoUrl, j.ScriptPath)));
 
-        return QueueForecast.Estimate(available, await workers.CountConnectedWorkersAsync(), running, queued, estimates);
+        return QueueForecast.Estimate(available, availability.Connected, running, queued, estimates);
     }
 
     /// <summary>

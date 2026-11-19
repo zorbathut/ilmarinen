@@ -56,10 +56,10 @@ public static class SessionEpoch
     }
 }
 
-/// <summary>Whether a worker can be handed a job, derived from what it last reported rather than from messages that say so.</summary>
+/// <summary>Whether a worker can be handed a job, derived from what it last reported and the server's own gates rather than from messages that say so.</summary>
 public static class WorkerReadiness
 {
-    public static bool IsReady(WorkerSession session, bool diagnosticOwed, bool hasRunningJob, string? serverBundleHash)
+    public static bool IsReady(WorkerSession session, bool diagnosticOwed, bool paused, bool hasRunningJob, string? serverBundleHash)
     {
         var state = session.State;
         return session.Resumed
@@ -67,6 +67,7 @@ public static class WorkerReadiness
             && DiagnosticStatusPolicy.CanAcceptJobs(diagnostic)
             && !HasStaleBundle(session, serverBundleHash)
             && !diagnosticOwed
+            && !paused
             && !hasRunningJob;
     }
 

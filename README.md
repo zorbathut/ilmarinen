@@ -218,7 +218,7 @@ Ilmarinen includes a notification framework that pushes job completion events to
 
 The Discord bot posts build results (success/failure) to a Discord channel as rich embeds showing repository, branch, duration, and pipeline info.
 
-It also watches for stuck jobs: queued jobs that no available worker can take, either because no worker is available or because none has the minimum worker priority a job requires. A worker is available when it is connected and either ready for work or already running a job, so a worker busy with a long job still counts. Once jobs have been stuck for 5 minutes, the bot posts an alert listing them, and it posts again when none are.
+It also watches for stuck jobs: queued jobs that no available worker can take, either because no worker is available or because none has the minimum worker priority a job requires. A worker is available when it is connected, not paused, and either ready for work or already running a job, so a worker busy with a long job still counts. Once jobs have been stuck for 5 minutes, the bot posts an alert listing them and it posts again when none are.
 
 The bot learns this by polling `GET /api/jobs/unsatisfiable` and keeps no record of what it has posted. After a restart it alerts again about jobs that are still stuck, and if the jobs come unstuck while the bot is down, no recovery message is posted.
 
@@ -282,7 +282,7 @@ The server exposes subscriber management via REST:
   "estimatedDrainSeconds": 742, "unestimatedJobs": 1, "unsatisfiableJobs": 0 }
 ```
 
-`estimatedDrainSeconds` is how long until everything running or queued now has finished, simulating dispatch over the available workers (connected, and ready or running a job) with each job's duration estimated from that worker's past runs of the same script, or other workers' when it has too few. It is optimistic: jobs with no estimate either way (`unestimatedJobs`) count as no time, a worker is taken to be free the moment its job ends, and queued jobs no available worker qualifies for (`unsatisfiableJobs`) are left out — those are the ones `GET /api/jobs/unsatisfiable` lists. Each request runs a handful of queries however long the queue is, but they read job history, so poll every 15–30 seconds rather than every second:
+`estimatedDrainSeconds` is how long until everything running or queued now has finished, simulating dispatch over the available workers (connected, not paused, and ready or running a job) with each job's duration estimated from that worker's past runs of the same script, or other workers' when it has too few. It is optimistic: jobs with no estimate either way (`unestimatedJobs`) count as no time, a worker is taken to be free the moment its job ends, and queued jobs no available worker qualifies for (`unsatisfiableJobs`) are left out — those are the ones `GET /api/jobs/unsatisfiable` lists. Each request runs a handful of queries however long the queue is, but they read job history, so poll every 15–30 seconds rather than every second:
 
 ```bash
 curl -s "$SERVER/api/jobs/queue/estimate" | jq -r '"\(.queuedJobs) queued · ~\((.estimatedDrainSeconds / 60) | ceil)m"'

@@ -254,7 +254,7 @@ The `IJobContext` interface provides these capabilities to step actions:
 
 ### Server/Worker Communication
 
-The protocol is specified and model-checked in `spec/` (`spec/README.md`; run `scripts/check-protocol.sh` after changing it). Each worker connection is a session identified by (process instance, connection counter); a later epoch supersedes an earlier one, and calls on a superseded connection are answered `SessionAnswer.Fenced`. Readiness is derived from the worker's reported state, never signalled.
+The protocol is specified and model-checked in `spec/` (`spec/README.md`; run `scripts/check-protocol.sh` after changing it). Each worker connection is a session identified by (process instance, connection counter); a later epoch supersedes an earlier one, and calls on a superseded connection are answered `SessionAnswer.Fenced`. Readiness is derived from the worker's reported state and what the server itself holds about the worker (a diagnostic owed, a stale bundle, an operator's pause), never signalled.
 
 SignalR hub methods:
 - `Connect(WorkerConnect)` → `AuthChallenge` - Protocol-hash check, mutual ECDSA challenge bound to the connection's epoch; exchanges bundle hashes for launcher-run workers
