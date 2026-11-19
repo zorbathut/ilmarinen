@@ -180,9 +180,9 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Status-write-gated entry for reported completions (worker JobCompleted, orphaned-job failure on reconnect): persist the terminal status and, if the write actually changed it, emit the completion signal. If the write is refused (the job is already terminal — e.g. the worker's Cancelled report after CancelJobAsync already signalled), the signal is suppressed and only the log buffer is flushed, so chunks streamed after the cancel still persist. EmitCompletionAsync owns the side effects themselves; CancelJobAsync calls it directly because TryCancelAsync is its own atomic terminal transition.
+    /// Status-write-gated entry for reported completions (worker JobCompleted, orphaned-job failure on reconnect): persist the terminal status and, if the write actually changed it, emit the completion signal. If the write is refused (the job is already terminal — e.g. the worker's Cancelled report after CancelJobAsync already signalled), the signal is suppressed and only the log buffer is flushed, so chunks streamed after the cancel still persist. EmitCompletionAsync owns the side effects themselves; CancelJobAsync calls it directly because TryCancelAsync is its own atomic terminal transition. Returns whether the status changed.
     /// </summary>
-    public async Task CompleteJobAsync(Guid jobId, JobStatus status)
+    public async Task<bool> CompleteJobAsync(Guid jobId, JobStatus status)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
@@ -193,10 +193,11 @@ public class JobScheduler
         if (!await jobs.UpdateStatusAsync(jobId, status))
         {
             await _logStream.FlushAsync(jobId);
-            return;
+            return false;
         }
 
         await EmitCompletionAsync(scope, jobId, status);
+        return true;
     }
 
     private async Task EmitCompletionAsync(IServiceScope scope, Guid jobId, JobStatus status)

@@ -110,6 +110,20 @@ public class WorkerReadinessGatingTests
         Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(1));
     }
 
+    // A reconnecting worker can deliver the same result twice (once live, once replayed). The first already asked for the re-check; the second must neither ask again nor ready the worker past the re-check it is waiting on.
+    [Test]
+    public async Task JobCompleted_FailedDeliveredTwice_AsksForOneDiagnostic()
+    {
+        _workers.SetDiagnostic(_workerId, Report(DiagnosticStatus.Healthy));
+        var jobId = await StartJobAsync();
+
+        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Failed));
+        await _hub.JobCompleted(jobId, Result(jobId, JobStatus.Failed));
+
+        Assert.That((await _fixture.SentToAsync(ConnectionId)).DiagnosticRequests, Is.EqualTo(1));
+        Assert.That(_workers.GetByConnectionId(ConnectionId)!.IsReady, Is.False);
+    }
+
     [Test]
     public async Task JobCompleted_Success_ReadiesTheWorkerWithoutADiagnostic()
     {

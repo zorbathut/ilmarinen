@@ -311,7 +311,7 @@ public class WorkerHub : Hub<IWorkerClient>
         }
 
         _logger.LogInformation("Job completed: {JobId} - {Status}", jobId, result.Status);
-        await scheduler.CompleteJobAsync(jobId, result.Status);
+        var transitioned = await scheduler.CompleteJobAsync(jobId, result.Status);
 
         if (result.Workspaces != null)
             workers.SetWorkspaces(Context.ConnectionId, result.Workspaces);
@@ -332,6 +332,13 @@ public class WorkerHub : Hub<IWorkerClient>
         // A failed job is the only evidence the server gets that a host has gone bad, and the worker can't tell a red build from a dead daemon — the diagnostic can. Hold the worker back until it answers: if the host is fine it readies itself a second later, and if it isn't, the gate above keeps it out until it recovers. A cancel says nothing about the host, and a success is its own proof.
         if (result.Status == JobStatus.Failed)
         {
+            // A Failed the job already had is the same result delivered again: its first delivery asked for the re-check this worker is still waiting on.
+            if (!transitioned)
+            {
+                _logger.LogInformation("Worker {WorkerId} reported job {JobId} as Failed again; its host re-check is already under way", worker.Id, jobId);
+                return;
+            }
+
             _logger.LogInformation("Worker {WorkerId} failed job {JobId}; re-checking its host before giving it more work", worker.Id, jobId);
             _messenger.Send(Context.ConnectionId, "host re-check", client => client.RecheckHost());
             return;
