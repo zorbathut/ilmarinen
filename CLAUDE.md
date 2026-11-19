@@ -261,7 +261,7 @@ SignalR hub methods:
 - `Authenticate(WorkerAuthenticate)` → `SessionAnswer` - Signature verification, then the connection becomes the worker's session if its epoch allows
 - `Resume(WorkerResume)` → `ResumeResponse` - First call on a session: the worker's state plus unacknowledged outcomes; the server applies them and reconciles running jobs
 - `ReportState(WorkerState)` / `ReportOutcome(JobOutcome)` - State after each change; a job's completion or hand-back, acknowledged by the answer
-- `StreamLogs(LogChunk)`, `ReportCommit`, `ReportDiagnostic`, `ReportWorkspaceUsage`, `WorkspaceDeleted` - Accepted from the current session
+- `StreamLogs(LogChunk)`, `StreamMetrics(JobMetricsChunk)`, `ReportCommit`, `ReportDiagnostic`, `ReportWorkspaceUsage`, `WorkspaceDeleted` - Accepted from the current session
 - `Heartbeat()` → `SessionAnswer` - How a superseded or dead connection is noticed
 
 ### Worker Self-Update (launcher mode)

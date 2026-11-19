@@ -8,7 +8,7 @@ using System;
 namespace Ilmarinen.Worker.Services;
 
 /// <summary>
-/// Sends log output and commit reports on the worker's current, authenticated connection, acknowledged by the server's answer. A message that can't be sent — no such connection, a failed send, or an answer other than Ok — is buffered instead, and replayed when the worker next re-syncs.
+/// Sends log output, resource metrics and commit reports on the worker's current, authenticated connection, acknowledged by the server's answer. A message that can't be sent — no such connection, a failed send, or an answer other than Ok — is buffered instead, and replayed when the worker next re-syncs.
 ///
 /// Give it a plain logger, never a job's LoggerTee: a failed StreamLogs would otherwise log into the job's own log, which sends another chunk that fails the same way.
 /// </summary>
@@ -81,7 +81,7 @@ public class BufferedHubSender
         // Once per outage, not once per dropped message: the latch clears on the next send that gets through.
         if (Interlocked.Exchange(ref _overflowing, 1) == 0)
         {
-            _logger.LogWarning("Outgoing message buffer is full at {Max} messages; dropping the oldest, so some of this outage's log output will be missing", MessageBuffer.MaxMessages);
+            _logger.LogWarning("Outgoing message buffer is full at {Max} messages; dropping the oldest, so some of this outage's log output and metrics will be missing", MessageBuffer.MaxMessages);
         }
     }
 }

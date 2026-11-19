@@ -150,6 +150,88 @@ namespace Ilmarinen.Database.Migrations
                     b.ToTable("JobLogChunks");
                 });
 
+            modelBuilder.Entity("Ilmarinen.Database.Entities.JobMetricsBatch", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SequenceNumber")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId", "SequenceNumber");
+
+                    b.ToTable("JobMetricsBatches");
+                });
+
+            modelBuilder.Entity("Ilmarinen.Database.Entities.JobStep", b =>
+                {
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Index")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("CpuSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("CpuThrottledSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime>("EndedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Image")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("ImageFromEarlierStep")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<double>("PeakCores")
+                        .HasColumnType("double precision");
+
+                    b.Property<long>("PeakMemBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("PullSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<long>("ReadBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("WriteBytes")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("JobId", "Index");
+
+                    b.ToTable("JobSteps");
+                });
+
             modelBuilder.Entity("Ilmarinen.Database.Entities.Notification", b =>
                 {
                     b.Property<Guid>("Id")
@@ -346,6 +428,28 @@ namespace Ilmarinen.Database.Migrations
                 });
 
             modelBuilder.Entity("Ilmarinen.Database.Entities.JobLogChunk", b =>
+                {
+                    b.HasOne("Ilmarinen.Database.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("Ilmarinen.Database.Entities.JobMetricsBatch", b =>
+                {
+                    b.HasOne("Ilmarinen.Database.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("Ilmarinen.Database.Entities.JobStep", b =>
                 {
                     b.HasOne("Ilmarinen.Database.Entities.Job", "Job")
                         .WithMany()

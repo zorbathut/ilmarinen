@@ -66,6 +66,9 @@ public class IntegrationTestFixture : IAsyncDisposable
 
     private int _workerCount;
 
+    /// <summary>How often workers started from here on sample a job's resource use; off by default.</summary>
+    public TimeSpan WorkerMetricsInterval { get; set; } = TimeSpan.Zero;
+
     public Task<Guid> StartWorkerAsync() => StartWorkerAsync(diagnostic: null, waitForReady: true);
 
     public async Task<Guid> StartWorkerAsync(Func<IServiceProvider, Ilmarinen.Worker.Services.IWorkerDiagnostic>? diagnostic, bool waitForReady, string? bundleHash = null)
@@ -76,7 +79,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         var registrationService = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
         var result = await registrationService.RegisterWorkerAsync($"test-worker-{_workerCount}");
 
-        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey, diagnostic, bundleHash);
+        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey, diagnostic, bundleHash) { MetricsInterval = WorkerMetricsInterval };
         _workerHost = _workerBuilder.Build();
         WorkerUpdateSignal = _workerHost.Services.GetRequiredService<Ilmarinen.Worker.Services.UpdateSignal>();
         _workerCts = new CancellationTokenSource();

@@ -370,6 +370,25 @@ public class WorkerHub : Hub<IWorkerClient>
         return SessionAnswer.Ok;
     }
 
+    /// <summary>A chunk of a job's resource metrics. Taken from the current connection like log output, and only for the worker's own job: a job reassigned since must not collect another worker's figures.</summary>
+    public async Task<SessionAnswer> StreamMetrics(JobMetricsChunk chunk)
+    {
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
+        {
+            return SessionAnswer.Fenced;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        if (await scope.ServiceProvider.GetRequiredService<JobRepository>().GetAssignedWorkerAsync(chunk.JobId) != session.WorkerId)
+        {
+            _logger.LogWarning("Worker {WorkerId} sent metrics for {JobId}, which isn't assigned to it; ignoring", session.WorkerId, chunk.JobId);
+            return SessionAnswer.Ok;
+        }
+
+        await scope.ServiceProvider.GetRequiredService<JobMetricsRepository>().SaveAsync(chunk);
+        return SessionAnswer.Ok;
+    }
+
     public async Task<SessionAnswer> StreamLogs(LogChunk chunk)
     {
         if (_sessions.ByConnection(Context.ConnectionId) == null)

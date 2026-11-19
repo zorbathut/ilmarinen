@@ -37,6 +37,9 @@ public class TestWorkerBuilder
         return ActivatorUtilities.CreateInstance<DockerWorkerDiagnostic>(services);
     }
 
+    /// <summary>Off unless a test is about metrics: the suite runs in parallel, and every job sampling the Docker daemon would load it for nothing.</summary>
+    public TimeSpan MetricsInterval { get; init; } = TimeSpan.Zero;
+
     public Guid WorkerId => _workerId;
     public string WorkspacePath => _workspacePath;
 
@@ -49,7 +52,8 @@ public class TestWorkerBuilder
             WorkerKey = _workerKey,
             BundleHash = _bundleHash,
             // Measure after every job, so a test doesn't wait out the production spacing
-            WorkspaceUsageInterval = TimeSpan.Zero
+            WorkspaceUsageInterval = TimeSpan.Zero,
+            MetricsInterval = MetricsInterval
         };
 
         var builder = Host.CreateApplicationBuilder();

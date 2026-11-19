@@ -43,6 +43,7 @@ public class WorkerHubAuthenticationTests
         Assert.That(await stranger.Heartbeat(), Is.EqualTo(SessionAnswer.Fenced));
         Assert.That(await stranger.ReportCommit(jobId, "abc123"), Is.EqualTo(SessionAnswer.Fenced));
         Assert.That(await stranger.StreamLogs(new LogChunk { JobId = jobId, SequenceNumber = 1, Content = "{}", Timestamp = DateTime.UtcNow }), Is.EqualTo(SessionAnswer.Fenced));
+        Assert.That(await stranger.StreamMetrics(new JobMetricsChunk { JobId = jobId, SequenceNumber = 1, Content = "{}", Timestamp = DateTime.UtcNow }), Is.EqualTo(SessionAnswer.Fenced));
         Assert.That(stranger.WorkspaceDeleted("ws", new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Success }), Is.EqualTo(SessionAnswer.Fenced));
 
         var job = await _fixture.GetJobAsync(jobId);

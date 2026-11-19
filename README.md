@@ -296,6 +296,34 @@ The server exposes subscriber management via REST:
 curl -s "$SERVER/api/jobs/queue/estimate" | jq -r '"\(.queuedJobs) queued · ~\((.estimatedDrainSeconds / 60) | ceil)m"'
 ```
 
+### Resource Metrics
+
+While a job runs, its worker samples resource use every 2 seconds (`ILMARINEN_METRICS_INTERVAL_SECONDS` on the worker; `0` turns it off).
+
+- `GET /api/jobs/{id}/metrics` returns the samples as NDJSON: one versioned record per line (`Ilmarinen.Protocol.Metrics`). The records:
+  - **host:** the machine;
+  - **container:** each container, the first time it is seen;
+  - **step:** each step's start and end, with whether it runs an image an earlier step returned (matched by name, so it can flag a dependency that isn't there, but never misses one);
+  - **stepSummary:** what the step used, written when it ends;
+  - **pull:** image pulls;
+  - **sample:** one per interval.
+- A sample holds:
+  - whole-host CPU (user, system, iowait, steal), memory (available, free, dirty, swap), disk throughput, ops and busy time, and pressure stall averages;
+  - each job container's CPU (and time held back by a CPU limit), working-set memory, disk and network rates, and process count;
+  - how many other job networks were on the Docker host at the time: above zero, the host figures include another job's work. A network left behind by a failed cleanup counts too.
+- `GET /api/jobs/{id}/steps` summarises each step: duration, status, CPU-seconds, peak cores and memory, disk bytes, and time spent pulling.
+
+The per-container figures cover only the containers on the job's Docker network: the step's own container, nested `Run` containers, services, and the worker's own container (doing checkout and compile). Some work happens outside that network, and shows only in the host figures:
+- BuildKit image builds;
+- image pulls;
+- a script's own `docker run` or `docker compose`.
+
+The host figures describe the machine the worker process runs on. With a remote `DOCKER_HOST`, or Docker inside a VM, that isn't the machine running the containers. Host network traffic isn't recorded.
+
+Memory is sampled, so short spikes can be missed; memory pressure is the signal for those. A container that starts and stops between two samples is missed entirely.
+
+The metrics travel with the job's log and change the protocol: server and workers must be on the same version.
+
 ## Development
 
 ```bash

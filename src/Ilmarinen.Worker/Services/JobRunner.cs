@@ -3,6 +3,7 @@ using Ilmarinen.Models;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Ilmarinen.Scripting;
+using Ilmarinen.Worker.Metrics;
 using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
@@ -25,6 +26,7 @@ public class JobRunner
     private readonly BufferedHubSender _sender;
     private readonly ILogger _logger;
     private readonly LogCollector _logCollector;
+    private readonly JobMetricsSampler? _metrics;
     private bool _mirrorRebuilt;
 
     public JobRunner(
@@ -33,7 +35,8 @@ public class JobRunner
         JobAssignment job,
         BufferedHubSender sender,
         ILogger logger,
-        LogCollector logCollector)
+        LogCollector logCollector,
+        JobMetricsSampler? metrics)
     {
         _config = config;
         _workspaceManager = workspaceManager;
@@ -41,6 +44,7 @@ public class JobRunner
         _sender = sender;
         _logger = logger;
         _logCollector = logCollector;
+        _metrics = metrics;
     }
 
     public async Task<JobStatus> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -80,7 +84,9 @@ public class JobRunner
                 hostWorkDir,
                 _config.WorkerContainerId,
                 artifactSaver: artifactSaver,
-                onOutput: _logCollector.AsCallback());
+                onOutput: _logCollector.AsCallback(),
+                onEvent: _metrics != null ? _metrics.OnPipelineEventAsync : null);
+            _metrics?.AttachPipeline(() => runner.Progress);
             var success = await runner.RunAsync(prepared.Steps, cancellationToken);
 
             return success ? JobStatus.Success : JobStatus.Failed;

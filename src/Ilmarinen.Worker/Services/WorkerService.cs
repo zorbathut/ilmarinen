@@ -1,7 +1,9 @@
+using Docker.DotNet;
 using Ilmarinen.Docker;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
+using Ilmarinen.Worker.Metrics;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -45,6 +47,9 @@ public class WorkerService : BackgroundService
     private readonly ILogger<WorkerService> _logger;
     private readonly MessageBuffer _messageBuffer = new();
     private readonly BufferedHubSender _sender;
+
+    // One client for the life of the process, shared by every job's resource sampling.
+    private readonly Lazy<DockerClient> _metricsDocker = new(DockerClientFactory.Create);
 
     // Identifies this process to the server: its connections are (instance, counter), and a later one supersedes an earlier.
     private readonly Guid _instanceId = Guid.NewGuid();
@@ -594,6 +599,7 @@ public class WorkerService : BackgroundService
         var status = JobStatus.Failed;
         var logCollector = new LogCollector(job.Id, _sender, _logger);
         var jobLogger = new LoggerTee(_logger, logCollector);
+        var metrics = StartMetrics(job.Id);
 
         try
         {
@@ -606,7 +612,7 @@ public class WorkerService : BackgroundService
                 // Keep the host from auto-suspending out from under us for as long as the job runs.
                 using var inhibitor = await _sleepInhibitor.AcquireAsync($"Ilmarinen job {job.Id}");
 
-                var runner = new JobRunner(_config, _workspaceManager, job, _sender, jobLogger, logCollector);
+                var runner = new JobRunner(_config, _workspaceManager, job, _sender, jobLogger, logCollector, metrics);
                 var ran = await runner.ExecuteAsync(jobCts.Token);
 
                 // A pipeline that ran to the end reports what it actually did, even if the worker is on its way out by now.
@@ -646,7 +652,34 @@ public class WorkerService : BackgroundService
         {
             _runningJobs.TryRemove(job.Id, out _);
             cancel.Dispose();
+            if (metrics != null)
+            {
+                await metrics.StopAsync();
+            }
             await FinishJobAsync(job, status, DateTime.UtcNow - startTime);
+        }
+    }
+
+    /// <summary>
+    /// Starts sampling the job's resource use, unless the worker has it turned off. Best effort: a job runs, and is reported, whether or not it can be measured. Given the plain logger, for the same reason the sender is: a failure logged into the job's own log would be sent back through the same path.
+    /// </summary>
+    private JobMetricsSampler? StartMetrics(Guid jobId)
+    {
+        if (_config.MetricsInterval <= TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var sampler = new JobMetricsSampler(jobId, _config.MetricsInterval, new ProcHostSource("/proc"), new DockerContainerSource(_metricsDocker.Value, _config.WorkerContainerId), _config.WorkerContainerId, chunk => _sender.SendOrBufferAsync("StreamMetrics", chunk), _logger, TimeProvider.System);
+            sampler.Start();
+            return sampler;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not start resource metrics for job {JobId}; it runs unmeasured", jobId);
+            return null;
         }
     }
 

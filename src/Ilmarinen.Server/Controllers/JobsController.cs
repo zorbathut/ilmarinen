@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Channels;
@@ -64,6 +65,7 @@ public class JobsController : ControllerBase
     private readonly JobScheduler _scheduler;
     private readonly JobRepository _jobs;
     private readonly JobLogRepository _logs;
+    private readonly JobMetricsRepository _metrics;
     private readonly LogStreamService _logStream;
     private readonly LogSubscriptionService _subscriptions;
     private readonly IHostApplicationLifetime _lifetime;
@@ -73,6 +75,7 @@ public class JobsController : ControllerBase
         JobScheduler scheduler,
         JobRepository jobs,
         JobLogRepository logs,
+        JobMetricsRepository metrics,
         LogStreamService logStream,
         LogSubscriptionService subscriptions,
         IHostApplicationLifetime lifetime,
@@ -81,6 +84,7 @@ public class JobsController : ControllerBase
         _scheduler = scheduler;
         _jobs = jobs;
         _logs = logs;
+        _metrics = metrics;
         _logStream = logStream;
         _subscriptions = subscriptions;
         _lifetime = lifetime;
@@ -155,6 +159,32 @@ public class JobsController : ControllerBase
     public async Task<IActionResult> RawLog(Guid id)
     {
         return await WriteWholeLogAsync(id, "inline");
+    }
+
+    /// <summary>The job's resource-metrics stream so far, as NDJSON: one record per line (see Ilmarinen.Protocol.Metrics.MetricsRecords). Each chunk is headed by the host record, so it repeats.</summary>
+    [HttpGet("{id}/metrics")]
+    public async Task<IActionResult> GetMetrics(Guid id)
+    {
+        if (await _jobs.GetAsync(id) == null)
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "no-store";
+        return Content(await _metrics.GetContentAsync(id), "application/x-ndjson", Encoding.UTF8);
+    }
+
+    /// <summary>What each of the job's steps used, summarised from its metrics once the step ended.</summary>
+    [HttpGet("{id}/steps")]
+    public async Task<ActionResult<IReadOnlyList<JobStepInfo>>> GetSteps(Guid id)
+    {
+        if (await _jobs.GetAsync(id) == null)
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "no-store";
+        return Ok((await _metrics.GetStepsAsync(id)).Select(JobStepInfo.From).ToList());
     }
 
     private async Task<IActionResult> WriteWholeLogAsync(Guid id, string disposition)

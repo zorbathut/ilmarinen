@@ -35,6 +35,13 @@ public class WorkerConfig
     public TimeSpan WorkspaceUsageInterval { get; init; } = TimeSpan.FromMinutes(1);
 
     /// <summary>
+    /// How often a running job's resource use is sampled; zero turns sampling off. Set via ILMARINEN_METRICS_INTERVAL_SECONDS.
+    /// </summary>
+    public TimeSpan MetricsInterval { get; init; } = DefaultMetricsInterval;
+
+    public static readonly TimeSpan DefaultMetricsInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>
     /// Hash of the bundle this worker was launched from. Set via ILMARINEN_BUNDLE_HASH by the launcher; null means classic mode (no self-update behavior).
     /// </summary>
     public string? BundleHash { get; init; }

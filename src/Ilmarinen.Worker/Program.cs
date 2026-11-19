@@ -4,6 +4,7 @@ using Ilmarinen.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
+using System.Globalization;
 using System;
 
 var serverUrl = Environment.GetEnvironmentVariable("ILMARINEN_SERVER_URL")
@@ -15,13 +16,19 @@ var workerKey = Environment.GetEnvironmentVariable("ILMARINEN_WORKER_KEY")
 
 var workspacePath = Environment.GetEnvironmentVariable("ILMARINEN_WORKSPACE_PATH");
 var bundleHash = Environment.GetEnvironmentVariable("ILMARINEN_BUNDLE_HASH");
+var metricsInterval = Environment.GetEnvironmentVariable("ILMARINEN_METRICS_INTERVAL_SECONDS") is { } metricsSeconds
+    ? double.TryParse(metricsSeconds, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) && seconds >= 0
+        ? TimeSpan.FromSeconds(seconds)
+        : throw new InvalidOperationException($"ILMARINEN_METRICS_INTERVAL_SECONDS must be a number of seconds, 0 to turn metrics off; got '{metricsSeconds}'.")
+    : (TimeSpan?)null;
 
 var config = new WorkerConfig
 {
     ServerUrl = serverUrl,
     WorkerKey = workerKey,
     WorkspacePath = workspacePath ?? WorkerConfig.GetDefaultWorkspacePath(),
-    BundleHash = bundleHash
+    BundleHash = bundleHash,
+    MetricsInterval = metricsInterval ?? WorkerConfig.DefaultMetricsInterval
 };
 
 var builder = Host.CreateApplicationBuilder(args);

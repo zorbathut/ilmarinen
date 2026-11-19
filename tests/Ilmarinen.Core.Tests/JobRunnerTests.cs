@@ -63,7 +63,8 @@ public class JobRunnerTests
             job,
             sender,
             logger,
-            new LogCollector(job.Id, sender, logger));
+            new LogCollector(job.Id, sender, logger),
+            metrics: null);
 
         await runner.ExecuteAsync();
 
