@@ -366,35 +366,80 @@ public class JobRepository
     /// </summary>
     public async Task<IReadOnlyDictionary<Guid, TimeSpan>> GetDurationEstimatesAsync(IEnumerable<JobInfo> jobs)
     {
-        var estimates = new Dictionary<Guid, TimeSpan>();
-        var running = jobs
-            .Where(j => j.Status == JobStatus.Running && j.WorkerId != null)
-            .GroupBy(j => (j.RepoUrl, j.ScriptPath, WorkerId: j.WorkerId!.Value));
-        foreach (var triple in running)
-        {
-            var (repoUrl, scriptPath, workerId) = triple.Key;
-            var latest = await _db.Jobs
-                .Where(j => j.WorkerId == workerId
-                    && j.Status == JobStatus.Success
-                    && j.RepoUrl == repoUrl
-                    && j.ScriptPath == scriptPath
-                    && j.StartedAt != null
-                    && j.CompletedAt != null)
-                .OrderByDescending(j => j.CompletedAt)
-                .Take(EstimateSampleSize)
-                .Select(j => new { StartedAt = j.StartedAt!.Value, CompletedAt = j.CompletedAt!.Value })
-                .ToListAsync();
+        var running = jobs.Where(j => j.Status == JobStatus.Running && j.WorkerId != null).ToList();
+        var known = await GetScriptEstimatesAsync(running.Select(j => (j.RepoUrl, j.ScriptPath)));
 
-            var estimate = EstimateDuration(latest.Select(j => j.CompletedAt - j.StartedAt).ToList());
-            if (estimate != null)
+        var estimates = new Dictionary<Guid, TimeSpan>();
+        foreach (var job in running)
+        {
+            if (known.PerWorker.TryGetValue((job.WorkerId!.Value, job.RepoUrl, job.ScriptPath), out var estimate))
             {
-                foreach (var job in triple)
-                {
-                    estimates[job.Id] = estimate.Value;
-                }
+                estimates[job.Id] = estimate;
             }
         }
         return estimates;
+    }
+
+    /// <summary>
+    /// How long each worker takes to run each of these scripts (<see cref="EstimateDuration"/>), and — rougher, for a worker that hasn't — the median of the latest ten successful runs on any worker: workers differ, and across workers there is no one setup run to leave out. Two queries however many scripts and workers there are.
+    /// </summary>
+    public async Task<ScriptEstimates> GetScriptEstimatesAsync(IEnumerable<(string RepoUrl, string ScriptPath)> scripts)
+    {
+        var wanted = scripts.ToHashSet();
+        var perWorker = new Dictionary<(Guid WorkerId, string RepoUrl, string ScriptPath), TimeSpan>();
+        var acrossWorkers = new Dictionary<(string RepoUrl, string ScriptPath), TimeSpan>();
+        if (wanted.Count == 0)
+        {
+            return new ScriptEstimates(perWorker, acrossWorkers);
+        }
+
+        // Narrowed by repositories and script paths separately (EF can't match pairs); a pair nobody asked for is dropped below.
+        var repoUrls = wanted.Select(w => w.RepoUrl).Distinct().ToList();
+        var scriptPaths = wanted.Select(w => w.ScriptPath).Distinct().ToList();
+        var successes = _db.Jobs.Where(j => j.Status == JobStatus.Success
+            && j.StartedAt != null
+            && j.CompletedAt != null
+            && repoUrls.Contains(j.RepoUrl)
+            && scriptPaths.Contains(j.ScriptPath));
+
+        // Per key, the latest few: a lateral join, which the history index answers without reading every success.
+        var byWorker = await successes
+            .Where(j => j.WorkerId != null)
+            .Select(j => new { j.WorkerId, j.RepoUrl, j.ScriptPath })
+            .Distinct()
+            .SelectMany(k => successes
+                .Where(j => j.WorkerId == k.WorkerId && j.RepoUrl == k.RepoUrl && j.ScriptPath == k.ScriptPath)
+                .OrderByDescending(j => j.CompletedAt)
+                .Take(EstimateSampleSize))
+            .Select(j => new { WorkerId = j.WorkerId!.Value, j.RepoUrl, j.ScriptPath, StartedAt = j.StartedAt!.Value, CompletedAt = j.CompletedAt!.Value })
+            .ToListAsync();
+        foreach (var triple in byWorker.GroupBy(j => (j.WorkerId, j.RepoUrl, j.ScriptPath)).Where(g => wanted.Contains((g.Key.RepoUrl, g.Key.ScriptPath))))
+        {
+            var durations = triple.OrderByDescending(j => j.CompletedAt).Select(j => j.CompletedAt - j.StartedAt).ToList();
+            if (EstimateDuration(durations) is { } estimate)
+            {
+                perWorker[triple.Key] = estimate;
+            }
+        }
+
+        var byScript = await successes
+            .Select(j => new { j.RepoUrl, j.ScriptPath })
+            .Distinct()
+            .SelectMany(k => successes
+                .Where(j => j.RepoUrl == k.RepoUrl && j.ScriptPath == k.ScriptPath)
+                .OrderByDescending(j => j.CompletedAt)
+                .Take(EstimateSampleSize - 1))
+            .Select(j => new { j.RepoUrl, j.ScriptPath, StartedAt = j.StartedAt!.Value, CompletedAt = j.CompletedAt!.Value })
+            .ToListAsync();
+        foreach (var pair in byScript.GroupBy(j => (j.RepoUrl, j.ScriptPath)).Where(g => wanted.Contains(g.Key)))
+        {
+            if (Median(pair.Select(j => j.CompletedAt - j.StartedAt).ToList()) is { } estimate)
+            {
+                acrossWorkers[pair.Key] = estimate;
+            }
+        }
+
+        return new ScriptEstimates(perWorker, acrossWorkers);
     }
 
     /// <summary>
@@ -402,7 +447,12 @@ public class JobRepository
     /// </summary>
     public static TimeSpan? EstimateDuration(IReadOnlyList<TimeSpan> successesNewestFirst)
     {
-        var sample = successesNewestFirst.Take(EstimateSampleSize).SkipLast(1).Order().ToList();
+        return Median(successesNewestFirst.Take(EstimateSampleSize).SkipLast(1).ToList());
+    }
+
+    private static TimeSpan? Median(IReadOnlyList<TimeSpan> durations)
+    {
+        var sample = durations.Order().ToList();
         if (sample.Count == 0)
         {
             return null;
@@ -566,3 +616,5 @@ public class JobRepository
 }
 
 public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInstanceId);
+
+public record ScriptEstimates(IReadOnlyDictionary<(Guid WorkerId, string RepoUrl, string ScriptPath), TimeSpan> PerWorker, IReadOnlyDictionary<(string RepoUrl, string ScriptPath), TimeSpan> AcrossWorkers);

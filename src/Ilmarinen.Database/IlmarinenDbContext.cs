@@ -28,6 +28,8 @@ public class IlmarinenDbContext : DbContext
             e.HasIndex(j => j.CreatedAt);
             e.HasIndex(j => j.PipelineId);
             e.HasIndex(j => new { j.WorkerId, j.Status });
+            // Duration estimates read the latest successes of a script, often of every queued one at once.
+            e.HasIndex(j => new { j.RepoUrl, j.ScriptPath, j.Status, j.CompletedAt });
         });
 
         modelBuilder.Entity<Pipeline>(e =>

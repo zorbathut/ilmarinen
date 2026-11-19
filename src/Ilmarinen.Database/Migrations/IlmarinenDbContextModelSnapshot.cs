@@ -86,6 +86,8 @@ namespace Ilmarinen.Database.Migrations
 
                     b.HasIndex("WorkerId", "Status");
 
+                    b.HasIndex("RepoUrl", "ScriptPath", "Status", "CompletedAt");
+
                     b.ToTable("Jobs");
                 });
 
