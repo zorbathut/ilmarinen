@@ -17,8 +17,8 @@ public class MessageBuffer
 {
     /// <summary>
     /// How many messages a disconnected worker may hold. A chatty pipeline produces a log chunk every 100ms, so an hour
-    /// offline is tens of thousands of them — unbounded, that is the worker's memory. Past the cap the oldest go first,
-    /// which sheds log output and keeps the job result that was queued behind it.
+    /// offline is tens of thousands of them — unbounded, that is the worker's memory. Past the cap the oldest go first.
+    /// Job results are kept apart, in the <see cref="Ilmarinen.Worker.Services.ResultOutbox"/>, which drops nothing.
     /// </summary>
     public const int MaxMessages = 2000;
 
@@ -53,7 +53,7 @@ public class MessageBuffer
     ///
     /// Deliberately not decided by exception type: SignalR delivers a hub's considered refusal and an incidental
     /// server-side fault as the same HubException, so "the server will never accept this" can't be told from "the
-    /// server's database blipped" — and discarding a job result over the latter would lose the job.
+    /// server's database blipped" — and discarding a commit report over the latter would lose it for good.
     /// </summary>
     public async Task ReplayAsync(Func<BufferedMessage, Task> send, ILogger logger)
     {

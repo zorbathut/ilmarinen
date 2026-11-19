@@ -32,6 +32,7 @@ public class WorkerService : BackgroundService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<WorkerService> _logger;
     private readonly MessageBuffer _messageBuffer = new();
+    private readonly ResultOutbox _results = new();
     private HubConnection? _connection;
     private BufferedHubSender? _sender;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new();
@@ -415,8 +416,8 @@ public class WorkerService : BackgroundService
 
         var failures = Interlocked.Increment(ref _handshakeFailures);
 
-        // A buffered message (typically a job result) dies with the process, so hold out far longer when the buffer is non-empty — exiting would mark a finished job Failed. Not forever, though: across a genuine protocol break the buffer is undeliverable anyway.
-        var threshold = _messageBuffer.IsEmpty ? 3 : 20;
+        // An unacknowledged job result dies with the process, so hold out far longer while one is pending — exiting would mark a finished job Failed. Not forever, though: across a genuine protocol break it is undeliverable anyway.
+        var threshold = _results.IsEmpty ? 3 : 20;
         if (failures >= threshold)
         {
             RequestUpdateExit($"{failures} consecutive handshake failures");
@@ -449,6 +450,9 @@ public class WorkerService : BackgroundService
         {
             // Replay buffered messages first so the server has accurate state before we call Reconnect (e.g., a buffered JobCompleted).
             await _messageBuffer.ReplayAsync(msg => _connection!.InvokeCoreAsync(msg.Method, msg.Args), _logger);
+
+            // After the logs, so a job's tail is in before its result turns it terminal.
+            await _results.ReplayAsync(entry => _connection!.InvokeAsync("JobCompleted", entry.JobId, entry.Result));
 
             // Reconcile state with server
             currentJob = CurrentJobId;
@@ -648,13 +652,35 @@ public class WorkerService : BackgroundService
 
     private async Task ReportRejectionAsync(JobAssignment job)
     {
-        await _sender!.SendOrBufferAsync("JobCompleted", job.Id, new JobResult
+        await DeliverResultAsync(job.Id, new JobResult
         {
             Id = job.Id,
             Status = JobStatus.Failed,
             Duration = TimeSpan.Zero,
             Workspaces = SafeDiscoverWorkspaces()
         });
+    }
+
+    /// <summary>Sends a job's result, keeping it in the outbox until the server has acknowledged it; one that can't be sent now goes at the next re-sync. Returns whether it was acknowledged now. Never throws, for the same reason as <see cref="BufferedHubSender.SendOrBufferAsync"/>.</summary>
+    private async Task<bool> DeliverResultAsync(Guid jobId, JobResult result)
+    {
+        var entry = _results.Add(jobId, result);
+        if (_connection!.State != HubConnectionState.Connected)
+        {
+            return false;
+        }
+
+        try
+        {
+            await _connection.InvokeAsync("JobCompleted", jobId, result);
+            _results.Acknowledge(entry);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send the result of job {JobId}; it goes again at the next re-sync", jobId);
+            return false;
+        }
     }
 
     private async Task ExecuteJobAsync(JobAssignment job)
@@ -767,7 +793,7 @@ public class WorkerService : BackgroundService
             ExitActivity();
 
             // The server's JobCompleted handler marks this worker ready and dispatches the next queued job. Sending an explicit Ready here too would double-trigger dispatch and could stack a second job on this worker.
-            return await _sender!.SendOrBufferAsync("JobCompleted", jobId, result);
+            return await DeliverResultAsync(jobId, result);
         }
         finally
         {
