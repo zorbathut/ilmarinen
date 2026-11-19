@@ -325,6 +325,24 @@ public class JobSchedulingTests
         Assert.That(await JobStatusAsync(realJob), Is.EqualTo(JobStatus.Running));
     }
 
+    // An idle worker has no running job of its own to compare against, so the check above can't stop it naming somebody else's.
+    [Test]
+    public async Task JobCompleted_FromAnIdleWorker_ForAnotherWorkersJob_IsIgnored()
+    {
+        const string busyConn = "conn-busy-owner";
+        const string idleConn = "conn-idle-other";
+        var owner = await RegisterReadyWorkerAsync(busyConn);
+
+        var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
+        var jobId = await scheduler.EnqueueJobAsync(Submission());
+        Assert.That(await RunningJobCountAsync(owner), Is.EqualTo(1));
+        await RegisterReadyWorkerAsync(idleConn);
+
+        await MakeHub(idleConn).JobCompleted(jobId, new JobResult { Id = jobId, Status = JobStatus.Success });
+
+        Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Running), "only the worker running a job can report its result");
+    }
+
     [TestCase(WorkerPriority.High, WorkerPriority.Low)]
     [TestCase(WorkerPriority.Low, WorkerPriority.High)]
     public async Task EnqueueJob_ReadyWorkersOfDifferentPriorities_AssignsToHighest(WorkerPriority priorityA, WorkerPriority priorityB)

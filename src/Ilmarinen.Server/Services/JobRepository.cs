@@ -227,6 +227,15 @@ public class JobRepository
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>The worker a job was last assigned to, or null if it never was (or doesn't exist).</summary>
+    public async Task<Guid?> GetAssignedWorkerAsync(Guid jobId)
+    {
+        return await _db.Jobs
+            .Where(j => j.Id == jobId)
+            .Select(j => j.WorkerId)
+            .FirstOrDefaultAsync();
+    }
+
     public async Task<Guid?> GetRunningJobForWorkerAsync(Guid workerId)
     {
         return await _db.Jobs

@@ -300,6 +300,13 @@ public class WorkerHub : Hub<IWorkerClient>
             throw new HubException("Worker not authenticated.");
         }
 
+        // Only the worker a job was assigned to can say how it went. The assignment outlives a cancel, so a cancelled job's own worker still gets to report the real outcome.
+        if (await jobs.GetAssignedWorkerAsync(jobId) != worker.Id)
+        {
+            _logger.LogWarning("Worker {WorkerId} reported JobCompleted for {JobId}, which isn't assigned to it; ignoring", worker.Id, jobId);
+            return;
+        }
+
         // A worker runs one job at a time. A JobCompleted naming anything other than its current assignment is a stale or confused message — acting on it would mark the wrong job complete and free a still-busy worker for more work.
         var runningJob = await jobs.GetRunningJobForWorkerAsync(worker.Id);
         if (runningJob != null && runningJob != jobId)
