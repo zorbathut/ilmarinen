@@ -14,7 +14,7 @@ On 2026-11-18 two workers each failed ~15 queued jobs in milliseconds while real
 
 1. **Per-worker serialization on the server.** One async lock per worker around connect/supersede, `Resume`, state reports, results, hand-backs, dispatch to that worker, cancel, and the operator's diagnostic, with the fence check inside it. This is what lets the model treat each server handler as one atomic step.
 2. **Session epochs without clocks.** A connection is identified by (process instance, a GUID made at start; connection counter, per process), bound into the signed challenge. A later connection of the same process supersedes the current one; so does a process instance not yet superseded, which *retires* the old instance — its handshakes are refused from then on. Anything on a fenced connection is refused with a distinct `Fenced` answer; the worker reconnects rather than counting it as a handshake failure.
-3. **Worker state, not events.** The worker reports `{activity, job, diagnostic status}` after every change. The server derives readiness: resumed session ∧ reported idle and healthy ∧ no diagnostic owed ∧ nothing Running for it. There is no `Ready` message. The implementation adds two server-side gates the model leaves out: a launcher-run worker on a stale bundle (which is about to drain and exit for an update), and a worker an operator has paused, are not ready. A pause only withholds dispatches, which no safety property depends on, and clearing it dispatches like any other readiness edge. So the implementation's readiness matches the model's `Ready`, and `WorkerNotStranded` holds, only for workers neither gate holds back.
+3. **Worker state, not events.** The worker reports `{activity, job, diagnostic status, hold}` after every change. A hold is the worker taking no new jobs whatever it is doing (it is shutting down, say); while one is set it hands back any assignment, and a job it is running carries on. The server derives readiness: resumed session ∧ reported idle, healthy and not held ∧ no diagnostic owed ∧ nothing Running for it. There is no `Ready` message. The implementation adds two server-side gates the model leaves out: a launcher-run worker on a stale bundle (which is about to drain and exit for an update), and a worker an operator has paused, are not ready. A pause only withholds dispatches, which no safety property depends on, and clearing it dispatches like any other readiness edge. So the implementation's readiness matches the model's `Ready`, and `WorkerNotStranded` holds, only for workers neither gate holds back.
 4. **`Resume`** is the first message on a connection: the worker's state plus its unacknowledged results, sent under the worker's state lock. The server applies the results idempotently — host re-checks and notifications only on a real status transition — then reconciles: a job Running for the worker that it didn't mention is re-queued if the same process had it (it never arrived) and failed as lost only if the process changed; a job the worker reports that the server no longer has gets `CancelJob`.
 5. **Hand back, never fail, on collision.** An assignment the worker can't take goes back with `RejectJob` and is re-queued — but never the job the worker reports running.
 6. **The server says when it gives up**: failing or cancelling a job the worker may be running sends `CancelJob`.
@@ -59,6 +59,7 @@ The model takes these for granted; this is where the C# makes them true.
 | `SrvDisconnected` | `WorkerHub.OnDisconnectedAsync` |
 | `WConnect`, `WOnReply` | `WorkerService.OpenSessionAsync`, `SyncAsync`, `SendAsync` |
 | `WOnAssign`, `WReportCompletion` | `WorkerService.OnJobAssignedAsync`, `FinishJobAsync` (`WorkerProtocolState.Assign`, `FinishJob`) |
+| `WHold`, `WRelease` | `WorkerService.SetHoldAsync` (`WorkerProtocolState.SetHold`) |
 | `WOnDiagnosticRequest`, `WDiagnosticStart`, `WDiagnosticDone` | `WorkerService.OnDiagnosticRequestedAsync`, `TryStartDiagnosticAsync`, `RunDiagnosticAsync` |
 | `WHeartbeat`, `WAbandon` | `WorkerService.KeepAliveAsync`, `EndSession` |
 
@@ -69,6 +70,7 @@ Out of scope: sweeping Running jobs after a server restart, fencing artifact upl
 - One worker W in full, plus an optional competitor that takes and finishes queued jobs, so double runs are observable. It's off in most configurations because it would mask a stranded W.
 - Connections may drop, go silent while both ends think they're up, be timed out by the server while working, or have their handshakes arrive late and out of order. The worker may restart. Within a connection, replies may overtake queued invocations: the SignalR client's symbols (`invocationMessageChannel`) are consistent with invocations running on their own loop, which is an assumption, not a reading of its code.
 - Diagnostics come back Healthy or Unhealthy (bounded), with the retry loop.
+- The worker's reasons for a hold are one flag: what matters to the protocol is whether one is set. Holds are bounded, and each is eventually released (a restart releases it too, as a new process starts with none); a hold that never ends would strand the worker by design, which is why `WorkerNotStranded` asks only about a worker that isn't holding back.
 - `MaxQueue` bounds how far the worker may run ahead of the server on one connection; it's a bound on the model, not a protocol rule.
 
 ## Properties
@@ -81,7 +83,7 @@ Out of scope: sweeping Running jobs after a server restart, fencing artifact upl
 | `NoDoubleRun` | Two workers never run the same job. |
 | `NotIncident` | The worker never runs a job the server failed as lost while the server considers it ready for more. |
 | `AllJobsSettle` | Every job eventually reaches a final status (under fairness). |
-| `WorkerNotStranded` | A connected, idle, healthy worker is eventually seen by the server as ready (under fairness). |
+| `WorkerNotStranded` | A connected, idle, healthy worker that isn't holding back is eventually seen by the server as ready (under fairness). |
 
 `NoSpuriousFailure` and `NotIncident` only bite where a job can be failed as lost, which takes a process restart; the restart configurations exercise them, and the witness `NeverLosesAJob` checks that they do. `NeverHandsBack` likewise checks that hand-back is exercised.
 
@@ -91,7 +93,7 @@ Out of scope: sweeping Running jobs after a server restart, fencing artifact upl
 
 | Check | Result |
 | --- | --- |
-| Base, stall, false timeout, cancel, operator diagnostic, unhealthy retry, competitor, cancel + operator diagnostic, competitor + operator diagnostic, out-of-order handshakes (3 connections), restart with 1 job | every safety property and both liveness properties hold |
+| Base, stall, false timeout, cancel, operator diagnostic, unhealthy retry, competitor, cancel + operator diagnostic, competitor + operator diagnostic, hold, hold + operator diagnostic, out-of-order handshakes (3 connections), restart with 1 job | every safety property and both liveness properties hold |
 | Restart with 2 jobs | safety holds; liveness at this size doesn't finish in reasonable time |
 | Witnesses `NeverHandsBack` (operator diagnostic), `NeverLosesAJob` (restart, 1 job) | violated, as expected: the guarded paths are taken |
 
@@ -109,3 +111,4 @@ Each design element replaced by its alternative (deadlock checking off, so a bou
 | `AltStateDoesNotDispatch` — a state report doesn't trigger dispatch | base | liveness |
 | `AltNoInvocationEpoch` — W acts on an invocation from an older connection | stall | `NoUntrackedRun` |
 | `AltClockEpochs` — clock epochs step back across a restart | restart, 1 job | liveness (the restarted process is fenced out for good) |
+| `AltHoldFromEvents` — the hold is a server-side flag that live reports set and clear, so Resume's state doesn't carry it | hold | liveness (a release made while disconnected is never heard, and the worker is held for good) |

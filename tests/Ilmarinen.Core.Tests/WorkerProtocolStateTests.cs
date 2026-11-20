@@ -196,6 +196,53 @@ public class WorkerProtocolStateTests
         }
     }
 
+    [Test]
+    public void Assign_WhileHeld_HandsItBack_AndReleasingTakesTheNext()
+    {
+        var state = new WorkerProtocolState();
+        state.SetHold(WorkerHold.ShuttingDown, true);
+
+        var handBack = state.Assign(Assignment());
+
+        Assert.That(handBack?.Kind, Is.EqualTo(JobOutcomeKind.Rejected));
+        Assert.That(state.Snapshot().Activity, Is.EqualTo(WorkerActivity.Idle));
+
+        state.SetHold(WorkerHold.ShuttingDown, false);
+        Assert.That(state.Assign(Assignment()), Is.Null);
+    }
+
+    [Test]
+    public void AHold_IsReported_AndChangesTheSeqOnlyWhenItChanges()
+    {
+        var state = new WorkerProtocolState();
+        var before = state.Snapshot().Seq;
+
+        Assert.That(state.SetHold(WorkerHold.ShuttingDown, true), Is.True);
+        var held = state.Snapshot();
+        Assert.That(held.Hold, Is.EqualTo(WorkerHold.ShuttingDown));
+        Assert.That(held.Seq, Is.GreaterThan(before));
+
+        Assert.That(state.SetHold(WorkerHold.ShuttingDown, true), Is.False, "already held");
+        Assert.That(state.Snapshot().Seq, Is.EqualTo(held.Seq));
+
+        Assert.That(state.SetHold(WorkerHold.ShuttingDown, false), Is.True);
+        Assert.That(state.Snapshot().Hold, Is.Null);
+        Assert.That(state.Snapshot().Seq, Is.GreaterThan(held.Seq));
+    }
+
+    [Test]
+    public void AHold_LeavesARunningJobRunning()
+    {
+        var state = new WorkerProtocolState();
+        var job = Assignment();
+        state.Assign(job);
+
+        state.SetHold(WorkerHold.ShuttingDown, true);
+
+        Assert.That(state.Snapshot().Activity, Is.EqualTo(WorkerActivity.RunningJob));
+        Assert.That(state.Snapshot().JobId, Is.EqualTo(job.Id));
+    }
+
     private static JobAssignment Assignment()
     {
         return new JobAssignment

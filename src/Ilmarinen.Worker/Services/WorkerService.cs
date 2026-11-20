@@ -163,6 +163,8 @@ public class WorkerService : BackgroundService
             await DelayUnlessStopping(fenced ? FencedReconnectDelay : ReconnectDelay, stoppingToken);
         }
 
+        await SetHoldAsync(WorkerHold.ShuttingDown, true);
+
         await diagnosticRetries;
         await usageMeasurements;
 
@@ -442,6 +444,34 @@ public class WorkerService : BackgroundService
         }
     }
 
+    /// <summary>Puts a hold on or takes it off, and reports the change if there is one.</summary>
+    public async Task SetHoldAsync(WorkerHold hold, bool held)
+    {
+        await _stateLock.WaitAsync();
+        try
+        {
+            if (_state.SetHold(hold, held))
+            {
+                ReportState();
+            }
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Under the state lock: once the stop signal has come, the worker is held, and says so before anything else it reports. A job the stop cancelled ends while the connection is still up; without the hold the server would see an idle worker and hand it the next job, only to have it handed back, over and over until the connection closed.
+    /// </summary>
+    private void HoldIfStopping()
+    {
+        if (_stoppingToken.IsCancellationRequested && _state.SetHold(WorkerHold.ShuttingDown, true))
+        {
+            ReportState();
+        }
+    }
+
     private void ReportState()
     {
         var state = _state.Snapshot();
@@ -506,10 +536,11 @@ public class WorkerService : BackgroundService
             }
 
             // The connection outlives the stop signal so a job in flight can report itself; anything assigned in that window goes back to be run elsewhere.
-            var handBack = _stoppingToken.IsCancellationRequested ? _state.HandBack(assignment) : _state.Assign(assignment);
+            HoldIfStopping();
+            var handBack = _state.Assign(assignment);
             if (handBack != null)
             {
-                _logger.LogWarning("Handing job {JobId} back: the worker is {Activity}", assignment.Id, _stoppingToken.IsCancellationRequested ? "shutting down" : _state.Activity.ToString());
+                _logger.LogWarning("Handing job {JobId} back: the worker is {Activity}{Hold}", assignment.Id, _state.Activity, _state.Hold is { } hold ? $", held ({hold})" : "");
                 ReportOutcome(handBack);
                 return;
             }
@@ -690,6 +721,7 @@ public class WorkerService : BackgroundService
         await _stateLock.WaitAsync();
         try
         {
+            HoldIfStopping();
             var outcome = _state.FinishJob(status, duration, workspaces);
             _logger.LogInformation("Job {JobId} finished: {Status}", job.Id, status);
             ReportOutcome(outcome);

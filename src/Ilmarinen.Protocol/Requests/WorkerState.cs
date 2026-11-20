@@ -19,4 +19,7 @@ public record WorkerState
 
     /// <summary>The verdict of the worker's latest diagnostic; null before its first one.</summary>
     public DiagnosticStatus? DiagnosticStatus { get; init; }
+
+    /// <summary>Set while the worker takes no new jobs; it hands back any that cross this report on the way.</summary>
+    public WorkerHold? Hold { get; init; }
 }

@@ -69,6 +69,7 @@ public class WorkerSessionRulesTests
             Assert.That(Ready(Session(ready), paused: true), Is.False, "paused by an operator");
             Assert.That(Ready(Session(ready), hasRunningJob: true), Is.False, "a job Running for it");
             Assert.That(Ready(Session(ready, bundleHash: "OLD"), serverBundleHash: "NEW"), Is.False, "a stale bundle");
+            Assert.That(Ready(Session(ready with { Hold = WorkerHold.ShuttingDown })), Is.False, "a hold");
         });
     }
 
@@ -81,7 +82,7 @@ public class WorkerSessionRulesTests
 
     private static bool Ready(WorkerSession session, bool diagnosticOwed = false, bool paused = false, bool hasRunningJob = false, string? serverBundleHash = null)
     {
-        return WorkerReadiness.IsReady(session, diagnosticOwed: diagnosticOwed, paused: paused, hasRunningJob: hasRunningJob, serverBundleHash: serverBundleHash);
+        return WorkerReadiness.IsReady(session, session.State?.Hold, diagnosticOwed: diagnosticOwed, paused: paused, hasRunningJob: hasRunningJob, serverBundleHash: serverBundleHash);
     }
 
     private static WorkerState Idle(DiagnosticStatus? diagnostic)

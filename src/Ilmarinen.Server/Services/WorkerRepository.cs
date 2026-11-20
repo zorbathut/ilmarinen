@@ -91,16 +91,16 @@ public class WorkerRepository
             .Where(w => w.Id == session.WorkerId)
             .Select(w => new { w.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .FirstOrDefaultAsync();
-        return row != null && IsReady(session, row.Paused, row.Busy);
+        return row != null && IsReady(session, session.State?.Hold, row.Paused, row.Busy);
     }
 
-    private bool IsReady(WorkerSession session, bool paused, bool hasRunningJob)
+    private bool IsReady(WorkerSession session, WorkerHold? hold, bool paused, bool hasRunningJob)
     {
-        return WorkerReadiness.IsReady(session, _sessions.DiagnosticOwed(session.WorkerId), paused, hasRunningJob, _bundles.CurrentHash);
+        return WorkerReadiness.IsReady(session, hold, _sessions.DiagnosticOwed(session.WorkerId), paused, hasRunningJob, _bundles.CurrentHash);
     }
 
     /// <summary>A connected worker as of one read of the sessions and the database: everything readiness and availability are decided from.</summary>
-    private sealed record ConnectedWorker(WorkerSession Session, string Name, WorkerPriority Priority, bool Paused, bool Busy);
+    private sealed record ConnectedWorker(WorkerSession Session, string Name, WorkerPriority Priority, bool Paused, bool Busy, WorkerHold? Hold);
 
     /// <summary>Every worker with a session, read through the workers table so a revoked worker still holding a connection never appears.</summary>
     private async Task<IReadOnlyList<ConnectedWorker>> GetConnectedWorkersAsync()
@@ -125,20 +125,20 @@ public class WorkerRepository
             .Select(s =>
             {
                 var row = rows[s.WorkerId];
-                return new ConnectedWorker(s, row.Name, row.Priority, row.Paused, row.Busy);
+                return new ConnectedWorker(s, row.Name, row.Priority, row.Paused, row.Busy, s.State?.Hold);
             })
             .ToList();
     }
 
     private bool IsReady(ConnectedWorker w)
     {
-        return IsReady(w.Session, w.Paused, w.Busy);
+        return IsReady(w.Session, w.Hold, w.Paused, w.Busy);
     }
 
-    /// <summary>Available as UnsatisfiableJobsReport defines it: connected, not paused, and either ready or running a job.</summary>
+    /// <summary>Available as UnsatisfiableJobsReport defines it: connected, not paused or held, and either ready or running a job.</summary>
     private bool IsAvailable(ConnectedWorker w)
     {
-        return IsReady(w) || (w.Busy && !w.Paused);
+        return IsReady(w) || (w.Busy && !w.Paused && w.Hold == null);
     }
 
     /// <summary>
@@ -284,7 +284,7 @@ public class WorkerRepository
             .Select(j => j.Id)
             .ToListAsync();
 
-        var isReady = session != null && IsReady(session, w.Paused, currentJobIds.Count > 0);
+        var isReady = session != null && IsReady(session, session.State?.Hold, w.Paused, currentJobIds.Count > 0);
 
         return new WorkerView
         {
@@ -298,6 +298,7 @@ public class WorkerRepository
             LastIpAddress = w.LastIpAddress,
             Priority = w.Priority,
             IsPaused = w.Paused,
+            Hold = session?.State?.Hold,
             Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
             MirrorsSizeBytes = usage?.MirrorsSizeBytes,
             UsageMeasured = usage != null,
@@ -326,7 +327,7 @@ public class WorkerRepository
         return workers.Select(w =>
         {
             var session = _sessions.ByWorker(w.Id);
-            var isReady = session != null && IsReady(session, w.Paused, workerToJobs[w.Id].Any());
+            var isReady = session != null && IsReady(session, session.State?.Hold, w.Paused, workerToJobs[w.Id].Any());
             _workerDiagnostics.TryGetValue(w.Id, out var diagnostic);
             _workerUsage.TryGetValue(w.Id, out var usage);
 
@@ -342,6 +343,7 @@ public class WorkerRepository
                 LastIpAddress = w.LastIpAddress,
                 Priority = w.Priority,
                 IsPaused = w.Paused,
+                Hold = session?.State?.Hold,
                 Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
                 MirrorsSizeBytes = usage?.MirrorsSizeBytes,
                 UsageMeasured = usage != null,
@@ -370,6 +372,9 @@ public class WorkerView
     public string? LastIpAddress { get; init; }
     public WorkerPriority Priority { get; init; }
     public bool IsPaused { get; init; }
+
+    /// <summary>Why the worker says it is taking no new jobs, if it is.</summary>
+    public WorkerHold? Hold { get; init; }
     public IReadOnlyList<WorkspaceView> Workspaces { get; init; } = [];
 
     /// <summary>

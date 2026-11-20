@@ -13,6 +13,7 @@ namespace Ilmarinen.Worker.Services;
 internal sealed class WorkerProtocolState
 {
     private readonly List<JobOutcome> _outcomes = [];
+    private readonly HashSet<WorkerHold> _holds = [];
     private long _seq;
 
     public WorkerActivity Activity { get; private set; } = WorkerActivity.Idle;
@@ -24,6 +25,12 @@ internal sealed class WorkerProtocolState
 
     /// <summary>A diagnostic was asked for while the worker was busy; it runs as soon as the worker is idle.</summary>
     public bool DiagnosticWanted { get; private set; }
+
+    /// <summary>The hold the worker reports: of those in force, the latest-declared, so the reason given is the one that will last longest.</summary>
+    public WorkerHold? Hold
+    {
+        get { return _holds.Count == 0 ? null : _holds.Max(); }
+    }
 
     public IReadOnlyList<JobOutcome> PendingOutcomes
     {
@@ -38,14 +45,15 @@ internal sealed class WorkerProtocolState
             Activity = Activity,
             JobId = Job?.Id,
             AssignmentId = Job?.AssignmentId,
-            DiagnosticStatus = DiagnosticStatus
+            DiagnosticStatus = DiagnosticStatus,
+            Hold = Hold
         };
     }
 
-    /// <summary>Takes the job if idle and returns null; otherwise returns the hand-back to report, and the server queues the job again.</summary>
+    /// <summary>Takes the job if idle and not held and returns null; otherwise returns the hand-back to report, and the server queues the job again.</summary>
     public JobOutcome? Assign(JobAssignment assignment)
     {
-        if (Activity != WorkerActivity.Idle)
+        if (Activity != WorkerActivity.Idle || Hold != null)
         {
             return HandBack(assignment);
         }
@@ -56,8 +64,28 @@ internal sealed class WorkerProtocolState
         return null;
     }
 
-    /// <summary>Gives a job back unrun, whatever the worker is doing (one that is shutting down takes nothing new).</summary>
-    public JobOutcome HandBack(JobAssignment assignment)
+    /// <summary>Puts a hold on or takes it off; returns whether the reported hold changed, and so whether there is a new state to report.</summary>
+    public bool SetHold(WorkerHold hold, bool held)
+    {
+        var before = Hold;
+        if (held)
+        {
+            _holds.Add(hold);
+        }
+        else
+        {
+            _holds.Remove(hold);
+        }
+
+        if (Hold == before)
+        {
+            return false;
+        }
+        _seq++;
+        return true;
+    }
+
+    private JobOutcome HandBack(JobAssignment assignment)
     {
         var handBack = new JobOutcome
         {

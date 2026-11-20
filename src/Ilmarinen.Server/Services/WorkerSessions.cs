@@ -59,11 +59,13 @@ public static class SessionEpoch
 /// <summary>Whether a worker can be handed a job, derived from what it last reported and the server's own gates rather than from messages that say so.</summary>
 public static class WorkerReadiness
 {
-    public static bool IsReady(WorkerSession session, bool diagnosticOwed, bool paused, bool hasRunningJob, string? serverBundleHash)
+    /// <param name="hold">The hold to judge it by: normally the one in its state, but the stuck report asks whether it would be ready without it.</param>
+    public static bool IsReady(WorkerSession session, WorkerHold? hold, bool diagnosticOwed, bool paused, bool hasRunningJob, string? serverBundleHash)
     {
         var state = session.State;
         return session.Resumed
             && state is { Activity: WorkerActivity.Idle, DiagnosticStatus: { } diagnostic }
+            && hold == null
             && DiagnosticStatusPolicy.CanAcceptJobs(diagnostic)
             && !HasStaleBundle(session, serverBundleHash)
             && !diagnosticOwed

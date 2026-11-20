@@ -13,6 +13,7 @@ CONSTANTS
     MaxCancels,         \* user cancels
     MaxOperatorDiags,   \* "Run diagnostic" clicks
     MaxUnhealthy,       \* diagnostics that may come back unhealthy, each starting a retry
+    MaxHolds,           \* times the worker may hold itself back from new jobs (shutting down, someone at the machine, going to sleep)
     MaxQueue,           \* messages the worker may have outstanding on a connection before it waits for the server to catch up
     WithCompetitor,     \* another worker takes queued jobs too (it would mask a stranded W, so it has its own configurations)
     \* Each replaces one design element with its realistic alternative; every one must break the property pinned for it in check-protocol.sh
@@ -25,7 +26,8 @@ CONSTANTS
     AltFoldDiagnostic,          \* a diagnostic request arriving during a diagnostic is satisfied by the running one
     AltReadyFromTransitions,    \* readiness raised by a completion's status transition, not derived from reported state
     AltStateDoesNotDispatch,    \* a state report updates readiness but doesn't trigger dispatch
-    AltNoInvocationEpoch        \* W acts on an invocation queued on one of its own older connections
+    AltNoInvocationEpoch,       \* W acts on an invocation queued on one of its own older connections
+    AltHoldFromEvents           \* the server keeps W's hold as a flag its reports set and clear, which Resume doesn't restore
 
 Jobs == 1..NumJobs
 NoJob == 0
@@ -39,8 +41,8 @@ Min(S) == CHOOSE x \in S : \A y \in S : x <= y
 Range(s) == {s[i] : i \in DOMAIN s}
 
 \* What the worker reports about itself
-State(act, job, diag) == [act |-> act, job |-> job, diag |-> diag]
-NoState == State("none", NoJob, "None")
+State(act, job, diag, hold) == [act |-> act, job |-> job, diag |-> diag, hold |-> hold]
+NoState == State("none", NoJob, "None", FALSE)
 
 \* Results: kept by the worker until the server acknowledges them
 RCompleted(j, s) == [t |-> "JobCompleted", j |-> j, s |-> s]
@@ -77,6 +79,7 @@ VARIABLES
     awaitDiag,        \* a host re-check or operator diagnostic has been asked for and not yet started
     wake,             \* something that can change W's readiness or the queue has happened since dispatch last ran
     readyFlag,        \* only with AltReadyFromTransitions
+    holdFlag,         \* only with AltHoldFromEvents
     connInst,         \* connection -> the W process instance that opened it (0 if not opened)
     retired,          \* W process instances a newer instance has superseded; their handshakes are refused for good
     srvDown,          \* connections the server has seen disconnect
@@ -88,21 +91,22 @@ VARIABLES
     wLock,            \* the worker's state lock, held by Resume from its snapshot until its answer
     wAct, wJob, wJobDone, wCancelReq,
     wDiag, wDiagWanted,
+    wHold,            \* the worker is holding itself back from new jobs
     wResults,         \* results not yet acknowledged
     wResumeSet,       \* the results the in-flight Resume carries
     wHeartbeat,       \* a heartbeat is awaiting its answer
     \* Budgets
-    stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed,
+    stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed, holdsUsed,
     \* Ghosts, for the properties
     reportedFailed,   \* jobs W reported Failed and the server applied
     lostFailed,       \* jobs Resume failed as lost
     handedBack,       \* whether any assignment has been handed back (non-vacuity witness)
     spurious          \* Resume failed as lost a job assigned to, or still held by, W's live process
 
-srvVars == <<status, owner, assignedInst, last, curAlive, resumed, lastState, awaitDiag, wake, readyFlag, connInst, retired, srvDown>>
+srvVars == <<status, owner, assignedInst, last, curAlive, resumed, lastState, awaitDiag, wake, readyFlag, holdFlag, connInst, retired, srvDown>>
 chanVars == <<toServer, toWorker, replies, stalled>>
-wVars == <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wResults, wResumeSet, wHeartbeat>>
-budgetVars == <<stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed>>
+wVars == <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wHold, wResults, wResumeSet, wHeartbeat>>
+budgetVars == <<stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed, holdsUsed>>
 ghostVars == <<reportedFailed, lostFailed, handedBack, spurious>>
 vars == <<srvVars, chanVars, wVars, budgetVars, ghostVars>>
 
@@ -132,6 +136,7 @@ Current(c) == c = last /\ curAlive
 Ready ==
     /\ curAlive /\ resumed
     /\ lastState.act = "Idle" /\ lastState.diag = "Healthy"
+    /\ ~(IF AltHoldFromEvents THEN holdFlag ELSE lastState.hold)
     /\ ~awaitDiag
     /\ RunningForW = {}
     /\ AltReadyFromTransitions => readyFlag
@@ -139,7 +144,7 @@ Ready ==
 Listening(c) == wUp /\ c = wConn /\ c \notin stalled /\ c \notin srvDown
 ServerHears(c) == c \notin stalled /\ c \notin srvDown
 Live == wUp /\ wSync = "none"
-MyState == State(wAct, wJob, wDiag)
+MyState == State(wAct, wJob, wDiag, wHold)
 
 \* Room for two more messages on the worker's connection (a result and the state after it); a bound on the model, not a protocol rule
 Room == Len(toServer[wConn]) + 2 <= MaxQueue
@@ -159,10 +164,11 @@ Init ==
     /\ last = 1
     /\ curAlive = TRUE
     /\ resumed = TRUE
-    /\ lastState = State("Idle", NoJob, "Healthy")
+    /\ lastState = State("Idle", NoJob, "Healthy", FALSE)
     /\ awaitDiag = FALSE
     /\ wake = TRUE
     /\ readyFlag = TRUE
+    /\ holdFlag = FALSE
     /\ connInst = [c \in Conns |-> IF c = 1 THEN 1 ELSE 0]
     /\ retired = {}
     /\ srvDown = {}
@@ -182,6 +188,7 @@ Init ==
     /\ wCancelReq = FALSE
     /\ wDiag = "Healthy"
     /\ wDiagWanted = FALSE
+    /\ wHold = FALSE
     /\ wResults = {}
     /\ wResumeSet = {}
     /\ wHeartbeat = FALSE
@@ -191,6 +198,7 @@ Init ==
     /\ cancelsUsed = 0
     /\ opDiagsUsed = 0
     /\ unhealthyUsed = 0
+    /\ holdsUsed = 0
     /\ reportedFailed = {}
     /\ lostFailed = {}
     /\ handedBack = FALSE
@@ -214,7 +222,7 @@ SrvConnect(c) ==
             /\ replies' = [replies EXCEPT ![c] = @ \cup {Reply("Connect", TRUE, NoResult)}]
        ELSE /\ replies' = [replies EXCEPT ![c] = @ \cup {Reply("Connect", FALSE, NoResult)}]
             /\ UNCHANGED <<last, retired, curAlive, resumed>>
-    /\ UNCHANGED <<status, owner, assignedInst, lastState, awaitDiag, wake, readyFlag, connInst, srvDown>>
+    /\ UNCHANGED <<status, owner, assignedInst, lastState, awaitDiag, wake, readyFlag, holdFlag, connInst, srvDown>>
     /\ UNCHANGED <<toWorker, stalled>>
     /\ UNCHANGED wVars /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
@@ -250,7 +258,7 @@ SrvResume(c) ==
        IN /\ toServer' = [toServer EXCEPT ![c] = Tail(@)]
           /\ IF ~Current(c)
              THEN /\ replies' = [replies EXCEPT ![c] = @ \cup {Reply("Resume", FALSE, NoResult)}]
-                  /\ UNCHANGED <<status, owner, resumed, lastState, awaitDiag, wake, readyFlag, toWorker, ghostVars>>
+                  /\ UNCHANGED <<status, owner, resumed, lastState, awaitDiag, wake, readyFlag, holdFlag, toWorker, ghostVars>>
              ELSE /\ status' = s2
                   /\ owner' = o2
                   /\ resumed' = TRUE
@@ -262,7 +270,7 @@ SrvResume(c) ==
                   /\ replies' = [replies EXCEPT ![c] = @ \cup {Reply("Resume", TRUE, NoResult)}]
                   /\ reportedFailed' = reportedFailed \cup failedNow
                   /\ lostFailed' = lostFailed \cup lose
-                  /\ UNCHANGED handedBack
+                  /\ UNCHANGED <<handedBack, holdFlag>>
                   \* Ground truth: a job assigned to the process that is still alive either reached it (and Resume would name it) or never did (and should go back to the queue)
                   /\ spurious' = (spurious \/ \E j \in lose : assignedInst[j] = wInst \/ JobAlive(j))
     /\ UNCHANGED <<assignedInst, last, curAlive, connInst, retired, srvDown>>
@@ -278,7 +286,8 @@ SrvState(c) ==
        THEN /\ lastState' = Head(toServer[c]).st
             /\ awaitDiag' = (awaitDiag /\ Head(toServer[c]).st.act # "Diag")
             /\ wake' = (wake \/ ~AltStateDoesNotDispatch)
-       ELSE UNCHANGED <<lastState, awaitDiag, wake>>
+            /\ holdFlag' = IF AltHoldFromEvents THEN Head(toServer[c]).st.hold ELSE holdFlag
+       ELSE UNCHANGED <<lastState, awaitDiag, wake, holdFlag>>
     /\ UNCHANGED <<status, owner, assignedInst, last, curAlive, resumed, readyFlag, connInst, retired, srvDown>>
     /\ UNCHANGED <<toWorker, replies, stalled>>
     /\ UNCHANGED wVars /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
@@ -305,7 +314,7 @@ SrvResult(c) ==
                           /\ reportedFailed' = reportedFailed \cup {r.j}
                      ELSE UNCHANGED <<awaitDiag, toWorker, reportedFailed>>
                   /\ readyFlag' = IF AltReadyFromTransitions THEN readyFlag \/ (transitioned /\ r.t = "JobCompleted") ELSE readyFlag
-    /\ UNCHANGED <<assignedInst, last, curAlive, resumed, lastState, connInst, retired, srvDown>>
+    /\ UNCHANGED <<assignedInst, last, curAlive, resumed, lastState, holdFlag, connInst, retired, srvDown>>
     /\ UNCHANGED stalled
     /\ UNCHANGED wVars /\ UNCHANGED budgetVars /\ UNCHANGED <<lostFailed, handedBack, spurious>>
 
@@ -327,9 +336,9 @@ SrvDisconnected(c) ==
     /\ srvDown' = srvDown \cup {c}
     /\ curAlive' = IF c = last THEN FALSE ELSE curAlive
     /\ resumed' = IF c = last THEN FALSE ELSE resumed
-    /\ UNCHANGED <<status, owner, assignedInst, last, lastState, awaitDiag, wake, readyFlag, connInst, retired>>
+    /\ UNCHANGED <<status, owner, assignedInst, last, lastState, awaitDiag, wake, readyFlag, holdFlag, connInst, retired>>
     /\ UNCHANGED chanVars
-    /\ UNCHANGED wVars /\ UNCHANGED <<stallsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed>> /\ UNCHANGED ghostVars
+    /\ UNCHANGED wVars /\ UNCHANGED <<stallsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed, holdsUsed>> /\ UNCHANGED ghostVars
 
 \* JobScheduler.DispatchAsync for W, under W's lock. Edge-triggered, as in the code: it runs when a handler asked for it, and assigns only if W is ready then.
 SrvDispatch ==
@@ -343,7 +352,7 @@ SrvDispatch ==
             /\ toWorker' = [toWorker EXCEPT ![last] = Append(@, IAssign(j))]
             /\ readyFlag' = IF AltReadyFromTransitions THEN FALSE ELSE readyFlag
        ELSE UNCHANGED <<status, owner, assignedInst, toWorker, readyFlag>>
-    /\ UNCHANGED <<last, curAlive, resumed, lastState, awaitDiag, connInst, retired, srvDown>>
+    /\ UNCHANGED <<last, curAlive, resumed, lastState, awaitDiag, holdFlag, connInst, retired, srvDown>>
     /\ UNCHANGED <<toServer, replies, stalled>>
     /\ UNCHANGED wVars /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
@@ -353,7 +362,7 @@ SrvCompetitorTake ==
     /\ \E j \in Queued :
         /\ status' = [status EXCEPT ![j] = "Running"]
         /\ owner' = [owner EXCEPT ![j] = "C"]
-    /\ UNCHANGED <<assignedInst, last, curAlive, resumed, lastState, awaitDiag, wake, readyFlag, connInst, retired, srvDown>>
+    /\ UNCHANGED <<assignedInst, last, curAlive, resumed, lastState, awaitDiag, wake, readyFlag, holdFlag, connInst, retired, srvDown>>
     /\ UNCHANGED chanVars /\ UNCHANGED wVars /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 SrvCompetitorFinish ==
@@ -361,7 +370,7 @@ SrvCompetitorFinish ==
         /\ owner[j] = "C"
         /\ status[j] = "Running"
         /\ status' = [status EXCEPT ![j] = "Success"]
-    /\ UNCHANGED <<owner, assignedInst, last, curAlive, resumed, lastState, awaitDiag, wake, readyFlag, connInst, retired, srvDown>>
+    /\ UNCHANGED <<owner, assignedInst, last, curAlive, resumed, lastState, awaitDiag, wake, readyFlag, holdFlag, connInst, retired, srvDown>>
     /\ UNCHANGED chanVars /\ UNCHANGED wVars /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* JobScheduler.CancelJobAsync, under W's lock: cancel, and tell W if the job is W's
@@ -372,9 +381,9 @@ SrvCancel(j) ==
     /\ status' = [status EXCEPT ![j] = "Cancelled"]
     /\ wake' = TRUE
     /\ toWorker' = IF owner[j] = "W" /\ curAlive THEN [toWorker EXCEPT ![last] = Append(@, ICancel(j))] ELSE toWorker
-    /\ UNCHANGED <<owner, assignedInst, last, curAlive, resumed, lastState, awaitDiag, readyFlag, connInst, retired, srvDown>>
+    /\ UNCHANGED <<owner, assignedInst, last, curAlive, resumed, lastState, awaitDiag, readyFlag, holdFlag, connInst, retired, srvDown>>
     /\ UNCHANGED <<toServer, replies, stalled>>
-    /\ UNCHANGED wVars /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, restartsUsed, opDiagsUsed, unhealthyUsed>> /\ UNCHANGED ghostVars
+    /\ UNCHANGED wVars /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, restartsUsed, opDiagsUsed, unhealthyUsed, holdsUsed>> /\ UNCHANGED ghostVars
 
 \* "Run diagnostic" on the worker page, under W's lock: no work until it has started
 SrvOperatorDiagnostic ==
@@ -383,9 +392,9 @@ SrvOperatorDiagnostic ==
     /\ opDiagsUsed' = opDiagsUsed + 1
     /\ awaitDiag' = TRUE
     /\ toWorker' = [toWorker EXCEPT ![last] = Append(@, IRunDiagnostic)]
-    /\ UNCHANGED <<status, owner, assignedInst, last, curAlive, resumed, lastState, wake, readyFlag, connInst, retired, srvDown>>
+    /\ UNCHANGED <<status, owner, assignedInst, last, curAlive, resumed, lastState, wake, readyFlag, holdFlag, connInst, retired, srvDown>>
     /\ UNCHANGED <<toServer, replies, stalled>>
-    /\ UNCHANGED wVars /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, unhealthyUsed>> /\ UNCHANGED ghostVars
+    /\ UNCHANGED wVars /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, unhealthyUsed, holdsUsed>> /\ UNCHANGED ghostVars
 
 -----------------------------------------------------------------------------
 \* Worker. Every change to its activity happens under its lock, and reports the new state afterwards, in order with its results.
@@ -408,7 +417,7 @@ InvocationConns ==
 \* The next invocation on connection c is of type t (W must be connected and its current connection reachable)
 CanTake(c, t) == Listening(wConn) /\ c \in InvocationConns /\ toWorker[c] # <<>> /\ Head(toWorker[c]).t = t
 
-\* An assignment: run it if idle; otherwise hand it back
+\* An assignment: run it if idle and not holding back; otherwise hand it back
 WOnAssign ==
     /\ ~wLock
     /\ Room
@@ -416,18 +425,18 @@ WOnAssign ==
         /\ CanTake(c, "AssignJob")
         /\ toWorker' = [toWorker EXCEPT ![c] = Tail(@)]
         /\ LET j == Head(toWorker[c]).j IN
-           IF wAct = "Idle"
+           IF wAct = "Idle" /\ ~wHold
            THEN /\ wAct' = "Job"
                 /\ wJob' = j
                 /\ wJobDone' = "none"
                 /\ wCancelReq' = FALSE
-                /\ ReportState(State("Job", j, wDiag))
+                /\ ReportState(State("Job", j, wDiag, wHold))
                 /\ UNCHANGED <<wResults, handedBack>>
            ELSE /\ ReportResult(RRejected(j), MyState)
                 /\ handedBack' = TRUE
                 /\ UNCHANGED <<wAct, wJob, wJobDone, wCancelReq>>
     /\ UNCHANGED srvVars /\ UNCHANGED <<replies, stalled>>
-    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wDiag, wDiagWanted, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wDiag, wDiagWanted, wHold, wResumeSet, wHeartbeat>>
     /\ UNCHANGED budgetVars /\ UNCHANGED <<reportedFailed, lostFailed, spurious>>
 
 WOnCancel ==
@@ -436,7 +445,7 @@ WOnCancel ==
         /\ toWorker' = [toWorker EXCEPT ![c] = Tail(@)]
         /\ wCancelReq' = (wCancelReq \/ (wAct = "Job" /\ wJob = Head(toWorker[c]).j))
     /\ UNCHANGED srvVars /\ UNCHANGED <<toServer, replies, stalled>>
-    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wJobDone, wDiag, wDiagWanted, wResults, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wJobDone, wDiag, wDiagWanted, wHold, wResults, wResumeSet, wHeartbeat>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* A host re-check or operator diagnostic: start now if idle, else as soon as the worker is. A request that arrives during a diagnostic gets a fresh one afterwards: the server can't tell which of the two came first.
@@ -448,12 +457,12 @@ WOnDiagnosticRequest ==
         /\ toWorker' = [toWorker EXCEPT ![c] = Tail(@)]
     /\ IF wAct = "Idle"
        THEN /\ wAct' = "Diag"
-            /\ ReportState(State("Diag", NoJob, wDiag))
+            /\ ReportState(State("Diag", NoJob, wDiag, wHold))
             /\ UNCHANGED wDiagWanted
        ELSE /\ wDiagWanted' = (wDiagWanted \/ ~(AltFoldDiagnostic /\ wAct = "Diag"))
             /\ UNCHANGED <<wAct, toServer>>
     /\ UNCHANGED srvVars /\ UNCHANGED <<replies, stalled>>
-    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wJob, wJobDone, wCancelReq, wDiag, wResults, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wJob, wJobDone, wCancelReq, wDiag, wHold, wResults, wResumeSet, wHeartbeat>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* A diagnostic starts by itself: one was asked for while busy, the last one was unhealthy (the retry loop), or there has been none since the process started
@@ -464,9 +473,9 @@ WDiagnosticStart ==
     /\ wDiagWanted \/ wDiag # "Healthy"
     /\ wAct' = "Diag"
     /\ wDiagWanted' = FALSE
-    /\ ReportState(State("Diag", NoJob, wDiag))
+    /\ ReportState(State("Diag", NoJob, wDiag, wHold))
     /\ UNCHANGED srvVars /\ UNCHANGED <<toWorker, replies, stalled>>
-    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wJob, wJobDone, wCancelReq, wDiag, wResults, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wJob, wJobDone, wCancelReq, wDiag, wHold, wResults, wResumeSet, wHeartbeat>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 WDiagnosticDone ==
@@ -476,18 +485,18 @@ WDiagnosticDone ==
     /\ \E d \in IF unhealthyUsed < MaxUnhealthy THEN {"Healthy", "Unhealthy"} ELSE {"Healthy"} :
         /\ wDiag' = d
         /\ unhealthyUsed' = IF d = "Unhealthy" THEN unhealthyUsed + 1 ELSE unhealthyUsed
-        /\ ReportState(State("Idle", NoJob, d))
+        /\ ReportState(State("Idle", NoJob, d, wHold))
     /\ wAct' = "Idle"
     /\ UNCHANGED srvVars /\ UNCHANGED <<toWorker, replies, stalled>>
-    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wJob, wJobDone, wCancelReq, wDiagWanted, wResults, wResumeSet, wHeartbeat>>
-    /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed>> /\ UNCHANGED ghostVars
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wJob, wJobDone, wCancelReq, wDiagWanted, wHold, wResults, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed, holdsUsed>> /\ UNCHANGED ghostVars
 
 WJobFinish ==
     /\ wAct = "Job"
     /\ wJobDone = "none"
     /\ wJobDone' \in (IF wCancelReq THEN {"Cancelled"} ELSE {"Success", "Failed"})
     /\ UNCHANGED srvVars /\ UNCHANGED chanVars
-    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wCancelReq, wDiag, wDiagWanted, wResults, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wCancelReq, wDiag, wDiagWanted, wHold, wResults, wResumeSet, wHeartbeat>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* The job's result is recorded and sent, then the idle state
@@ -500,9 +509,33 @@ WReportCompletion ==
     /\ wJob' = NoJob
     /\ wJobDone' = "none"
     /\ wCancelReq' = FALSE
-    /\ ReportResult(RCompleted(wJob, wJobDone), State("Idle", NoJob, wDiag))
+    /\ ReportResult(RCompleted(wJob, wJobDone), State("Idle", NoJob, wDiag, wHold))
     /\ UNCHANGED srvVars /\ UNCHANGED <<toWorker, replies, stalled>>
-    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wDiag, wDiagWanted, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wDiag, wDiagWanted, wHold, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
+
+\* The worker holds itself back from new jobs, whatever it is doing (WorkerService.SetHoldAsync); a running job carries on
+WHold ==
+    /\ ~wLock
+    /\ Room
+    /\ ~wHold
+    /\ holdsUsed < MaxHolds
+    /\ holdsUsed' = holdsUsed + 1
+    /\ wHold' = TRUE
+    /\ ReportState(State(wAct, wJob, wDiag, TRUE))
+    /\ UNCHANGED srvVars /\ UNCHANGED <<toWorker, replies, stalled>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wResults, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed>> /\ UNCHANGED ghostVars
+
+\* And takes jobs again; reported on the live connection if there is one, else carried by the next Resume
+WRelease ==
+    /\ ~wLock
+    /\ Room
+    /\ wHold
+    /\ wHold' = FALSE
+    /\ ReportState(State(wAct, wJob, wDiag, FALSE))
+    /\ UNCHANGED srvVars /\ UNCHANGED <<toWorker, replies, stalled>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wResults, wResumeSet, wHeartbeat>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* Giving up on the connection: nothing recorded is lost, a Resume in progress is abandoned
@@ -549,7 +582,7 @@ WOnReply ==
                        THEN [toServer EXCEPT ![wConn] = Append(@, MResume(MyState, wResults))]
                        ELSE toServer
     /\ UNCHANGED srvVars /\ UNCHANGED <<toWorker, stalled>>
-    /\ UNCHANGED <<wInst, wConn, connsUsed, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted>>
+    /\ UNCHANGED <<wInst, wConn, connsUsed, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wHold>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* The periodic heartbeat, an invocation answered "ok" or "fenced": how a fenced but otherwise quiet worker finds out
@@ -560,7 +593,7 @@ WHeartbeat ==
     /\ wHeartbeat' = TRUE
     /\ toServer' = [toServer EXCEPT ![wConn] = Append(@, MHeartbeat)]
     /\ UNCHANGED srvVars /\ UNCHANGED <<toWorker, replies, stalled>>
-    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wResults, wResumeSet>>
+    /\ UNCHANGED <<wInst, wConn, wUp, connsUsed, wSync, wLock, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wHold, wResults, wResumeSet>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* The worker gives up on its connection: a network drop, its own timeout on a silent one, or the server having closed it. Only while a later connection is in the budget, so a bounded run never strands it offline for good.
@@ -569,7 +602,7 @@ WAbandon ==
     /\ connsUsed < MaxConns
     /\ Abandon
     /\ UNCHANGED srvVars /\ UNCHANGED chanVars
-    /\ UNCHANGED <<wInst, wConn, connsUsed, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wResults>>
+    /\ UNCHANGED <<wInst, wConn, connsUsed, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wHold, wResults>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* Open a new connection: counter + 1 within this process
@@ -583,9 +616,9 @@ WConnect ==
        /\ toServer' = [toServer EXCEPT ![c] = <<MConnect>>]
     /\ wUp' = TRUE
     /\ wSync' = "connecting"
-    /\ UNCHANGED <<status, owner, assignedInst, last, curAlive, resumed, lastState, awaitDiag, wake, readyFlag, retired, srvDown>>
+    /\ UNCHANGED <<status, owner, assignedInst, last, curAlive, resumed, lastState, awaitDiag, wake, readyFlag, holdFlag, retired, srvDown>>
     /\ UNCHANGED <<toWorker, replies, stalled>>
-    /\ UNCHANGED <<wInst, wLock, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wResults, wResumeSet, wHeartbeat>>
+    /\ UNCHANGED <<wInst, wLock, wAct, wJob, wJobDone, wCancelReq, wDiag, wDiagWanted, wHold, wResults, wResumeSet, wHeartbeat>>
     /\ UNCHANGED budgetVars /\ UNCHANGED ghostVars
 
 \* The process dies and starts again: a new instance with nothing remembered, no diagnostic yet
@@ -603,12 +636,13 @@ WRestart ==
     /\ wCancelReq' = FALSE
     /\ wDiag' = "None"
     /\ wDiagWanted' = FALSE
+    /\ wHold' = FALSE
     /\ wResults' = {}
     /\ wResumeSet' = {}
     /\ wHeartbeat' = FALSE
     /\ UNCHANGED srvVars /\ UNCHANGED chanVars
     /\ UNCHANGED <<wConn, connsUsed>>
-    /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed>> /\ UNCHANGED ghostVars
+    /\ UNCHANGED <<stallsUsed, falseTimeoutsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed, holdsUsed>> /\ UNCHANGED ghostVars
 
 \* The current connection goes silent both ways while both ends still think it is up
 Stall ==
@@ -619,7 +653,7 @@ Stall ==
     /\ stallsUsed' = stallsUsed + 1
     /\ stalled' = stalled \cup {wConn}
     /\ UNCHANGED srvVars /\ UNCHANGED <<toServer, toWorker, replies>>
-    /\ UNCHANGED wVars /\ UNCHANGED <<falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed>> /\ UNCHANGED ghostVars
+    /\ UNCHANGED wVars /\ UNCHANGED <<falseTimeoutsUsed, restartsUsed, cancelsUsed, opDiagsUsed, unhealthyUsed, holdsUsed>> /\ UNCHANGED ghostVars
 
 -----------------------------------------------------------------------------
 Next ==
@@ -629,12 +663,12 @@ Next ==
     \/ \E j \in Jobs : SrvCancel(j)
     \/ SrvOperatorDiagnostic
     \/ WOnAssign \/ WOnCancel \/ WOnDiagnosticRequest \/ WDiagnosticStart \/ WDiagnosticDone
-    \/ WJobFinish \/ WReportCompletion \/ WOnReply \/ WHeartbeat
+    \/ WJobFinish \/ WReportCompletion \/ WOnReply \/ WHeartbeat \/ WHold \/ WRelease
     \/ WAbandon \/ WConnect \/ WRestart \/ Stall
 
 Spec == Init /\ [][Next]_vars
 
-\* Everything the system does by itself eventually happens. Left unforced: connection failures, restarts, cancels, operator clicks, and abandoning a connection that still works.
+\* Everything the system does by itself eventually happens. Left unforced: connection failures, restarts, cancels, operator clicks, holds, and abandoning a connection that still works.
 Fairness ==
     /\ \A c \in Conns :
         WF_vars(SrvConnect(c)) /\ WF_vars(SrvResume(c)) /\ WF_vars(SrvState(c)) /\ WF_vars(SrvResult(c)) /\ WF_vars(SrvHeartbeat(c))
@@ -643,6 +677,8 @@ Fairness ==
     /\ WF_vars(SrvDispatch) /\ WF_vars(SrvCompetitorTake) /\ WF_vars(SrvCompetitorFinish)
     /\ WF_vars(WOnAssign) /\ WF_vars(WOnCancel) /\ WF_vars(WOnDiagnosticRequest) /\ WF_vars(WDiagnosticStart) /\ WF_vars(WDiagnosticDone)
     /\ WF_vars(WJobFinish) /\ WF_vars(WReportCompletion) /\ WF_vars(WOnReply) /\ WF_vars(WHeartbeat)
+    \* A hold always ends: the machine is left alone, or wakes
+    /\ WF_vars(WRelease)
     /\ WF_vars(WConnect)
     \* The worker's timeout on a silent connection, and its noticing that the server closed one
     /\ WF_vars(WAbandon /\ (wConn \in stalled \/ wConn \in srvDown))
@@ -657,6 +693,7 @@ TypeOK ==
     /\ owner \in [Jobs -> Owners]
     /\ wAct \in {"Idle", "Job", "Diag"}
     /\ wDiag \in Diags
+    /\ wHold \in BOOLEAN
     /\ wSync \in {"none", "connecting", "resuming"}
     /\ (wAct = "Job") <=> (wJob \in Jobs)
 
@@ -690,8 +727,8 @@ NeverLosesAJob == lostFailed = {}
 \* Every job eventually reaches a final status
 AllJobsSettle == <>(\A j \in Jobs : status[j] \in Outcomes)
 
-\* A connected, idle, healthy worker is eventually seen by the server as ready for work
-IdleAndHealthy == Live /\ wConn = last /\ wAct = "Idle" /\ wDiag = "Healthy" /\ ~wDiagWanted
+\* A connected, idle, healthy worker that isn't holding back is eventually seen by the server as ready for work
+IdleAndHealthy == Live /\ wConn = last /\ wAct = "Idle" /\ wDiag = "Healthy" /\ ~wDiagWanted /\ ~wHold
 WorkerNotStranded == []<>(Ready \/ ~IdleAndHealthy)
 
 =============================================================================

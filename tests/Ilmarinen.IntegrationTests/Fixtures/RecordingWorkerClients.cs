@@ -4,6 +4,7 @@ using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.SignalR;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using System;
 
@@ -28,6 +29,12 @@ public sealed class RecordingWorkerClients : IWorkerClients
     public IWorkerClient Client(string connectionId)
     {
         return SentTo(connectionId);
+    }
+
+    /// <summary>How many times the job has been assigned, over every connection.</summary>
+    public int AssignmentsOf(Guid jobId)
+    {
+        return _clients.Values.Sum(c => c.Assignments.Count(a => a.Id == jobId));
     }
 
     public RecordingWorkerClient SentTo(string connectionId)

@@ -4,6 +4,7 @@ using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -68,6 +69,43 @@ public class JobDurabilityTests
         var job = await _fixture.GetJobAsync(jobId);
         Assert.That(job.Status, Is.EqualTo(JobStatus.Failed),
             "a worker shutting down should report the job it killed, not leave it Running for a reconnect that may never come");
+    }
+
+    // While the job the stop cancelled is tearing down, the connection is still up and the server can still dispatch. The worker says it is stopping before that job reports, so the server never mistakes it for an idle worker with room for the next job.
+    [Test]
+    public async Task Worker_Shutdown_SaysItIsStopping_WhileItsJobTearsDown()
+    {
+        _repo.AddFile("pipeline.csx", """
+            Step("slow")
+                .Image("alpine:latest")
+                .Run(async ctx => {
+                    await ctx.Exec("touch", "/workspace/step-started");
+                    await ctx.Exec("sleep", "60");
+                });
+            """);
+        _repo.Commit("Add slow pipeline");
+
+        var workerId = await _fixture.StartWorkerAsync();
+        var submission = new JobSubmission { RepoUrl = _repo.Url, Ref = "master", ScriptPath = "pipeline.csx" };
+        var running = await _fixture.SubmitJobAsync(submission);
+        await _fixture.WaitForJobStatusAsync(running, JobStatus.Running);
+        await WaitForStepToStartAsync(running);
+        var queued = await _fixture.SubmitJobAsync(submission);
+
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        var stopping = _fixture.StopWorkerAsync(preserveIdentity: true);
+        var holds = new List<WorkerHold?>();
+        while (!stopping.IsCompleted)
+        {
+            holds.Add((await workers.GetByIdAsync(workerId))?.Hold);
+            await Task.Delay(20);
+        }
+        await stopping;
+
+        Assert.That(holds, Does.Contain(WorkerHold.ShuttingDown));
+        Assert.That((await _fixture.GetJobAsync(running)).Status, Is.EqualTo(JobStatus.Failed));
+        Assert.That((await _fixture.GetJobAsync(queued)).Status, Is.EqualTo(JobStatus.Queued));
+        Assert.That(_fixture.Services.GetRequiredService<RecordingWorkerClients>().AssignmentsOf(queued), Is.Zero);
     }
 
     /// <summary>

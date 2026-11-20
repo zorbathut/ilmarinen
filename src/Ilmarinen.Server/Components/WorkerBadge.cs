@@ -23,6 +23,10 @@ public static class WorkerBadge
         {
             return "paused";
         }
+        if (w.Hold != null)
+        {
+            return "held";
+        }
         if (w.Diagnostic?.Status == DiagnosticStatus.Degraded)
         {
             return "degraded";
@@ -47,11 +51,24 @@ public static class WorkerBadge
         // for — has to survive; degraded rides along rather than replacing it.
         // Not ready without being busy is an idle worker the server is holding back: a host re-check owed, a bundle update pending, or a reconnect not yet resumed.
         var busy = w.CurrentJobs.Count > 0 || w.Diagnostic?.Status == DiagnosticStatus.Running;
-        var label = w.IsReady ? "Ready" : busy ? $"Busy{paused}" : w.IsPaused ? "Paused" : "Not ready";
+        var hold = w.Hold is { } h ? HoldLabel(h) : null;
+        var label = w.IsReady ? "Ready"
+            : busy ? $"Busy{paused}{(hold != null ? $", {hold.ToLowerInvariant()}" : "")}"
+            : w.IsPaused ? "Paused"
+            : hold ?? "Not ready";
         if (w.Diagnostic?.Status == DiagnosticStatus.Degraded)
         {
             return $"{label} (degraded)";
         }
         return label;
+    }
+
+    private static string HoldLabel(WorkerHold hold)
+    {
+        return hold switch
+        {
+            WorkerHold.ShuttingDown => "Stopping",
+            _ => hold.ToString()
+        };
     }
 }

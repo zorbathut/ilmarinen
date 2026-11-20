@@ -75,35 +75,38 @@ expect() {
 }
 
 # ---------------------------------------------------------------------------
-# NumJobs MaxConns MaxStalls MaxFalseTimeouts MaxRestarts MaxCancels MaxOperatorDiags WithCompetitor MaxUnhealthy
+# NumJobs MaxConns MaxStalls MaxFalseTimeouts MaxRestarts MaxCancels MaxOperatorDiags WithCompetitor MaxUnhealthy MaxHolds
 declare -A FEATURE=(
-    [base]="2 2 0 0 0 0 0 FALSE 0"
-    [stall]="2 2 1 0 0 0 0 FALSE 0"
-    [falsetimeout]="2 2 0 1 0 0 0 FALSE 0"
-    [cancel]="2 2 0 0 0 1 0 FALSE 0"
-    [opdiag]="2 2 0 0 0 0 1 FALSE 0"
-    [unhealthy]="2 2 0 0 0 0 0 FALSE 1"
-    [competitor]="2 2 0 0 0 0 0 TRUE 0"
-    [cancel-opdiag]="2 2 0 0 0 1 1 FALSE 0"
-    [competitor-opdiag]="2 2 0 0 0 0 1 TRUE 0"
-    [reorder]="2 3 0 0 0 0 0 FALSE 0"
-    [restart1]="1 3 0 0 1 0 0 FALSE 0"
-    [restart]="2 3 0 0 1 0 0 FALSE 0"
+    [base]="2 2 0 0 0 0 0 FALSE 0 0"
+    [stall]="2 2 1 0 0 0 0 FALSE 0 0"
+    [falsetimeout]="2 2 0 1 0 0 0 FALSE 0 0"
+    [cancel]="2 2 0 0 0 1 0 FALSE 0 0"
+    [opdiag]="2 2 0 0 0 0 1 FALSE 0 0"
+    [unhealthy]="2 2 0 0 0 0 0 FALSE 1 0"
+    [competitor]="2 2 0 0 0 0 0 TRUE 0 0"
+    [cancel-opdiag]="2 2 0 0 0 1 1 FALSE 0 0"
+    [competitor-opdiag]="2 2 0 0 0 0 1 TRUE 0 0"
+    [reorder]="2 3 0 0 0 0 0 FALSE 0 0"
+    [restart1]="1 3 0 0 1 0 0 FALSE 0 0"
+    [restart]="2 3 0 0 1 0 0 FALSE 0 0"
+    [hold]="2 2 0 0 0 0 0 FALSE 0 1"
+    [hold-opdiag]="2 2 0 0 0 0 1 FALSE 0 1"
 )
-SMALL=(base stall falsetimeout cancel opdiag unhealthy competitor cancel-opdiag competitor-opdiag)
+SMALL=(base stall falsetimeout cancel opdiag unhealthy competitor cancel-opdiag competitor-opdiag hold hold-opdiag)
 LARGE=(reorder restart1)
-ALTS=(AltClockEpochs AltReconcileBeforeResume AltFailCollision AltNoHandBackGuard AltFailUndelivered AltNoAbortOnResume AltFoldDiagnostic AltReadyFromTransitions AltStateDoesNotDispatch AltNoInvocationEpoch)
+ALTS=(AltClockEpochs AltReconcileBeforeResume AltFailCollision AltNoHandBackGuard AltFailUndelivered AltNoAbortOnResume AltFoldDiagnostic AltReadyFromTransitions AltStateDoesNotDispatch AltNoInvocationEpoch AltHoldFromEvents)
 SAFETY="TypeOK NoUntrackedRun NoUnexplainedFailure NoSpuriousFailure NoDoubleRun NotIncident"
 LIVENESS="AllJobsSettle WorkerNotStranded"
 
 # new_cfg FEATURE SPEC ALT DEADLOCK INVARIANTS PROPERTIES
 new_cfg() {
-    local nj mc ms mf mr mca mo wc mu
-    read -r nj mc ms mf mr mca mo wc mu <<< "${FEATURE[$1]}"
+    local nj mc ms mf mr mca mo wc mu mh
+    read -r nj mc ms mf mr mca mo wc mu mh <<< "${FEATURE[$1]}"
     echo "SPECIFICATION $2"
     echo "CONSTANTS"
     echo "NumJobs = $nj"; echo "MaxConns = $mc"; echo "MaxStalls = $ms"; echo "MaxFalseTimeouts = $mf"; echo "MaxRestarts = $mr"
     echo "MaxCancels = $mca"; echo "MaxOperatorDiags = $mo"; echo "WithCompetitor = $wc"; echo "MaxUnhealthy = $mu"
+    echo "MaxHolds = $mh"
     echo "MaxQueue = 4"
     for a in "${ALTS[@]}"; do if [[ "$3" == "$a" ]]; then echo "$a = TRUE"; else echo "$a = FALSE"; fi; done
     echo "CHECK_DEADLOCK $4"
@@ -151,6 +154,7 @@ expect "alt-AltFoldDiagnostic" "$(check opdiag AltFoldDiagnostic FALSE)" livenes
 expect "alt-AltReadyFromTransitions" "$(check cancel AltReadyFromTransitions FALSE)" liveness
 expect "alt-AltStateDoesNotDispatch" "$(check base AltStateDoesNotDispatch FALSE)" liveness
 expect "alt-AltNoInvocationEpoch" "$(check stall AltNoInvocationEpoch FALSE)" NoUntrackedRun
+expect "alt-AltHoldFromEvents" "$(check hold AltHoldFromEvents FALSE)" liveness
 
 if (( failures )); then
     echo "$failures check(s) failed"

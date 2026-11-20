@@ -11,7 +11,7 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [TestFixture]
 public class WorkerBadgeTests
 {
-    private static WorkerView Worker(bool connected = true, bool ready = false, bool busy = false, bool paused = false, DiagnosticStatus? diagnostic = null)
+    private static WorkerView Worker(bool connected = true, bool ready = false, bool busy = false, bool paused = false, DiagnosticStatus? diagnostic = null, WorkerHold? hold = null)
     {
         return new WorkerView
         {
@@ -21,6 +21,7 @@ public class WorkerBadgeTests
             IsConnected = connected,
             IsReady = ready,
             IsPaused = paused,
+            Hold = hold,
             CurrentJobs = busy ? [Guid.NewGuid()] : []
         };
     }
@@ -59,5 +60,16 @@ public class WorkerBadgeTests
 
         Assert.That(both, Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(paused: true))));
         Assert.That(both, Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(diagnostic: DiagnosticStatus.Degraded))));
+    }
+
+    [Test]
+    public void AHeldWorker_SaysWhy_IdleOrBusy()
+    {
+        var held = WorkerBadge.GetStatusLabel(Worker(hold: WorkerHold.ShuttingDown));
+        var heldBusy = WorkerBadge.GetStatusLabel(Worker(busy: true, hold: WorkerHold.ShuttingDown));
+
+        Assert.That(held, Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker())), "not just \"not ready\"");
+        Assert.That(heldBusy, Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(busy: true))));
+        Assert.That(heldBusy, Is.Not.EqualTo(held));
     }
 }
