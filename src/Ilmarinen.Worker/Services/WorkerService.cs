@@ -36,6 +36,8 @@ public class WorkerService : BackgroundService
     private static readonly TimeSpan HandshakeCallTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan RetryPollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ShutdownFlushTimeout = TimeSpan.FromSeconds(10);
+    // Inside logind's default InhibitDelayMaxSec of 5s, which is all the delay inhibitor buys.
+    private static readonly TimeSpan SleepFlushTimeout = TimeSpan.FromSeconds(2);
 
     private readonly WorkerConfig _config;
     private readonly Guid _workerId;
@@ -441,6 +443,27 @@ public class WorkerService : BackgroundService
         if (_session is { Resumed: true, HasEnded: false } session)
         {
             session.Outbox.Writer.TryWrite(() => send(session));
+        }
+    }
+
+    /// <summary>The host is about to sleep: hold, say so, and close the connection, so the server sees the worker go now rather than at its timeout, having perhaps sent it a job in between.</summary>
+    public async Task PrepareForSleepAsync()
+    {
+        await SetHoldAsync(WorkerHold.Sleeping, true);
+        if (_session is { } session)
+        {
+            await session.FlushAsync(SleepFlushTimeout);
+            EndSession(session, "the host is going to sleep");
+        }
+    }
+
+    /// <summary>The host has woken. Whatever connection there is was opened before it slept, and is likely dead without either end knowing; rather than wait for the heartbeat to find out, start a new one.</summary>
+    public async Task WokeAsync()
+    {
+        await SetHoldAsync(WorkerHold.Sleeping, false);
+        if (_session is { } session)
+        {
+            EndSession(session, "the host has woken from sleep");
         }
     }
 

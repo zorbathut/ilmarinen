@@ -42,6 +42,13 @@ public class WorkerConfig
     public static readonly TimeSpan DefaultMetricsInterval = TimeSpan.FromSeconds(2);
 
     /// <summary>
+    /// How long after the last keyboard or mouse input the machine counts as unattended, and the worker takes jobs again. Set via ILMARINEN_IN_USE_IDLE_MINUTES.
+    /// </summary>
+    public TimeSpan InUseIdleTime { get; init; } = DefaultInUseIdleTime;
+
+    public static readonly TimeSpan DefaultInUseIdleTime = TimeSpan.FromMinutes(30);
+
+    /// <summary>
     /// Hash of the bundle this worker was launched from. Set via ILMARINEN_BUNDLE_HASH by the launcher; null means classic mode (no self-update behavior).
     /// </summary>
     public string? BundleHash { get; init; }

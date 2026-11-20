@@ -3,6 +3,7 @@ using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Server.Components;
 using Ilmarinen.Server.Services;
 using NUnit.Framework;
+using System.Linq;
 using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
@@ -71,5 +72,14 @@ public class WorkerBadgeTests
         Assert.That(held, Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker())), "not just \"not ready\"");
         Assert.That(heldBusy, Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(busy: true))));
         Assert.That(heldBusy, Is.Not.EqualTo(held));
+    }
+
+    [Test]
+    public void EachHold_ReadsDifferently()
+    {
+        var labels = Enum.GetValues<WorkerHold>().Select(h => WorkerBadge.GetStatusLabel(Worker(hold: h))).ToList();
+
+        Assert.That(labels.Distinct().Count(), Is.EqualTo(labels.Count));
+        Assert.That(labels, Does.Not.Contain(WorkerBadge.GetStatusLabel(Worker())));
     }
 }

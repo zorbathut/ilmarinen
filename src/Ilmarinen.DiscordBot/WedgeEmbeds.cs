@@ -1,5 +1,6 @@
 using Discord;
 using Ilmarinen.Protocol.Responses;
+using System.Collections.Generic;
 using System.Linq;
 using System;
 
@@ -25,9 +26,11 @@ public static class WedgeEmbeds
             : "No worker is available at all.";
         if (report.PausedWorkers.Count > 0)
         {
-            var names = string.Join(", ", report.PausedWorkers.Take(MaxListedWorkers).Select(name => Truncate(Format.Sanitize(name))));
-            var more = report.PausedWorkers.Count > MaxListedWorkers ? $" and {report.PausedWorkers.Count - MaxListedWorkers} more" : "";
-            cause += $" Paused workers that could take them: {names}{more}.";
+            cause += $" Paused workers that could take them: {Names(report.PausedWorkers)}.";
+        }
+        if (report.InUseWorkers.Count > 0)
+        {
+            cause += $" Workers whose machines are in use that could take them: {Names(report.InUseWorkers)}.";
         }
 
         var embed = new EmbedBuilder()
@@ -61,6 +64,13 @@ public static class WedgeEmbeds
             .WithCurrentTimestamp()
             .WithDescription("No queued job is waiting on a worker that isn't available.")
             .Build();
+    }
+
+    private static string Names(IReadOnlyList<string> workers)
+    {
+        var names = string.Join(", ", workers.Take(MaxListedWorkers).Select(name => Truncate(Format.Sanitize(name))));
+        var more = workers.Count > MaxListedWorkers ? $" and {workers.Count - MaxListedWorkers} more" : "";
+        return names + more;
     }
 
     private static string Truncate(string text)

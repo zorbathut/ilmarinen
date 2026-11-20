@@ -1,0 +1,26 @@
+# Overlay for a worker on a machine people use: it takes no new jobs while someone is at it.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.inhibit-sleep.yml -f docker-compose.in-use.yml up -d --build
+#
+# Someone is using the machine if there has been keyboard or mouse input in the last 30 minutes
+# (ILMARINEN_IN_USE_IDLE_MINUTES), or another program holds a logind inhibitor keeping it awake
+# (whether a video or a call does depends on the desktop; check with systemd-inhibit --list), unless
+# the screen is locked. A job already running carries on; the worker just takes nothing new.
+#
+# Input comes from the host's /dev/input event devices, mounted read-only below. The screen lock and
+# other programs' inhibitors come from logind, over the D-Bus socket docker-compose.inhibit-sleep.yml
+# mounts: use the two together. Without it, only input counts.
+#
+# Reading /dev/input is reading every key pressed on the host. The worker keeps only when input
+# happened and on which device, never what it was — but the container could read keystrokes, so
+# treat it like the Docker socket it already has: root on the host.
+#
+# /dev/input is bind-mounted rather than listed under devices:, so keyboards plugged in later (or
+# USB devices that come back under new names after the host sleeps) appear too. The cgroup rule
+# lets the container open input devices (character major 13), read-only.
+services:
+  worker:
+    volumes:
+      - /dev/input:/dev/input:ro
+    device_cgroup_rules:
+      - "c 13:* r"

@@ -67,6 +67,8 @@ public static class WorkerBadge
     {
         return hold switch
         {
+            WorkerHold.InUse => "In use",
+            WorkerHold.Sleeping => "Sleeping",
             WorkerHold.ShuttingDown => "Stopping",
             _ => hold.ToString()
         };

@@ -148,7 +148,7 @@ public class SleepInhibitor
             member: "Inhibit",
             signature: "ssss");
         writer.WriteString("idle:sleep");
-        writer.WriteString("Ilmarinen worker");
+        writer.WriteString(Presence.PresenceRule.OwnInhibitorWho);
         writer.WriteString(reason);
         writer.WriteString("block");
 

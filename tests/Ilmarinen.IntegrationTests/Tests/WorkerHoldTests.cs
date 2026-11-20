@@ -1,12 +1,15 @@
 using Ilmarinen.Database;
 using Ilmarinen.IntegrationTests.Fixtures;
+using Ilmarinen.NotificationClient;
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System;
 
@@ -114,5 +117,75 @@ public class WorkerHoldTests
         await worker.ReportAsync(held);
 
         Assert.That(await worker.IsReadyAsync(), Is.True, "the release came later, by its seq");
+    }
+
+    private async Task<UnsatisfiableJobsReport> GetUnsatisfiableJobsAsync()
+    {
+        using var client = new IlmarinenNotificationClient(_fixture.HttpClient.BaseAddress!.ToString(), _fixture.HttpClient);
+        return await client.GetUnsatisfiableJobsAsync(CancellationToken.None);
+    }
+
+    // Busy, so readiness alone wouldn't drop it: a worker running a job normally counts as available.
+    [Test]
+    public async Task ABusyWorkerInUse_IsNotAvailable_AndTheStuckReportNamesIt()
+    {
+        var worker = await DirectedWorker.ReadyAsync(_fixture, "hold-in-use-busy", "conn-hold-in-use-busy");
+        var running = await Scheduler.EnqueueJobAsync(Submission());
+        var assignment = (await worker.SentAsync()).Assignments.Single();
+        await worker.ReportAsync(worker.Running(running, assignment.AssignmentId) with { Hold = WorkerHold.InUse });
+        var queued = await Scheduler.EnqueueJobAsync(Submission());
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        Assert.That(report.HighestAvailableWorkerPriority, Is.Null);
+        Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { queued }));
+        Assert.That(report.InUseWorkers, Is.EqualTo(new[] { "hold-in-use-busy" }));
+        Assert.That(report.PausedWorkers, Is.Empty);
+    }
+
+    [Test]
+    public async Task TheStuckReport_NamesAnIdleWorkerInUse_ButNotOneStoppingOrUnhealthy()
+    {
+        var inUse = await DirectedWorker.ReadyAsync(_fixture, "hold-report-in-use", "conn-hold-report-in-use");
+        await inUse.ReportAsync(inUse.Idle() with { Hold = WorkerHold.InUse });
+        var stopping = await DirectedWorker.ReadyAsync(_fixture, "hold-report-stopping", "conn-hold-report-stopping");
+        await stopping.ReportAsync(stopping.Idle() with { Hold = WorkerHold.ShuttingDown });
+        var unhealthy = await DirectedWorker.ReadyAsync(_fixture, "hold-report-unhealthy", "conn-hold-report-unhealthy");
+        await unhealthy.ReportAsync(unhealthy.Idle(DiagnosticStatus.Unhealthy) with { Hold = WorkerHold.InUse });
+
+        await Scheduler.EnqueueJobAsync(Submission());
+
+        var report = await GetUnsatisfiableJobsAsync();
+        Assert.That(report.Jobs, Has.Count.EqualTo(1));
+        Assert.That(report.InUseWorkers, Is.EqualTo(new[] { "hold-report-in-use" }), "letting it be wouldn't free the other two");
+    }
+
+    [Test]
+    public async Task AWorkerPausedAndInUse_IsNamedAsBoth()
+    {
+        var worker = await DirectedWorker.ReadyAsync(_fixture, "hold-paused-in-use", "conn-hold-paused-in-use");
+        await worker.ReportAsync(worker.Idle() with { Hold = WorkerHold.InUse });
+        await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true);
+        await Scheduler.EnqueueJobAsync(Submission());
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        Assert.That(report.PausedWorkers, Is.EqualTo(new[] { "hold-paused-in-use" }));
+        Assert.That(report.InUseWorkers, Is.EqualTo(new[] { "hold-paused-in-use" }));
+    }
+
+    [Test]
+    public async Task APausedWorkerThatIsStopping_IsNotNamedAsPaused_ForUnpausingWouldntFreeIt()
+    {
+        var worker = await DirectedWorker.ReadyAsync(_fixture, "hold-paused-stopping", "conn-hold-paused-stopping");
+        await worker.ReportAsync(worker.Idle() with { Hold = WorkerHold.ShuttingDown });
+        await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true);
+        await Scheduler.EnqueueJobAsync(Submission());
+
+        var report = await GetUnsatisfiableJobsAsync();
+
+        Assert.That(report.Jobs, Has.Count.EqualTo(1));
+        Assert.That(report.PausedWorkers, Is.Empty);
+        Assert.That(report.InUseWorkers, Is.Empty);
     }
 }

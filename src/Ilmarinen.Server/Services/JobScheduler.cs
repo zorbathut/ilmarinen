@@ -211,11 +211,18 @@ public class JobScheduler
         var availability = await workers.GetAvailabilityAsync();
         var highestAvailablePriority = availability.Available.Count == 0 ? (WorkerPriority?)null : availability.Available.Max(w => w.Priority);
         var stuck = await jobs.GetUnsatisfiableJobsAsync(highestAvailablePriority);
+
+        bool CouldTakeOne(WorkerPriority priority)
+        {
+            return stuck.Any(j => j.MinWorkerPriority <= priority);
+        }
+
         return new UnsatisfiableJobsReport
         {
             HighestAvailableWorkerPriority = highestAvailablePriority,
             Jobs = stuck,
-            PausedWorkers = availability.PausedButOtherwiseAvailable.Where(w => stuck.Any(j => j.MinWorkerPriority <= w.Priority)).Select(w => w.Name).ToList()
+            PausedWorkers = availability.PausedButOtherwiseAvailable.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList(),
+            InUseWorkers = availability.InUseButOtherwiseAvailable.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList()
         };
     }
 

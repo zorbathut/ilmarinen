@@ -231,6 +231,23 @@ public class WorkerProtocolStateTests
     }
 
     [Test]
+    public void SeveralHolds_ReportTheLongestLasting_AndEndOnlyWhenAllHave()
+    {
+        var state = new WorkerProtocolState();
+        state.SetHold(WorkerHold.InUse, true);
+        state.SetHold(WorkerHold.Sleeping, true);
+        Assert.That(state.Snapshot().Hold, Is.EqualTo(WorkerHold.Sleeping));
+        var seq = state.Snapshot().Seq;
+
+        Assert.That(state.SetHold(WorkerHold.InUse, false), Is.False, "still held, for the same reported reason");
+        Assert.That(state.Snapshot().Seq, Is.EqualTo(seq));
+        Assert.That(state.Assign(Assignment())?.Kind, Is.EqualTo(JobOutcomeKind.Rejected));
+
+        Assert.That(state.SetHold(WorkerHold.Sleeping, false), Is.True);
+        Assert.That(state.Snapshot().Hold, Is.Null);
+    }
+
+    [Test]
     public void AHold_LeavesARunningJobRunning()
     {
         var state = new WorkerProtocolState();

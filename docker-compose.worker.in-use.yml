@@ -1,0 +1,11 @@
+# Overlay for the dev stack's worker, on a machine people use.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.worker.yml -f docker-compose.worker.inhibit-sleep.yml -f docker-compose.worker.in-use.yml up -d
+#
+# See deploy/worker-docker/docker-compose.in-use.yml for what this does and what it exposes.
+services:
+  worker:
+    volumes:
+      - /dev/input:/dev/input:ro
+    device_cgroup_rules:
+      - "c 13:* r"

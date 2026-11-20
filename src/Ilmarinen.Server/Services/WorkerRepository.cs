@@ -162,15 +162,26 @@ public class WorkerRepository
     }
 
     /// <summary>
-    /// The available workers (<see cref="GetAvailableWorkersAsync"/>), and from the same read the paused workers that would be available if they were unpaused, with how many workers are connected at all.
+    /// The available workers (<see cref="GetAvailableWorkersAsync"/>), and from the same read the workers that only a pause or someone using their machine keeps from being available, with how many workers are connected at all. A worker both paused and in use is in both lists: either alone would still hold it back.
     /// </summary>
     public async Task<WorkerAvailability> GetAvailabilityAsync()
     {
         var connected = await GetConnectedWorkersAsync();
         return new WorkerAvailability(
             connected.Where(IsAvailable).Select(w => new AvailableWorker(w.Session.WorkerId, w.Priority)).ToList(),
-            connected.Where(w => w.Paused && IsAvailable(w with { Paused = false })).OrderBy(w => w.Name).Select(w => new PausedWorker(w.Name, w.Priority)).ToList(),
+            HeldBackOnly(connected.Where(w => w.Paused)),
+            HeldBackOnly(connected.Where(w => w.Hold == WorkerHold.InUse)),
             connected.Count);
+    }
+
+    /// <summary>Those that would be available without their pause and without someone using their machine; held back for any other reason (stopping, going to sleep), they stay out.</summary>
+    private IReadOnlyList<HeldBackWorker> HeldBackOnly(IEnumerable<ConnectedWorker> workers)
+    {
+        return workers
+            .Where(w => IsAvailable(w with { Paused = false, Hold = w.Hold == WorkerHold.InUse ? null : w.Hold }))
+            .OrderBy(w => w.Name)
+            .Select(w => new HeldBackWorker(w.Name, w.Priority))
+            .ToList();
     }
 
     /// <summary>
@@ -356,9 +367,10 @@ public class WorkerRepository
 
 public record AvailableWorker(Guid WorkerId, WorkerPriority Priority);
 
-public record PausedWorker(string Name, WorkerPriority Priority);
+/// <summary>A worker that would be available but for one thing an operator or a person at its machine can undo.</summary>
+public record HeldBackWorker(string Name, WorkerPriority Priority);
 
-public record WorkerAvailability(IReadOnlyList<AvailableWorker> Available, IReadOnlyList<PausedWorker> PausedButOtherwiseAvailable, int Connected);
+public record WorkerAvailability(IReadOnlyList<AvailableWorker> Available, IReadOnlyList<HeldBackWorker> PausedButOtherwiseAvailable, IReadOnlyList<HeldBackWorker> InUseButOtherwiseAvailable, int Connected);
 
 public class WorkerView
 {
@@ -375,6 +387,7 @@ public class WorkerView
 
     /// <summary>Why the worker says it is taking no new jobs, if it is.</summary>
     public WorkerHold? Hold { get; init; }
+
     public IReadOnlyList<WorkspaceView> Workspaces { get; init; } = [];
 
     /// <summary>

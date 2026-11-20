@@ -99,6 +99,18 @@ docker compose -f docker-compose.yml -f docker-compose.inhibit-sleep.yml up -d -
 
 On a headless host, closing the lid still suspends and still kills the job — logind ignores sleep blockers for the lid switch by default. On a *desktop*, the power manager routes lid-close through the same call this blocks, so a running job will keep a lid-shut laptop awake; don't use the overlay on a laptop that travels with jobs running. Linux hosts only, and only where D-Bus is actually running — see the overlay's comments for that and for the Docker Desktop and SELinux caveats. Without the overlay the worker behaves normally; its `host_sleep_inhibit` diagnostic step reports the capability as unavailable, which does not affect worker health.
 
+**Machines people use.** On a desktop someone works at, add the `docker-compose.in-use.yml` overlay as well, and the worker takes no new jobs while that person is there:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.inhibit-sleep.yml -f docker-compose.in-use.yml up -d --build
+```
+
+The machine is in use while there has been keyboard or mouse input in the last 30 minutes (`ILMARINEN_IN_USE_IDLE_MINUTES`), or another program holds a logind inhibitor keeping it awake, unless the screen is locked: locking it frees the machine at once. A job already running carries on, and a worker that has just started counts the machine as in use until the idle time has passed. The worker shows as *In use* on the workers page, and its log says what made it so (which device, which program, or the lock).
+
+Whether a video or a call counts depends on the desktop passing the application's request on to logind, which not every desktop does: check by running `systemd-inhibit --list` while one plays. Block-mode `idle` or `sleep` entries count; delay-mode ones don't. If nothing shows up there, only input counts, and a long film with no input frees the machine after the idle time.
+
+The overlay mounts the host's `/dev/input`, which is every keystroke on the host. The worker keeps only when input happened and on which device, but the container could read more, as it could already do anything as root through the Docker socket. The screen lock and inhibitors come over the D-Bus socket the sleep overlay mounts; without it, only input counts. (That socket alone also has the worker tell the server just before the host sleeps and reconnect as soon as it wakes, so no job is sent to a machine on its way to sleep.)
+
 **File ownership.** Job containers run as the worker process's uid, which is root in this image (the NixOS worker runs as the unprivileged `ilmarinen` user). In a mixed fleet the same pipeline can leave differently-owned files in `/workspace` depending on which worker picked up the job.
 
 ## Troubleshooting
