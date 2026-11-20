@@ -360,7 +360,8 @@ public class WorkerRepository
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
         var workers = await db.Workers
-            .OrderByDescending(w => w.LastSeen)
+            .OrderBy(w => w.Name)
+            .ThenBy(w => w.Id)
             .ToListAsync();
 
         // Get all currently running jobs to derive CurrentJobs

@@ -60,6 +60,20 @@ public class WorkerPriorityTests
     }
 
     [Test]
+    public async Task GetWorkers_ListsThemByName_NotByWhenTheyWereLastSeen()
+    {
+        await RegisterWorkerAsync("order-b");
+        await RegisterWorkerAsync("order-c");
+        await RegisterWorkerAsync("order-a");
+
+        var response = await _fixture.HttpClient.GetAsync("/api/workers");
+        response.EnsureSuccessStatusCode();
+        var workers = await response.Content.ReadFromJsonAsync<List<WorkerView>>(JsonOptions);
+
+        Assert.That(workers!.Select(w => w.Name).Where(n => n.StartsWith("order-")), Is.EqualTo(new[] { "order-a", "order-b", "order-c" }));
+    }
+
+    [Test]
     public async Task GetWorkers_NewlyRegisteredWorker_HasMediumPriority()
     {
         var workerId = await RegisterWorkerAsync("priority-default-worker");
