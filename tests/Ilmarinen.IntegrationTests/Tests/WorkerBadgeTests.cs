@@ -19,6 +19,7 @@ public class WorkerBadgeTests
             Diagnostic = diagnostic is { } status ? new DiagnosticReport { Status = status, Summary = "", CheckedAt = DateTime.UtcNow, Steps = [] } : null,
             Id = Guid.NewGuid(),
             Name = "w",
+            Priority = new PriorityRef(Guid.NewGuid(), "Default"),
             IsConnected = connected,
             IsReady = ready,
             IsPaused = paused,

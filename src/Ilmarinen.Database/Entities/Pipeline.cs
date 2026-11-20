@@ -13,8 +13,11 @@ public class Pipeline
     public DateTime CreatedAt { get; set; }
     public string? Schedule { get; set; }
     public DateTime? LastTriggeredAt { get; set; }
-    public WorkerPriority MinWorkerPriority { get; set; }
-    public JobPriority Priority { get; set; }
+    // Null when any worker may run the pipeline's jobs.
+    public Guid? MinWorkerPriorityId { get; set; }
+    public Priority? MinWorkerPriority { get; set; }
+    public required Guid PriorityId { get; set; }
+    public Priority? Priority { get; set; }
     public NotificationPolicy NotificationPolicy { get; set; }
 
     public Repository? Repository { get; set; }

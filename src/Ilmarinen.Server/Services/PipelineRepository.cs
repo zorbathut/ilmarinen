@@ -2,6 +2,7 @@ using Ilmarinen.Database;
 using Ilmarinen.Database.Entities;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
@@ -14,15 +15,22 @@ public class PipelineRepository
 {
     private readonly IlmarinenDbContext _db;
     private readonly CredentialEncryptionService _encryption;
+    private readonly PriorityRepository _priorities;
 
-    public PipelineRepository(IlmarinenDbContext db, CredentialEncryptionService encryption)
+    public PipelineRepository(IlmarinenDbContext db, CredentialEncryptionService encryption, PriorityRepository priorities)
     {
         _db = db;
         _encryption = encryption;
+        _priorities = priorities;
     }
 
     public async Task<PipelineInfo> CreateAsync(PipelineSubmission submission)
     {
+        var priority = submission.Priority != null
+            ? await _priorities.ResolveAsync(PriorityKind.Job, submission.Priority)
+            : await _priorities.GetDefaultAsync(PriorityKind.Job);
+        var minWorkerPriority = submission.MinWorkerPriority != null ? await _priorities.ResolveMinimumAsync(submission.MinWorkerPriority) : null;
+
         var pipeline = new Pipeline
         {
             Id = Guid.CreateVersion7(),
@@ -32,13 +40,13 @@ public class PipelineRepository
             ScriptPath = submission.ScriptPath,
             CreatedAt = DateTime.UtcNow,
             Schedule = submission.Schedule,
-            MinWorkerPriority = submission.MinWorkerPriority,
-            Priority = submission.Priority,
+            MinWorkerPriorityId = minWorkerPriority?.Id,
+            PriorityId = priority.Id,
             NotificationPolicy = submission.NotificationPolicy
         };
 
         _db.Pipelines.Add(pipeline);
-        await _db.SaveChangesAsync();
+        await PriorityRepository.WritingReferencesAsync(() => _db.SaveChangesAsync());
 
         return await GetAsync(pipeline.Id) ?? throw new InvalidOperationException("Pipeline was just created but could not be loaded");
     }
@@ -47,15 +55,22 @@ public class PipelineRepository
     {
         var pipeline = await _db.Pipelines
             .Include(p => p.Repository)
+            .Include(p => p.Priority)
+            .Include(p => p.MinWorkerPriority)
             .FirstOrDefaultAsync(p => p.Id == id);
 
         return pipeline?.Repository != null ? ToPipelineInfo(pipeline, pipeline.Repository) : null;
     }
 
-    public async Task<IReadOnlyList<PipelineInfo>> GetAllAsync()
+    /// <summary>Every pipeline, or only those of a job priority, or needing a worker priority.</summary>
+    public async Task<IReadOnlyList<PipelineInfo>> GetAllAsync(Guid? priorityId = null, Guid? minWorkerPriorityId = null)
     {
         var pipelines = await _db.Pipelines
+            .Where(p => priorityId == null || p.PriorityId == priorityId)
+            .Where(p => minWorkerPriorityId == null || p.MinWorkerPriorityId == minWorkerPriorityId)
             .Include(p => p.Repository)
+            .Include(p => p.Priority)
+            .Include(p => p.MinWorkerPriority)
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
 
@@ -78,6 +93,8 @@ public class PipelineRepository
     {
         var pipeline = await _db.Pipelines
             .Include(p => p.Repository)
+            .Include(p => p.Priority)
+            .Include(p => p.MinWorkerPriority)
             .FirstOrDefaultAsync(p => p.Id == id);
         if (pipeline == null) return null;
 
@@ -95,20 +112,21 @@ public class PipelineRepository
             pipeline.Schedule = update.Schedule;
         if (update.MinWorkerPriority != null)
         {
-            pipeline.MinWorkerPriority = update.MinWorkerPriority.Value;
+            pipeline.MinWorkerPriorityId = (await _priorities.ResolveMinimumAsync(update.MinWorkerPriority))?.Id;
         }
         if (update.Priority != null)
         {
-            pipeline.Priority = update.Priority.Value;
+            pipeline.PriorityId = (await _priorities.ResolveAsync(PriorityKind.Job, update.Priority)).Id;
         }
         if (update.NotificationPolicy != null)
         {
             pipeline.NotificationPolicy = update.NotificationPolicy.Value;
         }
 
-        await _db.SaveChangesAsync();
+        await PriorityRepository.WritingReferencesAsync(() => _db.SaveChangesAsync());
 
-        // Reload with Repository in case RepositoryId changed
+        // Reload with Repository in case RepositoryId changed, and the priorities in case they did
+        _db.ChangeTracker.Clear();
         return await GetAsync(id);
     }
 
@@ -121,6 +139,8 @@ public class PipelineRepository
     {
         return await _db.Pipelines
             .Include(p => p.Repository)
+            .Include(p => p.Priority)
+            .Include(p => p.MinWorkerPriority)
             .Where(p => p.Schedule != null)
             .ToListAsync();
     }
@@ -145,8 +165,8 @@ public class PipelineRepository
         CreatedAt = pipeline.CreatedAt,
         Schedule = pipeline.Schedule,
         LastTriggeredAt = pipeline.LastTriggeredAt,
-        MinWorkerPriority = pipeline.MinWorkerPriority,
-        Priority = pipeline.Priority,
+        MinWorkerPriority = pipeline.MinWorkerPriority is { } minimum ? PriorityRepository.ToRef(minimum) : null,
+        Priority = PriorityRepository.ToRef(pipeline.Priority ?? throw new InvalidOperationException("Pipeline loaded without its priority")),
         NotificationPolicy = pipeline.NotificationPolicy
     };
 }

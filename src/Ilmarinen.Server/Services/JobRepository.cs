@@ -16,12 +16,14 @@ public class JobRepository
     private readonly IlmarinenDbContext _db;
     private readonly ArtifactRepository _artifacts;
     private readonly CredentialEncryptionService _encryption;
+    private readonly PriorityRepository _priorities;
 
-    public JobRepository(IlmarinenDbContext db, ArtifactRepository artifacts, CredentialEncryptionService encryption)
+    public JobRepository(IlmarinenDbContext db, ArtifactRepository artifacts, CredentialEncryptionService encryption, PriorityRepository priorities)
     {
         _db = db;
         _artifacts = artifacts;
         _encryption = encryption;
+        _priorities = priorities;
     }
 
     public async Task<JobInfo> CreateAsync(JobSubmission submission)
@@ -30,13 +32,12 @@ public class JobRepository
         string? resolvedRepoUrl = submission.RepoUrl;
         string? resolvedRef = submission.Ref;
         string? resolvedScriptPath = submission.ScriptPath;
-        WorkerPriority? resolvedMinWorkerPriority = submission.MinWorkerPriority;
-        JobPriority? resolvedPriority = submission.Priority;
         string? resolvedGitToken = null;
+        Pipeline? pipeline = null;
 
         if (submission.PipelineId != null)
         {
-            var pipeline = await _db.Pipelines
+            pipeline = await _db.Pipelines
                 .Include(p => p.Repository)
                 .FirstOrDefaultAsync(p => p.Id == submission.PipelineId.Value);
 
@@ -46,8 +47,6 @@ public class JobRepository
             resolvedRepoUrl ??= pipeline.Repository?.RepoUrl;
             resolvedRef ??= pipeline.DefaultRef;
             resolvedScriptPath ??= pipeline.ScriptPath;
-            resolvedMinWorkerPriority ??= pipeline.MinWorkerPriority;
-            resolvedPriority ??= pipeline.Priority;
 
             if (submission.GitTokenMode == GitTokenMode.Inherit)
                 resolvedGitToken = _encryption.Decrypt(pipeline.Repository?.EncryptedGitToken);
@@ -63,6 +62,14 @@ public class JobRepository
         if (string.IsNullOrEmpty(resolvedScriptPath))
             throw new InvalidSubmissionException("ScriptPath is required (either directly or via PipelineId)");
 
+        // Each priority is the submission's if it names one, else the pipeline's, else the job default or no minimum.
+        var priorityId = submission.Priority != null
+            ? (await _priorities.ResolveAsync(PriorityKind.Job, submission.Priority)).Id
+            : pipeline?.PriorityId ?? (await _priorities.GetDefaultAsync(PriorityKind.Job)).Id;
+        var minWorkerPriorityId = submission.MinWorkerPriority != null
+            ? (await _priorities.ResolveMinimumAsync(submission.MinWorkerPriority))?.Id
+            : pipeline?.MinWorkerPriorityId;
+
         var job = new Job
         {
             Id = Guid.CreateVersion7(),
@@ -74,19 +81,21 @@ public class JobRepository
             EncryptedGitToken = _encryption.Encrypt(resolvedGitToken),
             GitTokenMode = submission.GitTokenMode,
             PipelineId = submission.PipelineId,
-            MinWorkerPriority = resolvedMinWorkerPriority ?? WorkerPriority.Low,
-            Priority = resolvedPriority ?? JobPriority.Medium
+            MinWorkerPriorityId = minWorkerPriorityId,
+            PriorityId = priorityId
         };
 
         _db.Jobs.Add(job);
-        await _db.SaveChangesAsync();
+        await PriorityRepository.WritingReferencesAsync(() => _db.SaveChangesAsync());
+        await _db.Entry(job).Reference(j => j.Priority).LoadAsync();
+        await _db.Entry(job).Reference(j => j.MinWorkerPriority).LoadAsync();
 
         return ToJobInfo(job);
     }
 
     public async Task<JobInfo?> GetAsync(Guid id)
     {
-        var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
+        var job = await WithPriorities().FirstOrDefaultAsync(j => j.Id == id);
         if (job == null) return null;
 
         var artifacts = await _artifacts.GetByJobIdAsync(id);
@@ -134,11 +143,15 @@ public class JobRepository
     /// </summary>
     public async Task<JobSubmission?> BuildRetrySubmissionAsync(Guid id)
     {
-        var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id);
+        var job = await WithPriorities().FirstOrDefaultAsync(j => j.Id == id);
         if (job == null) return null;
 
         if (job.Status is not (JobStatus.Failed or JobStatus.Cancelled))
             return null;
+
+        // By name, as any submission names them; a job with no minimum asks for none, so it doesn't inherit one its pipeline has gained since.
+        var priority = job.Priority!.Name;
+        var minWorkerPriority = job.MinWorkerPriority?.Name ?? PriorityNames.AnyWorker;
 
         switch (job.GitTokenMode)
         {
@@ -150,8 +163,8 @@ public class JobRepository
                     Ref = job.Ref,
                     ScriptPath = job.ScriptPath,
                     GitTokenMode = GitTokenMode.None,
-                    MinWorkerPriority = job.MinWorkerPriority,
-                    Priority = job.Priority
+                    MinWorkerPriority = minWorkerPriority,
+                    Priority = priority
                 };
 
             case GitTokenMode.Inherit:
@@ -172,8 +185,8 @@ public class JobRepository
                     Ref = job.Ref,
                     ScriptPath = job.ScriptPath,
                     GitTokenMode = GitTokenMode.Inherit,
-                    MinWorkerPriority = job.MinWorkerPriority,
-                    Priority = job.Priority
+                    MinWorkerPriority = minWorkerPriority,
+                    Priority = priority
                 };
             }
 
@@ -303,17 +316,17 @@ public class JobRepository
     public async Task<IReadOnlyList<UnfinishedJob>> GetUnfinishedJobsAsync()
     {
         return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Running || j.Status == JobStatus.Queued))
-            .Select(j => new UnfinishedJob(j.Status, j.WorkerId, j.RepoUrl, j.ScriptPath, j.StartedAt, j.MinWorkerPriority))
+            .Select(j => new UnfinishedJob(j.Status, j.WorkerId, j.RepoUrl, j.ScriptPath, j.StartedAt, j.MinWorkerPriority != null ? j.MinWorkerPriority.Rank : null))
             .ToListAsync();
     }
 
-    /// <summary>The queued jobs, in dispatch order, with when each was submitted.</summary>
-    public async Task<IReadOnlyList<(Guid Id, WorkerPriority MinWorkerPriority, DateTime CreatedAt)>> GetQueuedJobsAsync()
+    /// <summary>The queued jobs, in dispatch order, with the rank of each one's minimum worker priority (null for none) and when it was submitted.</summary>
+    public async Task<IReadOnlyList<(Guid Id, int? MinWorkerRank, DateTime CreatedAt)>> GetQueuedJobsAsync()
     {
         var queued = await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued))
-            .Select(j => new { j.Id, j.MinWorkerPriority, j.CreatedAt })
+            .Select(j => new { j.Id, MinWorkerRank = j.MinWorkerPriority != null ? (int?)j.MinWorkerPriority.Rank : null, j.CreatedAt })
             .ToListAsync();
-        return queued.Select(j => (j.Id, j.MinWorkerPriority, j.CreatedAt)).ToList();
+        return queued.Select(j => (j.Id, j.MinWorkerRank, j.CreatedAt)).ToList();
     }
 
     /// <summary>The jobs Running for a worker, with the assignment each is running under.</summary>
@@ -343,12 +356,15 @@ public class JobRepository
             .FirstOrDefaultAsync();
     }
 
-    public async Task<IReadOnlyList<JobInfo>> GetAllAsync()
+    /// <summary>Every job, newest first, or only those of a job priority, or needing a worker priority.</summary>
+    public async Task<IReadOnlyList<JobInfo>> GetAllAsync(Guid? priorityId = null, Guid? minWorkerPriorityId = null)
     {
         var workerNames = await _db.Workers.ToDictionaryAsync(w => w.Id, w => w.Name);
         var pipelineNames = await _db.Pipelines.ToDictionaryAsync(p => p.Id, p => p.Name);
 
-        var jobs = await _db.Jobs
+        var jobs = await WithPriorities()
+            .Where(j => priorityId == null || j.PriorityId == priorityId)
+            .Where(j => minWorkerPriorityId == null || j.MinWorkerPriorityId == minWorkerPriorityId)
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
 
@@ -365,7 +381,7 @@ public class JobRepository
         var workerNames = await _db.Workers.ToDictionaryAsync(w => w.Id, w => w.Name);
         var pipelineName = await _db.Pipelines.Where(p => p.Id == pipelineId).Select(p => p.Name).FirstOrDefaultAsync();
 
-        var jobs = await _db.Jobs
+        var jobs = await WithPriorities()
             .Where(j => j.PipelineId == pipelineId)
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
@@ -493,7 +509,7 @@ public class JobRepository
         var workerName = await _db.Workers.Where(w => w.Id == workerId).Select(w => w.Name).FirstOrDefaultAsync();
         var pipelineNames = await _db.Pipelines.ToDictionaryAsync(p => p.Id, p => p.Name);
 
-        var jobs = await _db.Jobs
+        var jobs = await WithPriorities()
             .Where(j => j.WorkerId == workerId)
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
@@ -507,11 +523,11 @@ public class JobRepository
     }
 
     /// <summary>
-    /// The queued job dispatch should hand a worker of this priority next: the first, in dispatch order (<see cref="InDispatchOrder"/>), whose minimum it meets. Null when nothing queued fits.
+    /// The queued job dispatch should hand a worker of this priority next: the first, in dispatch order (<see cref="InDispatchOrder"/>), whose minimum it meets. Null when nothing queued fits. Ranks are read here, so a reorder of the priorities counts from the next dispatch on.
     /// </summary>
-    public async Task<Guid?> GetNextQueuedJobIdAsync(WorkerPriority workerPriority)
+    public async Task<Guid?> GetNextQueuedJobIdAsync(int workerRank)
     {
-        return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued && j.MinWorkerPriority <= workerPriority))
+        return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued && (j.MinWorkerPriority == null || j.MinWorkerPriority.Rank <= workerRank)))
             .Select(j => (Guid?)j.Id)
             .FirstOrDefaultAsync();
     }
@@ -520,20 +536,20 @@ public class JobRepository
     private static IQueryable<Job> InDispatchOrder(IQueryable<Job> jobs)
     {
         return jobs
-            .OrderByDescending(j => j.Priority)
+            .OrderByDescending(j => j.Priority!.Rank)
             .ThenBy(j => j.CreatedAt)
             .ThenBy(j => j.Id);
     }
 
     /// <summary>
-    /// Queued jobs whose minimum is above the highest available worker's priority, oldest first — every queued job when no worker is available.
+    /// Queued jobs whose minimum is above the highest available worker's priority, oldest first — every queued job when no worker is available. A job with no minimum is never one of them while some worker is.
     /// </summary>
-    public async Task<IReadOnlyList<JobInfo>> GetUnsatisfiableJobsAsync(WorkerPriority? highestAvailablePriority)
+    public async Task<IReadOnlyList<JobInfo>> GetUnsatisfiableJobsAsync(int? highestAvailableRank)
     {
-        var queued = _db.Jobs.Where(j => j.Status == JobStatus.Queued);
-        if (highestAvailablePriority is { } highest)
+        var queued = WithPriorities().Where(j => j.Status == JobStatus.Queued);
+        if (highestAvailableRank is { } highest)
         {
-            queued = queued.Where(j => j.MinWorkerPriority > highest);
+            queued = queued.Where(j => j.MinWorkerPriority != null && j.MinWorkerPriority.Rank > highest);
         }
 
         var jobs = await queued
@@ -615,6 +631,12 @@ public class JobRepository
         }
     }
 
+    /// <summary>Jobs read with their priorities, in the same statement: a priority deleted between two reads would leave a job naming one that is gone.</summary>
+    private IQueryable<Job> WithPriorities()
+    {
+        return _db.Jobs.Include(j => j.Priority).Include(j => j.MinWorkerPriority);
+    }
+
     private static JobInfo ToJobInfo(Job job, IReadOnlyList<ArtifactInfo>? artifacts = null, string? workerName = null, string? pipelineName = null, HashSet<Guid>? retryablePipelines = null)
     {
         var (canRetry, retryBlockedReason) = ComputeRetryEligibility(job, retryablePipelines);
@@ -636,8 +658,8 @@ public class JobRepository
             GitTokenMode = job.GitTokenMode,
             PipelineId = job.PipelineId,
             PipelineName = pipelineName,
-            MinWorkerPriority = job.MinWorkerPriority,
-            Priority = job.Priority,
+            MinWorkerPriority = job.MinWorkerPriority is { } minimum ? PriorityRepository.ToRef(minimum) : null,
+            Priority = PriorityRepository.ToRef(job.Priority ?? throw new InvalidOperationException("Job loaded without its priority")),
             CanRetry = canRetry,
             RetryBlockedReason = retryBlockedReason
         };
@@ -648,4 +670,5 @@ public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInst
 
 public record ScriptEstimates(IReadOnlyDictionary<(Guid WorkerId, string RepoUrl, string ScriptPath), TimeSpan> PerWorker, IReadOnlyDictionary<(string RepoUrl, string ScriptPath), TimeSpan> AcrossWorkers);
 
-public record UnfinishedJob(JobStatus Status, Guid? WorkerId, string RepoUrl, string ScriptPath, DateTime? StartedAt, WorkerPriority MinWorkerPriority);
+/// <summary>A Running or Queued job as the queue forecast reads it; MinWorkerRank is the rank of its minimum worker priority, null for none.</summary>
+public record UnfinishedJob(JobStatus Status, Guid? WorkerId, string RepoUrl, string ScriptPath, DateTime? StartedAt, int? MinWorkerRank);

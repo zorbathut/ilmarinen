@@ -22,7 +22,7 @@ public static class WedgeEmbeds
     {
         var count = report.Jobs.Count;
         var cause = report.HighestAvailableWorkerPriority is { } highest
-            ? $"The highest available worker priority is {highest}."
+            ? $"The highest available worker priority is {Truncate(Format.Sanitize(highest.Name))}."
             : "No worker is available at all.";
         if (report.PausedWorkers.Count > 0)
         {
@@ -47,7 +47,7 @@ public static class WedgeEmbeds
         {
             // Discord rejects a blank field name, and nothing stops a pipeline from being named with whitespace.
             var name = string.IsNullOrWhiteSpace(job.PipelineName) ? job.RepoUrl : job.PipelineName;
-            var details = $"{Truncate(Format.Sanitize(job.Ref))} · needs {job.MinWorkerPriority}";
+            var details = $"{Truncate(Format.Sanitize(job.Ref))} · needs {(job.MinWorkerPriority is { } minimum ? Truncate(Format.Sanitize(minimum.Name)) : "any worker")}";
             var url = jobUrl(job.Id);
             embed.AddField(Truncate(name), url != null ? $"{details} · [view]({url})" : $"{details} · {job.Id}");
         }

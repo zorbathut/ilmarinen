@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using System;
 
 namespace Ilmarinen.Protocol.Requests;
@@ -8,7 +7,7 @@ namespace Ilmarinen.Protocol.Requests;
 /// or internally from pipeline triggers.
 ///
 /// When PipelineId is set, RepoUrl/Ref/ScriptPath/MinWorkerPriority/Priority fall back to the pipeline's values.
-/// Without a pipeline, MinWorkerPriority falls back to Low (any worker may run the job) and Priority to Medium.
+/// Priorities are given by name. Without a pipeline, a job has no minimum worker priority (any worker may run it) and the default job priority; a MinWorkerPriority of "any" (PriorityNames.AnyWorker) asks for no minimum even when the pipeline has one.
 /// GitTokenMode controls credential resolution:
 ///   None     — no git token
 ///   Inherit  — use the pipeline's repository token (requires PipelineId)
@@ -22,8 +21,6 @@ public record JobSubmission
     public string? ScriptPath { get; init; }
     public GitTokenMode GitTokenMode { get; init; }
     public string? GitToken { get; init; }
-    [EnumDataType(typeof(WorkerPriority))]
-    public WorkerPriority? MinWorkerPriority { get; init; }
-    [EnumDataType(typeof(JobPriority))]
-    public JobPriority? Priority { get; init; }
+    public string? MinWorkerPriority { get; init; }
+    public string? Priority { get; init; }
 }

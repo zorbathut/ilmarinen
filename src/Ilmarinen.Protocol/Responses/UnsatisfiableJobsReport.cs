@@ -10,7 +10,7 @@ public record UnsatisfiableJobsReport
     /// <summary>
     /// Null when no worker is available at all, in which case every queued job is listed.
     /// </summary>
-    public WorkerPriority? HighestAvailableWorkerPriority { get; init; }
+    public PriorityRef? HighestAvailableWorkerPriority { get; init; }
 
     public required IReadOnlyList<JobInfo> Jobs { get; init; }
 

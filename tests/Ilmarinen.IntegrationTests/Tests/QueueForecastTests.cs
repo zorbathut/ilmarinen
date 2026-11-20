@@ -1,3 +1,4 @@
+using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
 using NUnit.Framework;
@@ -22,7 +23,7 @@ public class QueueForecastTests
     [Test]
     public void NothingRunningOrQueued_DrainsNow()
     {
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [], []);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [], []);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.Zero);
         Assert.That(estimate.QueuedJobs + estimate.RunningJobs + estimate.UnestimatedJobs + estimate.UnsatisfiableJobs, Is.Zero);
@@ -31,7 +32,7 @@ public class QueueForecastTests
     [Test]
     public void OneIdleWorker_RunsTheQueueOneAfterAnother()
     {
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [], [Job("a", 2), Job("b", 3)]);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [], [Job("a", 2), Job("b", 3)]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(5 * 60));
     }
@@ -39,7 +40,7 @@ public class QueueForecastTests
     [Test]
     public void TwoIdleWorkers_RunTheQueueSideBySide()
     {
-        var estimate = Forecast([Worker(Low, WorkerPriority.Medium), Worker(Other, WorkerPriority.Medium)], [], [Job("a", 2), Job("b", 3)]);
+        var estimate = Forecast([Worker(Low, StandardRank.Medium), Worker(Other, StandardRank.Medium)], [], [Job("a", 2), Job("b", 3)]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(3 * 60));
     }
@@ -47,7 +48,7 @@ public class QueueForecastTests
     [Test]
     public void ABusyWorker_TakesQueuedWorkOnceItsJobIsDone()
     {
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [Running(Other, remaining: 4)], [Job("a", 2)]);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [Running(Other, remaining: 4)], [Job("a", 2)]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(6 * 60));
         Assert.That(estimate.RunningJobs, Is.EqualTo(1));
@@ -58,7 +59,7 @@ public class QueueForecastTests
     public void AWorkerFreeingFirst_TakesTheJobWithoutWaitingForAHigherPriorityOne()
     {
         var estimate = Forecast(
-            [Worker(Low, WorkerPriority.Low), Worker(High, WorkerPriority.High)],
+            [Worker(Low, StandardRank.Low), Worker(High, StandardRank.High)],
             [Running(High, remaining: 10)],
             [Job("a", 2)]);
 
@@ -73,7 +74,7 @@ public class QueueForecastTests
         _perWorker[(High, "repo", "b")] = 1 * Minute;
         _perWorker[(Low, "repo", "b")] = 1 * Minute;
 
-        var estimate = Forecast([Worker(Low, WorkerPriority.Low), Worker(High, WorkerPriority.High)], [], [Job("a"), Job("b")]);
+        var estimate = Forecast([Worker(Low, StandardRank.Low), Worker(High, StandardRank.High)], [], [Job("a"), Job("b")]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(10 * 60), "the High worker took the older job, the one it is slow at");
     }
@@ -82,9 +83,9 @@ public class QueueForecastTests
     public void AJobNeedingAHigherPriority_WaitsForThatWorkerWhileOthersTakeWhatTheyCan()
     {
         var estimate = Forecast(
-            [Worker(Low, WorkerPriority.Low), Worker(High, WorkerPriority.High)],
+            [Worker(Low, StandardRank.Low), Worker(High, StandardRank.High)],
             [Running(High, remaining: 5)],
-            [Job("needs-high", 2, WorkerPriority.High), Job("any", 3)]);
+            [Job("needs-high", 2, StandardRank.High), Job("any", 3)]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(7 * 60), "Low runs 'any' now; 'needs-high' starts when High frees up");
     }
@@ -92,7 +93,7 @@ public class QueueForecastTests
     [Test]
     public void AJobNoAvailableWorkerQualifiesFor_IsCountedAndLeftOut()
     {
-        var estimate = Forecast([Worker(Low, WorkerPriority.Low)], [], [Job("needs-high", 30, WorkerPriority.High), Job("any", 2)]);
+        var estimate = Forecast([Worker(Low, StandardRank.Low)], [], [Job("needs-high", 30, StandardRank.High), Job("any", 2)]);
 
         Assert.That(estimate.UnsatisfiableJobs, Is.EqualTo(1));
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(2 * 60));
@@ -114,7 +115,7 @@ public class QueueForecastTests
     {
         _acrossWorkers[("repo", "a")] = 4 * Minute;
 
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [], [Job("a")]);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [], [Job("a")]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(4 * 60));
         Assert.That(estimate.UnestimatedJobs, Is.Zero);
@@ -123,7 +124,7 @@ public class QueueForecastTests
     [Test]
     public void NoHistoryAnywhere_CountsAsUnestimated_ButStillTakesItsTurn()
     {
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [Running(Other, remaining: null)], [Job("new"), Job("known", 2)]);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [Running(Other, remaining: null)], [Job("new"), Job("known", 2)]);
 
         Assert.That(estimate.UnestimatedJobs, Is.EqualTo(2));
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(2 * 60), "the unknown ones count as no time, so this is a lower bound");
@@ -136,7 +137,7 @@ public class QueueForecastTests
         _perWorker[(Other, "repo", "build")] = 30 * Minute;
         _acrossWorkers[("repo", "build")] = 5 * Minute;
 
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [new QueueForecast.RunningJob(Other, "repo", "build", 10 * Minute)], []);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [new QueueForecast.RunningJob(Other, "repo", "build", 10 * Minute)], []);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(20 * 60));
     }
@@ -147,7 +148,7 @@ public class QueueForecastTests
     {
         _acrossWorkers[("repo", "build")] = 60 * Minute;
 
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [new QueueForecast.RunningJob(Other, "repo", "build", 10 * Minute)], [Job("a", 10)]);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [new QueueForecast.RunningJob(Other, "repo", "build", 10 * Minute)], [Job("a", 10)]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(60 * 60));
         Assert.That(estimate.UnestimatedJobs, Is.Zero);
@@ -156,7 +157,7 @@ public class QueueForecastTests
     [Test]
     public void ARunningJobPastItsEstimate_IsAboutToFinish()
     {
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [Running(Other, remaining: -5)], [Job("a", 2)]);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [Running(Other, remaining: -5)], [Job("a", 2)]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(2 * 60));
     }
@@ -165,7 +166,7 @@ public class QueueForecastTests
     [Test]
     public void ARunningJobWhoseWorkerIsntAvailable_CountsButOffersNoLane()
     {
-        var estimate = Forecast([Worker(Other, WorkerPriority.Medium)], [Running(Guid.NewGuid(), remaining: 8)], [Job("a", 2), Job("b", 2)]);
+        var estimate = Forecast([Worker(Other, StandardRank.Medium)], [Running(Guid.NewGuid(), remaining: 8)], [Job("a", 2), Job("b", 2)]);
 
         Assert.That(estimate.EstimatedDrainSeconds, Is.EqualTo(8 * 60));
         Assert.That(estimate.RunningJobs, Is.EqualTo(1));
@@ -176,7 +177,7 @@ public class QueueForecastTests
         return QueueForecast.Estimate(workers, connectedWorkers: workers.Count, running, queued, new ScriptEstimates(_perWorker, _acrossWorkers));
     }
 
-    private static AvailableWorker Worker(Guid id, WorkerPriority priority)
+    private static AvailableWorker Worker(Guid id, int priority)
     {
         return new AvailableWorker(id, priority);
     }
@@ -194,14 +195,15 @@ public class QueueForecastTests
     }
 
     /// <summary>A queued job that takes the given minutes on any worker (its script is named after it).</summary>
-    private QueueForecast.QueuedJob Job(string script, double minutes, WorkerPriority minimum = WorkerPriority.Low)
+    private QueueForecast.QueuedJob Job(string script, double minutes, int? minimum = null)
     {
         _acrossWorkers[("repo", script)] = TimeSpan.FromMinutes(minutes);
-        return Job(script, minimum);
+        return new QueueForecast.QueuedJob(minimum, "repo", script);
     }
 
-    private static QueueForecast.QueuedJob Job(string script, WorkerPriority minimum = WorkerPriority.Low)
+    /// <summary>A queued job nobody has an estimate for, that any worker may run.</summary>
+    private static QueueForecast.QueuedJob Job(string script)
     {
-        return new QueueForecast.QueuedJob(minimum, "repo", script);
+        return new QueueForecast.QueuedJob(null, "repo", script);
     }
 }

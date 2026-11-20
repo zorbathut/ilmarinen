@@ -1,3 +1,4 @@
+using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services.Wake;
 using NUnit.Framework;
@@ -15,12 +16,12 @@ public class WakePlanTests
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-11-19T12:00:00Z");
     private static readonly WakeSettings Settings = new(Timeout: TimeSpan.FromMinutes(5), Backoff: TimeSpan.FromHours(1), QueuedDelay: TimeSpan.FromSeconds(30), DisconnectedDelay: TimeSpan.FromSeconds(90));
 
-    private static WakeJob Job(WorkerPriority min = WorkerPriority.Low, TimeSpan? waited = null)
+    private static WakeJob Job(int? min = null, TimeSpan? waited = null)
     {
         return new WakeJob(Guid.NewGuid(), min, Now - (waited ?? TimeSpan.FromMinutes(1)));
     }
 
-    private static WakeWorker Sleeper(string name, WorkerPriority priority = WorkerPriority.Medium, string? mac = "aa:bb:cc:dd:ee:ff", bool paused = false, TimeSpan? asleepFor = null, bool hasRunningJob = false)
+    private static WakeWorker Sleeper(string name, int priority = StandardRank.Medium, string? mac = "aa:bb:cc:dd:ee:ff", bool paused = false, TimeSpan? asleepFor = null, bool hasRunningJob = false)
     {
         return new WakeWorker(Guid.NewGuid(), name, priority, paused, mac, Now - (asleepFor ?? TimeSpan.FromHours(1)), Connected: false, Ready: false, HasRunningJob: hasRunningJob);
     }
@@ -75,11 +76,11 @@ public class WakePlanTests
     [Test]
     public void NoSleeperThatCantTakeIt_IsWoken()
     {
-        var round = Plan([Job(WorkerPriority.High)], [
-            Sleeper("low", WorkerPriority.Low),
-            Sleeper("no-address", WorkerPriority.High, mac: null),
-            Sleeper("paused", WorkerPriority.High, paused: true),
-            Sleeper("just-gone", WorkerPriority.High, asleepFor: TimeSpan.FromSeconds(30))]);
+        var round = Plan([Job(StandardRank.High)], [
+            Sleeper("low", StandardRank.Low),
+            Sleeper("no-address", StandardRank.High, mac: null),
+            Sleeper("paused", StandardRank.High, paused: true),
+            Sleeper("just-gone", StandardRank.High, asleepFor: TimeSpan.FromSeconds(30))]);
 
         Assert.That(round.Send, Is.Empty);
     }
@@ -87,9 +88,9 @@ public class WakePlanTests
     [Test]
     public void Sleepers_AreWokenHighestPriorityFirst_ThenMostRecentlySeen()
     {
-        var medium = Sleeper("medium", WorkerPriority.Medium, asleepFor: TimeSpan.FromMinutes(5));
-        var highLongAgo = Sleeper("high-long-ago", WorkerPriority.High, asleepFor: TimeSpan.FromDays(3));
-        var highRecently = Sleeper("high-recently", WorkerPriority.High, asleepFor: TimeSpan.FromMinutes(10));
+        var medium = Sleeper("medium", StandardRank.Medium, asleepFor: TimeSpan.FromMinutes(5));
+        var highLongAgo = Sleeper("high-long-ago", StandardRank.High, asleepFor: TimeSpan.FromDays(3));
+        var highRecently = Sleeper("high-recently", StandardRank.High, asleepFor: TimeSpan.FromMinutes(10));
 
         var round = Plan([Job()], [medium, highLongAgo, highRecently]);
 
@@ -136,8 +137,8 @@ public class WakePlanTests
     [Test]
     public void AWakeThatTimesOut_LeavesTheWorkerAloneForTheBackoff_AndWakesTheNext()
     {
-        var a = Sleeper("a", WorkerPriority.High);
-        var b = Sleeper("b", WorkerPriority.Low);
+        var a = Sleeper("a", StandardRank.High);
+        var b = Sleeper("b", StandardRank.Low);
         var job = Job();
 
         var round = Plan([job], [a, b], Waking((a, Now)));

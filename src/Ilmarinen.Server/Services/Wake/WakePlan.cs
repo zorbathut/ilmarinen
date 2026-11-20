@@ -1,4 +1,3 @@
-using Ilmarinen.Protocol;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -6,11 +5,17 @@ using System;
 
 namespace Ilmarinen.Server.Services.Wake;
 
-/// <summary>A queued job, as waking sees it.</summary>
-public sealed record WakeJob(Guid Id, WorkerPriority MinWorkerPriority, DateTimeOffset QueuedSince);
+/// <summary>A queued job, as waking sees it, with the rank of its minimum worker priority; null for no minimum.</summary>
+public sealed record WakeJob(Guid Id, int? MinWorkerRank, DateTimeOffset QueuedSince)
+{
+    public bool Fits(WakeWorker worker)
+    {
+        return MinWorkerRank == null || worker.Rank >= MinWorkerRank;
+    }
+}
 
-/// <summary>A registered worker, as waking sees it. <see cref="HasRunningJob"/>: the server has a job Running for it, which for a woken worker means it is back and has taken one.</summary>
-public sealed record WakeWorker(Guid Id, string Name, WorkerPriority Priority, bool Paused, string? Mac, DateTimeOffset LastSeen, bool Connected, bool Ready, bool HasRunningJob);
+/// <summary>A registered worker, as waking sees it, with the rank of its priority. <see cref="HasRunningJob"/>: the server has a job Running for it, which for a woken worker means it is back and has taken one.</summary>
+public sealed record WakeWorker(Guid Id, string Name, int Rank, bool Paused, string? Mac, DateTimeOffset LastSeen, bool Connected, bool Ready, bool HasRunningJob);
 
 /// <summary>A wake in progress: the worker's host was sent a packet and hasn't yet come back ready.</summary>
 public sealed record WakeAttempt(Guid WorkerId, DateTimeOffset StartedAt, DateTimeOffset Deadline);
@@ -86,14 +91,14 @@ public static class WakePlan
 
         // Match the jobs that have waited long enough to the wakes in progress, then wake a sleeper for each left over
         var waitingFor = new Dictionary<Guid, Guid>();
-        var unmatched = attempts.Values.Select(a => byId[a.WorkerId]).OrderByDescending(w => w.Priority).ThenBy(w => w.Id).ToList();
+        var unmatched = attempts.Values.Select(a => byId[a.WorkerId]).OrderByDescending(w => w.Rank).ThenBy(w => w.Id).ToList();
         var candidates = workers
             .Where(w => IsCandidate(w, attempts, failed, settings, now))
-            .OrderByDescending(w => w.Priority).ThenByDescending(w => w.LastSeen).ThenBy(w => w.Id)
+            .OrderByDescending(w => w.Rank).ThenByDescending(w => w.LastSeen).ThenBy(w => w.Id)
             .ToList();
         foreach (var job in queued.Where(j => now - j.QueuedSince >= settings.QueuedDelay))
         {
-            var waking = unmatched.FirstOrDefault(w => w.Priority >= job.MinWorkerPriority);
+            var waking = unmatched.FirstOrDefault(job.Fits);
             if (waking != null)
             {
                 unmatched.Remove(waking);
@@ -101,7 +106,7 @@ public static class WakePlan
                 continue;
             }
 
-            var sleeper = candidates.FirstOrDefault(w => w.Priority >= job.MinWorkerPriority);
+            var sleeper = candidates.FirstOrDefault(job.Fits);
             if (sleeper != null)
             {
                 candidates.Remove(sleeper);

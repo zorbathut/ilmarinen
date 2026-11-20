@@ -107,7 +107,8 @@ public class QueueEstimateEndpointTests
             WorkerId = workerId,
             CreatedAt = started ?? DateTime.UtcNow,
             StartedAt = started,
-            CompletedAt = completed
+            CompletedAt = completed,
+            PriorityId = await StandardPriority.DefaultJobPriorityIdAsync(db)
         });
         await db.SaveChangesAsync();
     }

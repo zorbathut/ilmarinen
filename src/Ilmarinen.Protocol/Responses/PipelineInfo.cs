@@ -15,7 +15,8 @@ public record PipelineInfo
     public DateTime CreatedAt { get; init; }
     public string? Schedule { get; init; }
     public DateTime? LastTriggeredAt { get; init; }
-    public WorkerPriority MinWorkerPriority { get; init; }
-    public JobPriority Priority { get; init; }
+    /// <summary>Null when any worker may run the pipeline's jobs.</summary>
+    public PriorityRef? MinWorkerPriority { get; init; }
+    public required PriorityRef Priority { get; init; }
     public NotificationPolicy NotificationPolicy { get; init; }
 }

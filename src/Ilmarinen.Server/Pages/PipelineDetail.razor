@@ -1,4 +1,5 @@
 @page "/pipelines/{Id}"
+@using Ilmarinen.Protocol
 @using Ilmarinen.Protocol.Requests
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
@@ -60,9 +61,10 @@
                 <span class="detail-label">Min Worker Priority</span>
                 <span class="detail-value">
                     <select @bind="editMinWorkerPriority">
-                        @foreach (var priority in Enum.GetValues<WorkerPriority>())
+                        <option value="@PriorityNames.AnyWorker">Any worker</option>
+                        @foreach (var priority in workerPriorities)
                         {
-                            <option value="@priority">@priority</option>
+                            <option value="@priority.Name">@priority.Name</option>
                         }
                     </select>
                 </span>
@@ -70,9 +72,9 @@
                 <span class="detail-label">Job Priority</span>
                 <span class="detail-value">
                     <select @bind="editPriority">
-                        @foreach (var priority in Enum.GetValues<JobPriority>())
+                        @foreach (var priority in jobPriorities)
                         {
-                            <option value="@priority">@priority</option>
+                            <option value="@priority.Name">@priority.Name</option>
                         }
                     </select>
                 </span>
@@ -139,10 +141,10 @@
                     </span>
 
                     <span class="detail-label">Min Worker Priority</span>
-                    <span class="detail-value">@pipeline.MinWorkerPriority</span>
+                    <span class="detail-value">@(pipeline.MinWorkerPriority?.Name ?? "Any worker")</span>
 
                     <span class="detail-label">Job Priority</span>
-                    <span class="detail-value">@pipeline.Priority</span>
+                    <span class="detail-value">@pipeline.Priority.Name</span>
 
                     <span class="detail-label">Notifications</span>
                     <span class="detail-value">@pipeline.NotificationPolicy</span>
@@ -175,20 +177,21 @@
             <div>
                 <label>Min worker priority</label>
                 <select @bind="triggerMinWorkerPriority">
-                    <option value="">Pipeline default (@pipeline.MinWorkerPriority)</option>
-                    @foreach (var priority in Enum.GetValues<WorkerPriority>())
+                    <option value="">Pipeline default (@(pipeline.MinWorkerPriority?.Name ?? "any worker"))</option>
+                    <option value="@PriorityNames.AnyWorker">Any worker</option>
+                    @foreach (var priority in workerPriorities)
                     {
-                        <option value="@priority">@priority</option>
+                        <option value="@priority.Name">@priority.Name</option>
                     }
                 </select>
             </div>
             <div>
                 <label>Job priority</label>
                 <select @bind="triggerPriority">
-                    <option value="">Pipeline default (@pipeline.Priority)</option>
-                    @foreach (var priority in Enum.GetValues<JobPriority>())
+                    <option value="">Pipeline default (@pipeline.Priority.Name)</option>
+                    @foreach (var priority in jobPriorities)
                     {
-                        <option value="@priority">@priority</option>
+                        <option value="@priority.Name">@priority.Name</option>
                     }
                 </select>
             </div>
@@ -196,6 +199,10 @@
                 @(triggering ? "Triggering..." : "Run")
             </button>
         </div>
+        @if (triggerError != null)
+        {
+            <div class="error-message">@triggerError</div>
+        }
     </div>
 
     <div class="card" style="margin-top: 1rem;">
@@ -249,8 +256,12 @@ else
     private IReadOnlyList<JobInfo>? jobs;
     private IReadOnlyList<RepositoryInfo>? repositories;
     private string refOverride = "";
-    private WorkerPriority? triggerMinWorkerPriority;
-    private JobPriority? triggerPriority;
+    // Priorities by name, as submissions and updates give them; "" for the pipeline's own.
+    private IReadOnlyList<Ilmarinen.Database.Entities.Priority> workerPriorities = [];
+    private IReadOnlyList<Ilmarinen.Database.Entities.Priority> jobPriorities = [];
+    private string triggerMinWorkerPriority = "";
+    private string triggerPriority = "";
+    private string? triggerError;
     private bool loading = true;
     private bool triggering;
 
@@ -265,8 +276,8 @@ else
     private string editScriptPath = "";
     private string editSchedule = "";
     private bool clearingSchedule;
-    private WorkerPriority editMinWorkerPriority;
-    private JobPriority editPriority;
+    private string editMinWorkerPriority = PriorityNames.AnyWorker;
+    private string editPriority = "";
     private NotificationPolicy editNotificationPolicy;
 
     protected override async Task OnInitializedAsync()
@@ -274,6 +285,7 @@ else
         await RefreshAsync();
         loading = false;
         UIEvents.OnJobsChanged += OnJobsChanged;
+        UIEvents.OnPrioritiesChanged += OnJobsChanged;
     }
 
     private async void OnJobsChanged()
@@ -293,7 +305,10 @@ else
             using var scope = ScopeFactory.CreateScope();
             var pipelineRepo = scope.ServiceProvider.GetRequiredService<PipelineRepository>();
             var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
+            var priorityRepo = scope.ServiceProvider.GetRequiredService<PriorityRepository>();
 
+            workerPriorities = await priorityRepo.GetAllAsync(PriorityKind.Worker);
+            jobPriorities = await priorityRepo.GetAllAsync(PriorityKind.Job);
             pipeline = await pipelineRepo.GetAsync(ulid);
             if (pipeline != null)
             {
@@ -324,6 +339,7 @@ else
         if (!Guid.TryParse(Id, out var ulid)) return;
 
         triggering = true;
+        triggerError = null;
         try
         {
             var submission = new JobSubmission
@@ -331,12 +347,16 @@ else
                 PipelineId = ulid,
                 Ref = string.IsNullOrWhiteSpace(refOverride) ? null : refOverride.Trim(),
                 GitTokenMode = Ilmarinen.Protocol.GitTokenMode.Inherit,
-                MinWorkerPriority = triggerMinWorkerPriority,
-                Priority = triggerPriority
+                MinWorkerPriority = triggerMinWorkerPriority == "" ? null : triggerMinWorkerPriority,
+                Priority = triggerPriority == "" ? null : triggerPriority
             };
 
             var jobId = await Scheduler.EnqueueJobAsync(submission);
             Navigation.NavigateTo($"/jobs/{jobId}");
+        }
+        catch (InvalidSubmissionException ex)
+        {
+            triggerError = ex.Message;
         }
         finally
         {
@@ -356,8 +376,8 @@ else
         editScriptPath = pipeline.ScriptPath;
         editSchedule = "";
         clearingSchedule = false;
-        editMinWorkerPriority = pipeline.MinWorkerPriority;
-        editPriority = pipeline.Priority;
+        editMinWorkerPriority = pipeline.MinWorkerPriority?.Name ?? PriorityNames.AnyWorker;
+        editPriority = pipeline.Priority.Name;
         editNotificationPolicy = pipeline.NotificationPolicy;
         editError = null;
         editing = true;
@@ -389,8 +409,8 @@ else
                 ScriptPath = editScriptPath != pipeline.ScriptPath ? editScriptPath : null,
                 ClearSchedule = clearingSchedule,
                 Schedule = clearingSchedule ? null : ConvertScheduleToUtc(editSchedule),
-                MinWorkerPriority = editMinWorkerPriority != pipeline.MinWorkerPriority ? editMinWorkerPriority : null,
-                Priority = editPriority != pipeline.Priority ? editPriority : null,
+                MinWorkerPriority = editMinWorkerPriority != (pipeline.MinWorkerPriority?.Name ?? PriorityNames.AnyWorker) ? editMinWorkerPriority : null,
+                Priority = editPriority != pipeline.Priority.Name ? editPriority : null,
                 NotificationPolicy = editNotificationPolicy != pipeline.NotificationPolicy ? editNotificationPolicy : null
             };
 
@@ -467,5 +487,6 @@ else
     public void Dispose()
     {
         UIEvents.OnJobsChanged -= OnJobsChanged;
+        UIEvents.OnPrioritiesChanged -= OnJobsChanged;
     }
 }

@@ -50,13 +50,13 @@ public class WorkerPriorityTests
         return result.WorkerId;
     }
 
-    private async Task<WorkerPriority> GetPriorityAsync(Guid workerId)
+    private async Task<string> GetPriorityAsync(Guid workerId)
     {
         var response = await _fixture.HttpClient.GetAsync("/api/workers");
         response.EnsureSuccessStatusCode();
 
         var workers = await response.Content.ReadFromJsonAsync<List<WorkerView>>(JsonOptions);
-        return workers!.Single(w => w.Id == workerId).Priority;
+        return workers!.Single(w => w.Id == workerId).Priority.Name;
     }
 
     [Test]
@@ -78,7 +78,7 @@ public class WorkerPriorityTests
     {
         var workerId = await RegisterWorkerAsync("priority-default-worker");
 
-        Assert.That(await GetPriorityAsync(workerId), Is.EqualTo(WorkerPriority.Medium));
+        Assert.That(await GetPriorityAsync(workerId), Is.EqualTo(StandardPriority.Medium));
     }
 
     [Test]
@@ -88,10 +88,10 @@ public class WorkerPriorityTests
 
         var response = await _fixture.HttpClient.PutAsJsonAsync(
             $"/api/workers/{workerId}",
-            new { priority = WorkerPriority.High });
+            new { priority = StandardPriority.High });
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
-        Assert.That(await GetPriorityAsync(workerId), Is.EqualTo(WorkerPriority.High));
+        Assert.That(await GetPriorityAsync(workerId), Is.EqualTo(StandardPriority.High));
     }
 
     [Test]
@@ -99,22 +99,21 @@ public class WorkerPriorityTests
     {
         var response = await _fixture.HttpClient.PutAsJsonAsync(
             $"/api/workers/{Guid.NewGuid()}",
-            new { priority = WorkerPriority.Low });
+            new { priority = StandardPriority.Low });
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
 
     [Test]
-    public async Task UpdateWorker_OutOfRangePriority_ReturnsBadRequest()
+    public async Task UpdateWorker_UnknownPriority_ReturnsBadRequest()
     {
-        var workerId = await RegisterWorkerAsync("priority-out-of-range-worker");
+        var workerId = await RegisterWorkerAsync("priority-unknown-worker");
 
-        // System.Text.Json happily deserializes any int into an enum, so an unguarded endpoint would persist this and sort the worker above High.
-        var content = new StringContent("{\"priority\":99}", Encoding.UTF8, "application/json");
+        var content = new StringContent("{\"priority\":\"Ultra\"}", Encoding.UTF8, "application/json");
         var response = await _fixture.HttpClient.PutAsync($"/api/workers/{workerId}", content);
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
-        Assert.That(await GetPriorityAsync(workerId), Is.EqualTo(WorkerPriority.Medium),
+        Assert.That(await GetPriorityAsync(workerId), Is.EqualTo(StandardPriority.Medium),
             "a rejected update must not change the stored priority");
     }
 }

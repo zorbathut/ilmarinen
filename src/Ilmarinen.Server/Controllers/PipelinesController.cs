@@ -32,10 +32,14 @@ public class PipelinesController : ControllerBase
         return CreatedAtAction(nameof(GetPipeline), new { id = pipeline.Id }, pipeline);
     }
 
+    /// <param name="priority">Only pipelines of the job priority with this name.</param>
+    /// <param name="minWorkerPriority">Only pipelines needing the worker priority with this name.</param>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<PipelineInfo>>> GetAllPipelines()
+    public async Task<ActionResult<IReadOnlyList<PipelineInfo>>> GetAllPipelines([FromQuery] string? priority, [FromQuery] string? minWorkerPriority, [FromServices] PriorityRepository priorities)
     {
-        return Ok(await _pipelines.GetAllAsync());
+        var priorityId = priority != null ? (await priorities.ResolveAsync(PriorityKind.Job, priority)).Id : (Guid?)null;
+        var minWorkerPriorityId = minWorkerPriority != null ? (await priorities.ResolveAsync(PriorityKind.Worker, minWorkerPriority)).Id : (Guid?)null;
+        return Ok(await _pipelines.GetAllAsync(priorityId, minWorkerPriorityId));
     }
 
     [HttpGet("{id}")]

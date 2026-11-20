@@ -17,6 +17,7 @@ namespace Ilmarinen.Database.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
+                .HasAnnotation("Npgsql:CollationDefinition:case_insensitive", "und-u-ks-level2,und-u-ks-level2,icu,False")
                 .HasAnnotation("ProductVersion", "9.0.1")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
@@ -46,14 +47,14 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<int>("GitTokenMode")
                         .HasColumnType("integer");
 
-                    b.Property<int>("MinWorkerPriority")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("MinWorkerPriorityId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid?>("PipelineId")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("Priority")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("PriorityId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Ref")
                         .IsRequired()
@@ -83,7 +84,11 @@ namespace Ilmarinen.Database.Migrations
 
                     b.HasIndex("CreatedAt");
 
+                    b.HasIndex("MinWorkerPriorityId");
+
                     b.HasIndex("PipelineId");
+
+                    b.HasIndex("PriorityId");
 
                     b.HasIndex("Status");
 
@@ -285,8 +290,8 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<DateTime?>("LastTriggeredAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("MinWorkerPriority")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("MinWorkerPriorityId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -295,8 +300,8 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<int>("NotificationPolicy")
                         .HasColumnType("integer");
 
-                    b.Property<int>("Priority")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("PriorityId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid>("RepositoryId")
                         .HasColumnType("uuid");
@@ -310,12 +315,49 @@ namespace Ilmarinen.Database.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("MinWorkerPriorityId");
+
                     b.HasIndex("Name")
                         .IsUnique();
+
+                    b.HasIndex("PriorityId");
 
                     b.HasIndex("RepositoryId");
 
                     b.ToTable("Pipelines");
+                });
+
+            modelBuilder.Entity("Ilmarinen.Database.Entities.Priority", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .UseCollation("case_insensitive");
+
+                    b.Property<int>("Rank")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Kind")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Priorities_Kind_Default")
+                        .HasFilter("\"IsDefault\"");
+
+                    b.HasIndex("Kind", "Name")
+                        .IsUnique();
+
+                    b.ToTable("Priorities");
                 });
 
             modelBuilder.Entity("Ilmarinen.Database.Entities.Repository", b =>
@@ -398,8 +440,8 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<bool>("Paused")
                         .HasColumnType("boolean");
 
-                    b.Property<int>("Priority")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("PriorityId")
+                        .HasColumnType("uuid");
 
                     b.Property<byte[]>("PublicKey")
                         .IsRequired()
@@ -416,7 +458,27 @@ namespace Ilmarinen.Database.Migrations
                     b.HasIndex("Name")
                         .IsUnique();
 
+                    b.HasIndex("PriorityId");
+
                     b.ToTable("Workers");
+                });
+
+            modelBuilder.Entity("Ilmarinen.Database.Entities.Job", b =>
+                {
+                    b.HasOne("Ilmarinen.Database.Entities.Priority", "MinWorkerPriority")
+                        .WithMany()
+                        .HasForeignKey("MinWorkerPriorityId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Ilmarinen.Database.Entities.Priority", "Priority")
+                        .WithMany()
+                        .HasForeignKey("PriorityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("MinWorkerPriority");
+
+                    b.Navigation("Priority");
                 });
 
             modelBuilder.Entity("Ilmarinen.Database.Entities.JobArtifact", b =>
@@ -484,13 +546,39 @@ namespace Ilmarinen.Database.Migrations
 
             modelBuilder.Entity("Ilmarinen.Database.Entities.Pipeline", b =>
                 {
+                    b.HasOne("Ilmarinen.Database.Entities.Priority", "MinWorkerPriority")
+                        .WithMany()
+                        .HasForeignKey("MinWorkerPriorityId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Ilmarinen.Database.Entities.Priority", "Priority")
+                        .WithMany()
+                        .HasForeignKey("PriorityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("Ilmarinen.Database.Entities.Repository", "Repository")
                         .WithMany()
                         .HasForeignKey("RepositoryId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.Navigation("MinWorkerPriority");
+
+                    b.Navigation("Priority");
+
                     b.Navigation("Repository");
+                });
+
+            modelBuilder.Entity("Ilmarinen.Database.Entities.Worker", b =>
+                {
+                    b.HasOne("Ilmarinen.Database.Entities.Priority", "Priority")
+                        .WithMany()
+                        .HasForeignKey("PriorityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Priority");
                 });
 #pragma warning restore 612, 618
         }

@@ -65,6 +65,19 @@ public class IntegrationTestFixture : IAsyncDisposable
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
         await db.Database.MigrateAsync();
+
+        if (UseStandardPriorities)
+        {
+            await StandardPriority.SetUpAsync(_factory.Services);
+        }
+    }
+
+    /// <summary>Whether SetupAsync gives the server <see cref="StandardPriority"/>'s priorities; off, it keeps a fresh install's lone "Default" in each kind. Set before SetupAsync.</summary>
+    public bool UseStandardPriorities { get; init; } = true;
+
+    public Task<Guid> PriorityIdAsync(PriorityKind kind, string name)
+    {
+        return StandardPriority.IdAsync(_factory.Services, kind, name);
     }
 
     private int _workerCount;

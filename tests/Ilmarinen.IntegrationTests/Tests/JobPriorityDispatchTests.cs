@@ -37,7 +37,7 @@ public class JobPriorityDispatchTests
         get { return _fixture.Services.GetRequiredService<JobScheduler>(); }
     }
 
-    private static JobSubmission Submission(JobPriority priority, WorkerPriority minWorkerPriority = WorkerPriority.Low, string script = "pipeline.csx")
+    private static JobSubmission Submission(string priority, string minWorkerPriority = StandardPriority.Low, string script = "pipeline.csx")
     {
         return new JobSubmission
         {
@@ -51,7 +51,7 @@ public class JobPriorityDispatchTests
     }
 
     /// <summary>Queued behind the scheduler's back, so no dispatch sees it until the test asks for one.</summary>
-    private async Task<Guid> QueueQuietlyAsync(JobPriority priority, WorkerPriority minWorkerPriority = WorkerPriority.Low, string script = "pipeline.csx")
+    private async Task<Guid> QueueQuietlyAsync(string priority, string minWorkerPriority = StandardPriority.Low, string script = "pipeline.csx")
     {
         using var scope = _fixture.Services.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
@@ -60,10 +60,10 @@ public class JobPriorityDispatchTests
         return id;
     }
 
-    private async Task<DirectedWorker> ReadyWorkerAsync(string connectionId, WorkerPriority priority = WorkerPriority.Medium)
+    private async Task<DirectedWorker> ReadyWorkerAsync(string connectionId, string priority = StandardPriority.Medium)
     {
         var worker = await DirectedWorker.RegisterAsync(_fixture, $"jp-{connectionId}");
-        await _fixture.Services.GetRequiredService<WorkerRepository>().SetPriorityAsync(worker.WorkerId, priority);
+        await _fixture.Services.GetRequiredService<WorkerRepository>().SetPriorityAsync(worker.WorkerId, await _fixture.PriorityIdAsync(PriorityKind.Worker, priority));
         await worker.ConnectAsync(connectionId);
         await worker.ResumeAsync(worker.Idle());
         return worker;
@@ -90,9 +90,9 @@ public class JobPriorityDispatchTests
     public async Task OneWorker_TakesTheQueueHighestPriorityFirst()
     {
         var worker = await ReadyWorkerAsync("conn-jp-order");
-        var low = await QueueQuietlyAsync(JobPriority.Low);
-        var medium = await QueueQuietlyAsync(JobPriority.Medium);
-        var high = await QueueQuietlyAsync(JobPriority.High);
+        var low = await QueueQuietlyAsync(StandardPriority.Low);
+        var medium = await QueueQuietlyAsync(StandardPriority.Medium);
+        var high = await QueueQuietlyAsync(StandardPriority.High);
 
         await Scheduler.DispatchAsync();
         var first = await FinishLastAsync(worker);
@@ -106,8 +106,8 @@ public class JobPriorityDispatchTests
     public async Task EqualPriorities_GoOldestFirst()
     {
         var worker = await ReadyWorkerAsync("conn-jp-ties");
-        var older = await QueueQuietlyAsync(JobPriority.High);
-        var newer = await QueueQuietlyAsync(JobPriority.High);
+        var older = await QueueQuietlyAsync(StandardPriority.High);
+        var newer = await QueueQuietlyAsync(StandardPriority.High);
 
         await Scheduler.DispatchAsync();
         var first = await FinishLastAsync(worker);
@@ -119,11 +119,11 @@ public class JobPriorityDispatchTests
     [Test]
     public async Task TwoReadyWorkers_TheHigherWorkerTakesTheHighestJob_TheOtherTheNext()
     {
-        var highWorker = await ReadyWorkerAsync("conn-jp-two-high", WorkerPriority.High);
-        var lowWorker = await ReadyWorkerAsync("conn-jp-two-low", WorkerPriority.Low);
-        var low = await QueueQuietlyAsync(JobPriority.Low);
-        var medium = await QueueQuietlyAsync(JobPriority.Medium);
-        var high = await QueueQuietlyAsync(JobPriority.High);
+        var highWorker = await ReadyWorkerAsync("conn-jp-two-high", StandardPriority.High);
+        var lowWorker = await ReadyWorkerAsync("conn-jp-two-low", StandardPriority.Low);
+        var low = await QueueQuietlyAsync(StandardPriority.Low);
+        var medium = await QueueQuietlyAsync(StandardPriority.Medium);
+        var high = await QueueQuietlyAsync(StandardPriority.High);
 
         await Scheduler.DispatchAsync();
 
@@ -136,10 +136,10 @@ public class JobPriorityDispatchTests
     [Test]
     public async Task GreedyMatchingLimitation_AJobOnlyTheHighWorkerCanRunWaitsBehindOneAnyWorkerCould()
     {
-        var highWorker = await ReadyWorkerAsync("conn-jp-greedy-high", WorkerPriority.High);
-        var lowWorker = await ReadyWorkerAsync("conn-jp-greedy-low", WorkerPriority.Low);
-        var anyWorker = await QueueQuietlyAsync(JobPriority.High);
-        var highOnly = await QueueQuietlyAsync(JobPriority.Medium, WorkerPriority.High);
+        var highWorker = await ReadyWorkerAsync("conn-jp-greedy-high", StandardPriority.High);
+        var lowWorker = await ReadyWorkerAsync("conn-jp-greedy-low", StandardPriority.Low);
+        var anyWorker = await QueueQuietlyAsync(StandardPriority.High);
+        var highOnly = await QueueQuietlyAsync(StandardPriority.Medium, StandardPriority.High);
 
         await Scheduler.DispatchAsync();
 
@@ -151,9 +151,9 @@ public class JobPriorityDispatchTests
     [Test]
     public async Task AJobNoReadyWorkerQualifiesFor_WaitsWhileLowerPriorityWorkGoesAhead()
     {
-        var worker = await ReadyWorkerAsync("conn-jp-qualify", WorkerPriority.Medium);
-        var highNeedsHigh = await QueueQuietlyAsync(JobPriority.High, WorkerPriority.High);
-        var medium = await QueueQuietlyAsync(JobPriority.Medium);
+        var worker = await ReadyWorkerAsync("conn-jp-qualify", StandardPriority.Medium);
+        var highNeedsHigh = await QueueQuietlyAsync(StandardPriority.High, StandardPriority.High);
+        var medium = await QueueQuietlyAsync(StandardPriority.Medium);
 
         await Scheduler.DispatchAsync();
 
@@ -165,8 +165,8 @@ public class JobPriorityDispatchTests
     public async Task AHighJob_NeverDisplacesARunningLowOne()
     {
         var worker = await ReadyWorkerAsync("conn-jp-no-preempt");
-        var low = await Scheduler.EnqueueJobAsync(Submission(JobPriority.Low));
-        var high = await Scheduler.EnqueueJobAsync(Submission(JobPriority.High));
+        var low = await Scheduler.EnqueueJobAsync(Submission(StandardPriority.Low));
+        var high = await Scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
 
         Assert.That(await JobAsync(low), Is.EqualTo((JobStatus.Running, (Guid?)worker.WorkerId)));
         Assert.That((await JobAsync(high)).Status, Is.EqualTo(JobStatus.Queued));
@@ -177,8 +177,8 @@ public class JobPriorityDispatchTests
     public async Task AHandedBackJob_KeepsItsPlaceAheadOfAnOlderLowerOne()
     {
         var worker = await ReadyWorkerAsync("conn-jp-hand-back");
-        await QueueQuietlyAsync(JobPriority.Medium);
-        var high = await QueueQuietlyAsync(JobPriority.High);
+        await QueueQuietlyAsync(StandardPriority.Medium);
+        var high = await QueueQuietlyAsync(StandardPriority.High);
 
         await Scheduler.DispatchAsync();
         var assignment = (await worker.SentAsync()).Assignments.Single();
@@ -195,10 +195,10 @@ public class JobPriorityDispatchTests
     [Test]
     public async Task TheUnfinishedJobs_AreListedInDispatchOrder()
     {
-        await QueueQuietlyAsync(JobPriority.Low, script: "low.csx");
-        await QueueQuietlyAsync(JobPriority.High, script: "high.csx");
-        await QueueQuietlyAsync(JobPriority.Medium, script: "medium.csx");
-        await QueueQuietlyAsync(JobPriority.High, script: "later-high.csx");
+        await QueueQuietlyAsync(StandardPriority.Low, script: "low.csx");
+        await QueueQuietlyAsync(StandardPriority.High, script: "high.csx");
+        await QueueQuietlyAsync(StandardPriority.Medium, script: "medium.csx");
+        await QueueQuietlyAsync(StandardPriority.High, script: "later-high.csx");
 
         using var scope = _fixture.Services.CreateScope();
         var unfinished = await scope.ServiceProvider.GetRequiredService<JobRepository>().GetUnfinishedJobsAsync();

@@ -37,8 +37,13 @@ public static class QueueForecast
     /// <summary>A Running job: on which worker (absent from the available ones if that worker isn't there to take more), and how long it has been running.</summary>
     public sealed record RunningJob(Guid? WorkerId, string RepoUrl, string ScriptPath, TimeSpan Elapsed);
 
-    /// <summary>A Queued job, listed in dispatch order (JobRepository.GetUnfinishedJobsAsync).</summary>
-    public sealed record QueuedJob(WorkerPriority MinWorkerPriority, string RepoUrl, string ScriptPath);
+    /// <summary>A Queued job, listed in dispatch order (JobRepository.GetUnfinishedJobsAsync), with the rank of its minimum worker priority; null for no minimum.</summary>
+    public sealed record QueuedJob(int? MinWorkerRank, string RepoUrl, string ScriptPath);
+
+    private static bool Qualifies(int workerRank, QueuedJob job)
+    {
+        return job.MinWorkerRank == null || job.MinWorkerRank <= workerRank;
+    }
 
     /// <param name="estimates">A job's duration is its worker's own estimate for the script, else the estimate across all workers, else unknown (JobRepository.GetScriptEstimatesAsync).</param>
     public static QueueEstimate Estimate(
@@ -79,18 +84,18 @@ public static class QueueForecast
         }
 
         // The same rule as JobRepository.GetUnsatisfiableJobsAsync, over the same workers, so the two agree.
-        var highest = available.Count > 0 ? available.Max(w => w.Priority) : (WorkerPriority?)null;
-        var queue = queued.Where(j => highest != null && j.MinWorkerPriority <= highest).ToList();
+        var highest = available.Count > 0 ? available.Max(w => w.Rank) : (int?)null;
+        var queue = queued.Where(j => highest is { } rank && Qualifies(rank, j)).ToList();
         var unsatisfiable = queued.Count - queue.Count;
 
         // Each round either hands a worker a job or drops a worker that qualifies for nothing left, so it ends; a job some worker qualifies for always has that worker still in the running.
-        var active = available.OrderByDescending(w => w.Priority).ThenBy(w => w.WorkerId).ToList();
+        var active = available.OrderByDescending(w => w.Rank).ThenBy(w => w.WorkerId).ToList();
         while (queue.Count > 0 && active.Count > 0)
         {
             var now = active.Min(w => freeAt[w.WorkerId]);
             foreach (var worker in active.Where(w => freeAt[w.WorkerId] == now).ToList())
             {
-                var job = queue.FirstOrDefault(j => j.MinWorkerPriority <= worker.Priority);
+                var job = queue.FirstOrDefault(j => Qualifies(worker.Rank, j));
                 if (job == null)
                 {
                     active.Remove(worker);

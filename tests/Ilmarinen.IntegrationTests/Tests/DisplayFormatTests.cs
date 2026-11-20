@@ -97,6 +97,7 @@ public class DisplayFormatTests
             RepoUrl = "https://example.invalid/repo.git",
             Ref = "master",
             ScriptPath = "pipeline.csx",
+            Priority = new PriorityRef(Guid.NewGuid(), "Default"),
             StartedAt = started,
             CompletedAt = completed
         };

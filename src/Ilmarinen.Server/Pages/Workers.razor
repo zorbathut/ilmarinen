@@ -14,6 +14,8 @@
 
 <h1 class="page-title">Workers</h1>
 
+<FilteredByPriority PriorityId="PriorityFilter" What="workers of priority" ClearHref="/workers" />
+
 <div class="card" style="margin-bottom: 1rem;">
     <h3>Register Worker</h3>
     <form @onsubmit="RegisterWorker" class="form-row">
@@ -73,12 +75,12 @@
                             <td>
                                 @* Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without this the diff is a no-op and the dropdown would keep showing the value the user picked instead of the one that is actually stored. *@
                                 <select @key="(worker.Priority, prioritySaves)"
-                                        value="@worker.Priority"
+                                        value="@worker.Priority.Id"
                                         disabled="@IsSavingPriority(worker.Id)"
                                         @onchange="e => SetPriority(worker.Id, e)">
-                                    @foreach (var priority in PriorityOptions)
+                                    @foreach (var priority in priorityOptions)
                                     {
-                                        <option value="@priority" selected="@(priority == worker.Priority)">@priority</option>
+                                        <option value="@priority.Id" selected="@(priority.Id == worker.Priority.Id)">@priority.Name</option>
                                     }
                                 </select>
                             </td>
@@ -178,7 +180,7 @@
 
 @code {
     // Highest first — the dropdown should read the way the scheduler prefers.
-    private static readonly WorkerPriority[] PriorityOptions = [WorkerPriority.High, WorkerPriority.Medium, WorkerPriority.Low];
+    private IReadOnlyList<PriorityRef> priorityOptions = [];
 
     private IReadOnlyList<WorkerView>? workers;
     private HashSet<string> deletingWorkspaces = new();
@@ -192,11 +194,20 @@
     private string? registrationError;
     private WorkerRegistrationResult? registrationResult;
 
-    protected override async Task OnInitializedAsync()
+    /// <summary>Only the workers of this priority.</summary>
+    [SupplyParameterFromQuery(Name = "priority")]
+    public Guid? PriorityFilter { get; set; }
+
+    protected override async Task OnParametersSetAsync()
     {
         workers = await FetchWorkersAsync();
+    }
+
+    protected override void OnInitialized()
+    {
         UIEvents.OnWorkersChanged += OnChanged;
         UIEvents.OnJobsChanged += OnChanged;
+        UIEvents.OnPrioritiesChanged += OnChanged;
     }
 
     private async void OnChanged()
@@ -213,12 +224,15 @@
     {
         using var scope = ScopeFactory.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-        return await repo.GetAllAsync();
+        var priorities = scope.ServiceProvider.GetRequiredService<PriorityRepository>();
+        priorityOptions = (await priorities.GetAllAsync(PriorityKind.Worker)).Select(PriorityRepository.ToRef).ToList();
+        return await repo.GetAllAsync(PriorityFilter);
     }
 
     public void Dispose()
     {
         UIEvents.OnWorkersChanged -= OnChanged;
+        UIEvents.OnPrioritiesChanged -= OnChanged;
         UIEvents.OnJobsChanged -= OnChanged;
     }
 
@@ -265,7 +279,7 @@
 
     private async Task SetPriority(Guid workerId, ChangeEventArgs e)
     {
-        var priority = Enum.Parse<WorkerPriority>((string)e.Value!);
+        var priority = Guid.Parse((string)e.Value!);
 
         savingPriority.Add(workerId);
         actionError = null;

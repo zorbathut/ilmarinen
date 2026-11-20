@@ -1,4 +1,3 @@
-using Ilmarinen.Protocol;
 using System;
 
 namespace Ilmarinen.Database.Entities;
@@ -16,7 +15,8 @@ public class Worker
     // Null until the worker's first successful authentication
     public string? LastIpAddress { get; set; }
 
-    public WorkerPriority Priority { get; set; } = WorkerPriority.Medium;
+    public required Guid PriorityId { get; set; }
+    public Priority? Priority { get; set; }
 
     // A host re-check or operator diagnostic was asked for and hasn't started yet; the worker takes no work until it has. Persisted so a server restart can't skip it.
     public bool DiagnosticOwed { get; set; }

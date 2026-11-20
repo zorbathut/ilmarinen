@@ -24,7 +24,8 @@ public class WedgeEmbedsTests
             Ref = gitRef,
             ScriptPath = "pipeline.csx",
             PipelineName = pipelineName,
-            MinWorkerPriority = WorkerPriority.High
+            MinWorkerPriority = new PriorityRef(Guid.NewGuid(), "High"),
+            Priority = new PriorityRef(Guid.NewGuid(), "Default")
         };
     }
 
@@ -39,7 +40,7 @@ public class WedgeEmbedsTests
         var huge = new string('x', 5000);
         var report = new UnsatisfiableJobsReport
         {
-            HighestAvailableWorkerPriority = WorkerPriority.Medium,
+            HighestAvailableWorkerPriority = new PriorityRef(Guid.NewGuid(), "Medium"),
             Jobs = Enumerable.Range(0, 50).Select(_ => Job(repoUrl: huge, gitRef: huge, pipelineName: huge)).ToList(),
             PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = []
         };
@@ -49,6 +50,20 @@ public class WedgeEmbedsTests
         Assert.That(embed.Length, Is.LessThanOrEqualTo(EmbedBuilder.MaxEmbedLength));
         Assert.That(embed.Fields.Length, Is.LessThanOrEqualTo(EmbedBuilder.MaxFieldCount));
         Assert.That(embed.Fields.All(f => f.Name.Length <= EmbedFieldBuilder.MaxFieldNameLength && f.Value.Length <= EmbedFieldBuilder.MaxFieldValueLength), Is.True);
+    }
+
+    [Test]
+    public void Wedged_PriorityNames_AreOperatorText_SoTheyCantFormatOrRunLong()
+    {
+        var name = "**loud** " + new string('x', 500);
+        var job = Job() with { MinWorkerPriority = new PriorityRef(Guid.NewGuid(), name) };
+        var report = new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = new PriorityRef(Guid.NewGuid(), name), Jobs = [job], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] };
+
+        var embed = WedgeEmbeds.Wedged(report, LinkTo);
+
+        Assert.That(embed.Description, Does.Not.Contain("**loud**"));
+        Assert.That(embed.Fields.Single().Value, Does.Not.Contain("**loud**"));
+        Assert.That(embed.Description, Does.Not.Contain(new string('x', 500)));
     }
 
     [TestCase("")]
@@ -83,7 +98,7 @@ public class WedgeEmbedsTests
         var jobs = new[] { Job() };
 
         var noWorker = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = null, Jobs = jobs, PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
-        var lowPriority = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = WorkerPriority.Medium, Jobs = jobs, PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+        var lowPriority = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = new PriorityRef(Guid.NewGuid(), "Medium"), Jobs = jobs, PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
 
         Assert.That(noWorker.Description, Is.Not.EqualTo(lowPriority.Description));
     }

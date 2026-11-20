@@ -76,7 +76,7 @@ public class JobScheduler
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
             // One pass is enough: each candidate takes at most one job, and after that it is busy. A worker that frees up meanwhile raises its own DispatchAsync, which is waiting on this lock.
-            foreach (var (workerId, priority) in await workers.GetReadyWorkersByPriorityAsync())
+            foreach (var (workerId, rank) in await workers.GetReadyWorkersByPriorityAsync())
             {
                 // The list was a snapshot; under the worker's lock nothing about it can change while it is checked and handed a job.
                 using (await _sessions.LockAsync(workerId))
@@ -88,7 +88,7 @@ public class JobScheduler
                     }
 
                     // Candidates come highest priority first, and a worker qualifies for everything a lower-priority one does, so once nothing queued fits this worker nothing fits the rest.
-                    if (!await AssignNextJobAsync(jobs, session, priority))
+                    if (!await AssignNextJobAsync(jobs, session, rank))
                     {
                         return;
                     }
@@ -104,9 +104,9 @@ public class JobScheduler
     /// <summary>
     /// Takes queued jobs this worker's priority qualifies it for, in dispatch order (highest job priority, then oldest), until one is handed to it. Returns false if none fit. Caller holds _assignLock and the worker's session lock, and has confirmed it is ready.
     /// </summary>
-    private async Task<bool> AssignNextJobAsync(JobRepository jobs, WorkerSession session, WorkerPriority workerPriority)
+    private async Task<bool> AssignNextJobAsync(JobRepository jobs, WorkerSession session, int workerRank)
     {
-        while (await jobs.GetNextQueuedJobIdAsync(workerPriority) is { } jobId)
+        while (await jobs.GetNextQueuedJobIdAsync(workerRank) is { } jobId)
         {
             var assignmentId = Guid.NewGuid();
             JobAssignment assignment;
@@ -143,13 +143,13 @@ public class JobScheduler
     /// <summary>
     /// Changes a worker's priority, then dispatches: a promoted worker may now meet the minimum of a job that is waiting. Returns false if the worker doesn't exist.
     /// </summary>
-    public async Task<bool> SetWorkerPriorityAsync(Guid workerId, WorkerPriority priority)
+    public async Task<bool> SetWorkerPriorityAsync(Guid workerId, Guid priorityId)
     {
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         // Under the dispatch lock, so a demotion can't land between a dispatch reading this worker's priority and handing it a job only the old priority qualified it for.
-        var updated = await UnderDispatchLockAsync(() => workers.SetPriorityAsync(workerId, priority));
+        var updated = await UnderDispatchLockAsync(() => workers.SetPriorityAsync(workerId, priorityId));
 
         if (!updated)
         {
@@ -159,6 +159,24 @@ public class JobScheduler
         _uiEvents.NotifyWorkersChanged();
         await DispatchAsync();
         return true;
+    }
+
+    /// <summary>
+    /// Makes a change to the lists of priorities, then dispatches: reordering or deleting one changes which workers qualify for which jobs, and the order jobs go in. Every change to the lists goes through here.
+    /// </summary>
+    public async Task<T> ChangePrioritiesAsync<T>(Func<PriorityRepository, Task<T>> change)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var priorities = scope.ServiceProvider.GetRequiredService<PriorityRepository>();
+
+        var result = await UnderDispatchLockAsync(() => change(priorities));
+
+        // Names and order show on the workers' and jobs' pages too.
+        _uiEvents.NotifyPrioritiesChanged();
+        _uiEvents.NotifyWorkersChanged();
+        _uiEvents.NotifyJobsChanged();
+        await DispatchAsync();
+        return result;
     }
 
     /// <summary>Runs a change to what dispatch decides from, so that no dispatch is part-way through deciding from the old values when it lands.</summary>
@@ -200,32 +218,36 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Queued jobs no available worker can take, with the highest priority on offer. A sleeping worker that can still be woken counts as available here, and only here (the queue forecast assumes no wake delay): its jobs aren't stuck until waking it has failed. Taken without _assignLock: it is a read-only snapshot, and a momentary disagreement with an in-flight dispatch clears on the next read.
+    /// Queued jobs no available worker can take, with the highest priority on offer. A sleeping worker that can still be woken counts as available here, and only here (the queue forecast assumes no wake delay): its jobs aren't stuck until waking it has failed. Taken without _assignLock: it is a read-only snapshot, and a momentary disagreement with an in-flight dispatch clears on the next read. That includes the priorities being reordered or deleted between the reads here: ranks are compared as each read found them.
     /// </summary>
     public async Task<UnsatisfiableJobsReport> GetUnsatisfiableJobsAsync()
     {
         using var scope = _scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+        var priorities = scope.ServiceProvider.GetRequiredService<PriorityRepository>();
 
         var availability = await workers.GetAvailabilityAsync();
         var (wakeable, failedToWake) = await _waker.GetSleepersAsync();
-        var onOffer = availability.Available.Select(w => w.Priority).Concat(wakeable).ToList();
-        var highestAvailablePriority = onOffer.Count == 0 ? (WorkerPriority?)null : onOffer.Max();
-        var stuck = await jobs.GetUnsatisfiableJobsAsync(highestAvailablePriority);
+        var onOffer = availability.Available.Select(w => w.Rank).Concat(wakeable).ToList();
+        int? highestAvailableRank = onOffer.Count == 0 ? null : onOffer.Max();
+        var stuck = await jobs.GetUnsatisfiableJobsAsync(highestAvailableRank);
+        var workerPriorities = await priorities.GetAllAsync(PriorityKind.Worker);
+        var rankById = workerPriorities.ToDictionary(p => p.Id, p => p.Rank);
 
-        bool CouldTakeOne(WorkerPriority priority)
+        bool CouldTakeOne(int rank)
         {
-            return stuck.Any(j => j.MinWorkerPriority <= priority);
+            return stuck.Any(j => j.MinWorkerPriority == null || (rankById.TryGetValue(j.MinWorkerPriority.Id, out var minimum) && minimum <= rank));
         }
 
+        var highest = workerPriorities.FirstOrDefault(p => p.Rank == highestAvailableRank);
         return new UnsatisfiableJobsReport
         {
-            HighestAvailableWorkerPriority = highestAvailablePriority,
+            HighestAvailableWorkerPriority = highest != null ? PriorityRepository.ToRef(highest) : null,
             Jobs = stuck,
-            PausedWorkers = availability.PausedButOtherwiseAvailable.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList(),
-            InUseWorkers = availability.InUseButOtherwiseAvailable.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList(),
-            UnreachableWorkers = failedToWake.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList()
+            PausedWorkers = availability.PausedButOtherwiseAvailable.Where(w => CouldTakeOne(w.Rank)).Select(w => w.Name).ToList(),
+            InUseWorkers = availability.InUseButOtherwiseAvailable.Where(w => CouldTakeOne(w.Rank)).Select(w => w.Name).ToList(),
+            UnreachableWorkers = failedToWake.Where(w => CouldTakeOne(w.Rank)).Select(w => w.Name).ToList()
         };
     }
 
@@ -249,7 +271,7 @@ public class JobScheduler
             .ToList();
         var queued = unfinished
             .Where(j => j.Status == JobStatus.Queued)
-            .Select(j => new QueueForecast.QueuedJob(j.MinWorkerPriority, j.RepoUrl, j.ScriptPath))
+            .Select(j => new QueueForecast.QueuedJob(j.MinWorkerRank, j.RepoUrl, j.ScriptPath))
             .ToList();
         var estimates = await jobs.GetScriptEstimatesAsync(unfinished.Select(j => (j.RepoUrl, j.ScriptPath)));
 

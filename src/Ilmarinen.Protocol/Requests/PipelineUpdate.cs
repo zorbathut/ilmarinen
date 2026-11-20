@@ -13,11 +13,11 @@ public record PipelineUpdate
     public string? Schedule { get; init; }
     public bool ClearSchedule { get; init; }
 
-    [EnumDataType(typeof(WorkerPriority))]
-    public WorkerPriority? MinWorkerPriority { get; init; }
+    /// <summary>A worker priority's name, or "any" to clear the minimum; null leaves it as it is.</summary>
+    public string? MinWorkerPriority { get; init; }
 
-    [EnumDataType(typeof(JobPriority))]
-    public JobPriority? Priority { get; init; }
+    /// <summary>A job priority's name; null leaves it as it is.</summary>
+    public string? Priority { get; init; }
 
     [EnumDataType(typeof(NotificationPolicy))]
     public NotificationPolicy? NotificationPolicy { get; init; }

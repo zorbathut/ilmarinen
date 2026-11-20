@@ -192,12 +192,13 @@ public class JobDurationEstimateTests
         {
             using var scope = _fixture.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+            var priorityId = await StandardPriority.DefaultJobPriorityIdAsync(db);
             foreach (var length in minutes)
             {
                 // Runs one after another, oldest first
                 var started = _clock;
                 _clock = started.AddMinutes(length + 1);
-                db.Jobs.Add(NewJob(status, started, started.AddMinutes(length), workerId, scriptPath, repoUrl));
+                db.Jobs.Add(NewJob(status, started, started.AddMinutes(length), workerId, scriptPath, repoUrl, priorityId));
             }
             await db.SaveChangesAsync();
         }
@@ -206,13 +207,13 @@ public class JobDurationEstimateTests
         {
             using var scope = _fixture.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
-            var job = NewJob(JobStatus.Running, DateTime.UtcNow.AddMinutes(-1), null, null, scriptPath, null);
+            var job = NewJob(JobStatus.Running, DateTime.UtcNow.AddMinutes(-1), null, null, scriptPath, null, await StandardPriority.DefaultJobPriorityIdAsync(db));
             db.Jobs.Add(job);
             await db.SaveChangesAsync();
             return job.Id;
         }
 
-        private Job NewJob(JobStatus status, DateTime started, DateTime? completed, Guid? workerId, string? scriptPath, string? repoUrl)
+        private Job NewJob(JobStatus status, DateTime started, DateTime? completed, Guid? workerId, string? scriptPath, string? repoUrl, Guid priorityId)
         {
             return new Job
             {
@@ -224,7 +225,8 @@ public class JobDurationEstimateTests
                 WorkerId = workerId ?? _workerId,
                 CreatedAt = started,
                 StartedAt = started,
-                CompletedAt = completed
+                CompletedAt = completed,
+                PriorityId = priorityId
             };
         }
 

@@ -21,11 +21,26 @@ public class IlmarinenDbContext : DbContext
     public DbSet<Repository> Repositories => Set<Repository>();
     public DbSet<Subscriber> Subscribers => Set<Subscriber>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<Priority> Priorities => Set<Priority>();
+
+    /// <summary>The collation priority names are compared in: case-insensitive, so "High" and "high" are one name.</summary>
+    public const string CaseInsensitiveCollation = "case_insensitive";
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasCollation(CaseInsensitiveCollation, locale: "und-u-ks-level2", provider: "icu", deterministic: false);
+
+        modelBuilder.Entity<Priority>(e =>
+        {
+            e.Property(p => p.Name).UseCollation(CaseInsensitiveCollation);
+            e.HasIndex(p => new { p.Kind, p.Name }).IsUnique();
+            e.HasIndex(p => p.Kind).IsUnique().HasFilter("\"IsDefault\"").HasDatabaseName("IX_Priorities_Kind_Default");
+        });
+
         modelBuilder.Entity<Job>(e =>
         {
+            e.HasOne(j => j.Priority).WithMany().HasForeignKey(j => j.PriorityId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(j => j.MinWorkerPriority).WithMany().HasForeignKey(j => j.MinWorkerPriorityId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(j => j.Status);
             e.HasIndex(j => j.CreatedAt);
             e.HasIndex(j => j.PipelineId);
@@ -41,6 +56,8 @@ public class IlmarinenDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(p => p.RepositoryId)
                 .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(p => p.Priority).WithMany().HasForeignKey(p => p.PriorityId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(p => p.MinWorkerPriority).WithMany().HasForeignKey(p => p.MinWorkerPriorityId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Repository>(e =>
@@ -78,6 +95,7 @@ public class IlmarinenDbContext : DbContext
         modelBuilder.Entity<Worker>(e =>
         {
             e.HasIndex(w => w.Name).IsUnique();
+            e.HasOne(w => w.Priority).WithMany().HasForeignKey(w => w.PriorityId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<JobArtifact>(e =>

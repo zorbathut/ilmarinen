@@ -73,7 +73,7 @@ public sealed class WorkerWaker
         {
             using var scope = _scopeFactory.CreateScope();
             var queued = (await scope.ServiceProvider.GetRequiredService<JobRepository>().GetQueuedJobsAsync())
-                .Select(j => new WakeJob(j.Id, j.MinWorkerPriority, new DateTimeOffset(DateTime.SpecifyKind(j.CreatedAt, DateTimeKind.Utc))))
+                .Select(j => new WakeJob(j.Id, j.MinWorkerRank, new DateTimeOffset(DateTime.SpecifyKind(j.CreatedAt, DateTimeKind.Utc))))
                 .ToList();
             workers = await _workers.GetWakeWorkersAsync();
             before = _status.State;
@@ -159,8 +159,8 @@ public sealed class WorkerWaker
         return WakeRequestResult.Sent;
     }
 
-    /// <summary>For the stuck report: the priorities of the sleepers that can still be counted on to wake, and the names of those whose last wake failed and that could take a job of one of the priorities given. Empty while waking is off.</summary>
-    public async Task<(IReadOnlyList<Ilmarinen.Protocol.WorkerPriority> Wakeable, IReadOnlyList<WakeWorker> Failed)> GetSleepersAsync()
+    /// <summary>For the stuck report: the ranks of the priorities of the sleepers that can still be counted on to wake, and the names of those whose last wake failed and that could take a job of one of the priorities given. Empty while waking is off.</summary>
+    public async Task<(IReadOnlyList<int> Wakeable, IReadOnlyList<WakeWorker> Failed)> GetSleepersAsync()
     {
         if (!_sender.Enabled)
         {
@@ -170,7 +170,7 @@ public sealed class WorkerWaker
         var state = _status.State;
         var sleepers = (await _workers.GetWakeWorkersAsync()).Where(w => !w.Connected).ToList();
         return (
-            sleepers.Where(w => WakePlan.IsWakeable(w, state)).Select(w => w.Priority).ToList(),
+            sleepers.Where(w => WakePlan.IsWakeable(w, state)).Select(w => w.Rank).ToList(),
             sleepers.Where(w => state.FailedAt.ContainsKey(w.Id) && !w.Paused && w.Mac != null).OrderBy(w => w.Name).ToList());
     }
 

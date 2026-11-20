@@ -10,6 +10,7 @@ public class UIEventService
 {
     public event Action? OnJobsChanged;
     public event Action? OnWorkersChanged;
+    public event Action? OnPrioritiesChanged;
 
     public void NotifyJobsChanged()
     {
@@ -19,5 +20,10 @@ public class UIEventService
     public void NotifyWorkersChanged()
     {
         OnWorkersChanged?.Invoke();
+    }
+
+    public void NotifyPrioritiesChanged()
+    {
+        OnPrioritiesChanged?.Invoke();
     }
 }

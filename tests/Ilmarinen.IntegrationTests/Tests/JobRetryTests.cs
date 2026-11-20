@@ -119,8 +119,8 @@ public class JobRetryTests
             Ref = "master",
             ScriptPath = "pipeline.csx",
             GitTokenMode = GitTokenMode.None,
-            MinWorkerPriority = WorkerPriority.High,
-            Priority = JobPriority.High
+            MinWorkerPriority = StandardPriority.High,
+            Priority = StandardPriority.High
         });
 
         await AssertRetryPreservesBothPrioritiesAsync(jobId);
@@ -147,8 +147,8 @@ public class JobRetryTests
         {
             PipelineId = pipeline.Id,
             GitTokenMode = GitTokenMode.Inherit,
-            MinWorkerPriority = WorkerPriority.High,
-            Priority = JobPriority.High
+            MinWorkerPriority = StandardPriority.High,
+            Priority = StandardPriority.High
         });
 
         await AssertRetryPreservesBothPrioritiesAsync(jobId);
@@ -161,8 +161,8 @@ public class JobRetryTests
 
         var retryJob = await _fixture.GetJobAsync(await _fixture.RetryJobAsync(jobId));
 
-        Assert.That(retryJob.MinWorkerPriority, Is.EqualTo(WorkerPriority.High));
-        Assert.That(retryJob.Priority, Is.EqualTo(JobPriority.High), "the job's own priority, not its pipeline's");
+        Assert.That(retryJob.MinWorkerPriority?.Name, Is.EqualTo(StandardPriority.High));
+        Assert.That(retryJob.Priority?.Name, Is.EqualTo(StandardPriority.High), "the job's own priority, not its pipeline's");
     }
 
     [Test]

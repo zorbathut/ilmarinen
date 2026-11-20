@@ -45,7 +45,7 @@ public class WorkerWakeTests
         return _fixture.Services.GetRequiredService<T>();
     }
 
-    private static JobSubmission Submission(WorkerPriority minWorkerPriority = WorkerPriority.Low)
+    private static JobSubmission Submission(string minWorkerPriority = StandardPriority.Low)
     {
         return new JobSubmission
         {
@@ -57,16 +57,16 @@ public class WorkerWakeTests
         };
     }
 
-    private async Task<DirectedWorker> SleeperAsync(string name, string mac, WorkerPriority priority = WorkerPriority.Medium)
+    private async Task<DirectedWorker> SleeperAsync(string name, string mac, string priority = StandardPriority.Medium)
     {
         var worker = await DirectedWorker.RegisterAsync(_fixture, name);
-        await Get<WorkerRepository>().SetPriorityAsync(worker.WorkerId, priority);
+        await Get<WorkerRepository>().SetPriorityAsync(worker.WorkerId, await _fixture.PriorityIdAsync(PriorityKind.Worker, priority));
         await Get<WorkerRepository>().SetWakeMacAddressAsync(worker.WorkerId, mac);
         return worker;
     }
 
     /// <summary>A job queued while every worker is asleep, then enough time for waking to act on it.</summary>
-    private async Task<Guid> QueueWhileAsleepAsync(WorkerPriority minWorkerPriority = WorkerPriority.Low)
+    private async Task<Guid> QueueWhileAsleepAsync(string minWorkerPriority = StandardPriority.Low)
     {
         var jobId = await Get<JobScheduler>().EnqueueJobAsync(Submission(minWorkerPriority));
         _time.Advance(Asleep);
@@ -130,16 +130,16 @@ public class WorkerWakeTests
     [Test]
     public async Task NoSleeperIsWoken_ThatIsPaused_HasNoAddress_OrCantTakeTheJob_OrWithWakingOff()
     {
-        var paused = await SleeperAsync("wake-paused", "aa:bb:cc:dd:ee:02", WorkerPriority.High);
+        var paused = await SleeperAsync("wake-paused", "aa:bb:cc:dd:ee:02", StandardPriority.High);
         await Get<JobScheduler>().SetWorkerPausedAsync(paused.WorkerId, true);
         await DirectedWorker.RegisterAsync(_fixture, "wake-no-address");
-        await SleeperAsync("wake-low", "aa:bb:cc:dd:ee:03", WorkerPriority.Low);
-        await QueueWhileAsleepAsync(WorkerPriority.High);
+        await SleeperAsync("wake-low", "aa:bb:cc:dd:ee:03", StandardPriority.Low);
+        await QueueWhileAsleepAsync(StandardPriority.High);
 
         await TickAsync();
         Assert.That(Get<RecordingWakeSender>().Sent, Is.Empty);
 
-        await SleeperAsync("wake-off", "aa:bb:cc:dd:ee:04", WorkerPriority.High);
+        await SleeperAsync("wake-off", "aa:bb:cc:dd:ee:04", StandardPriority.High);
         Get<RecordingWakeSender>().Enabled = false;
         await TickAsync();
         Assert.That(Get<RecordingWakeSender>().Sent, Is.Empty);
@@ -149,8 +149,8 @@ public class WorkerWakeTests
     public async Task ASleeperThatDoesntWake_IsGivenUpOn_TheJobStaysQueued_AndTheNextIsWoken()
     {
         var timeout = _fixture.Services.GetRequiredService<Ilmarinen.Server.ServerConfig>().WakeTimeout;
-        var first = await SleeperAsync("wake-dead", "aa:bb:cc:dd:ee:05", WorkerPriority.High);
-        var second = await SleeperAsync("wake-spare", "aa:bb:cc:dd:ee:06", WorkerPriority.Low);
+        var first = await SleeperAsync("wake-dead", "aa:bb:cc:dd:ee:05", StandardPriority.High);
+        var second = await SleeperAsync("wake-spare", "aa:bb:cc:dd:ee:06", StandardPriority.Low);
         var jobId = await QueueWhileAsleepAsync();
         await TickAsync();
         Assert.That(Get<WakeStatus>().WaitingFor(jobId)?.Id, Is.EqualTo(first.WorkerId), "the higher priority first");

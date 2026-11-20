@@ -41,7 +41,7 @@ public class WorkerPauseTests
         get { return _fixture.Services.GetRequiredService<JobScheduler>(); }
     }
 
-    private static JobSubmission Submission(WorkerPriority minWorkerPriority = WorkerPriority.Low)
+    private static JobSubmission Submission(string minWorkerPriority = StandardPriority.Low)
     {
         return new JobSubmission
         {
@@ -53,10 +53,10 @@ public class WorkerPauseTests
         };
     }
 
-    private async Task<DirectedWorker> ReadyWorkerAsync(string connectionId, WorkerPriority priority = WorkerPriority.Medium)
+    private async Task<DirectedWorker> ReadyWorkerAsync(string connectionId, string priority = StandardPriority.Medium)
     {
         var worker = await DirectedWorker.RegisterAsync(_fixture, $"pause-{connectionId}");
-        await _fixture.Services.GetRequiredService<WorkerRepository>().SetPriorityAsync(worker.WorkerId, priority);
+        await _fixture.Services.GetRequiredService<WorkerRepository>().SetPriorityAsync(worker.WorkerId, await _fixture.PriorityIdAsync(PriorityKind.Worker, priority));
         await worker.ConnectAsync(connectionId);
         await worker.ResumeAsync(worker.Idle());
         return worker;
@@ -138,8 +138,8 @@ public class WorkerPauseTests
     [Test]
     public async Task APausedHighWorker_IsPassedOverForAReadyLowOne()
     {
-        var high = await ReadyWorkerAsync("conn-pause-high", WorkerPriority.High);
-        var low = await ReadyWorkerAsync("conn-pause-low", WorkerPriority.Low);
+        var high = await ReadyWorkerAsync("conn-pause-high", StandardPriority.High);
+        var low = await ReadyWorkerAsync("conn-pause-low", StandardPriority.Low);
         Assert.That(await Scheduler.SetWorkerPausedAsync(high.WorkerId, true), Is.True);
 
         var jobId = await Scheduler.EnqueueJobAsync(Submission());
@@ -190,16 +190,16 @@ public class WorkerPauseTests
     [Test]
     public async Task TheStuckReport_NamesOnlyPausedWorkersThatCouldTakeTheJobs()
     {
-        var high = await ReadyWorkerAsync("conn-pause-report-high", WorkerPriority.High);
-        var low = await ReadyWorkerAsync("conn-pause-report-low", WorkerPriority.Low);
-        var pausedLow = await ReadyWorkerAsync("conn-pause-report-paused-low", WorkerPriority.Low);
+        var high = await ReadyWorkerAsync("conn-pause-report-high", StandardPriority.High);
+        var low = await ReadyWorkerAsync("conn-pause-report-low", StandardPriority.Low);
+        var pausedLow = await ReadyWorkerAsync("conn-pause-report-paused-low", StandardPriority.Low);
         Assert.That(await Scheduler.SetWorkerPausedAsync(high.WorkerId, true), Is.True);
         Assert.That(await Scheduler.SetWorkerPausedAsync(pausedLow.WorkerId, true), Is.True);
 
-        var jobId = await Scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+        var jobId = await Scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
 
         var report = await GetUnsatisfiableJobsAsync();
-        Assert.That(report.HighestAvailableWorkerPriority, Is.EqualTo(WorkerPriority.Low));
+        Assert.That(report.HighestAvailableWorkerPriority?.Name, Is.EqualTo(StandardPriority.Low));
         Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { jobId }));
         Assert.That(report.PausedWorkers, Is.EqualTo(new[] { "pause-conn-pause-report-high" }), "the paused Low worker couldn't take it either way");
         Assert.That((await low.SentAsync()).Assignments, Is.Empty);

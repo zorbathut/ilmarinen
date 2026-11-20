@@ -46,7 +46,7 @@ public class JobSchedulingTests
         await _fixture.DisposeAsync();
     }
 
-    private static JobSubmission Submission(WorkerPriority? minWorkerPriority = null) => new()
+    private static JobSubmission Submission(string? minWorkerPriority = null) => new()
     {
         RepoUrl = "https://example.invalid/repo.git",
         Ref = "master",
@@ -57,10 +57,10 @@ public class JobSchedulingTests
 
     private readonly Dictionary<string, DirectedWorker> _workers = new();
 
-    private async Task<Guid> RegisterReadyWorkerAsync(string connectionId, WorkerPriority priority = WorkerPriority.Medium)
+    private async Task<Guid> RegisterReadyWorkerAsync(string connectionId, string priority = StandardPriority.Medium)
     {
         var worker = await DirectedWorker.RegisterAsync(_fixture, $"sched-test-{Guid.NewGuid():N}");
-        await _fixture.Services.GetRequiredService<WorkerRepository>().SetPriorityAsync(worker.WorkerId, priority);
+        await _fixture.Services.GetRequiredService<WorkerRepository>().SetPriorityAsync(worker.WorkerId, await _fixture.PriorityIdAsync(PriorityKind.Worker, priority));
         await worker.ConnectAsync(connectionId);
         await worker.ResumeAsync(worker.Idle());
         _workers[connectionId] = worker;
@@ -336,9 +336,9 @@ public class JobSchedulingTests
         Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Running), "only the worker running a job can report its result");
     }
 
-    [TestCase(WorkerPriority.High, WorkerPriority.Low)]
-    [TestCase(WorkerPriority.Low, WorkerPriority.High)]
-    public async Task EnqueueJob_ReadyWorkersOfDifferentPriorities_AssignsToHighest(WorkerPriority priorityA, WorkerPriority priorityB)
+    [TestCase(StandardPriority.High, StandardPriority.Low)]
+    [TestCase(StandardPriority.Low, StandardPriority.High)]
+    public async Task EnqueueJob_ReadyWorkersOfDifferentPriorities_AssignsToHighest(string priorityA, string priorityB)
     {
         // Both cases use the same two connection IDs and swap only the priorities, so the ready-set enumeration order is identical between them. Under first-match selection exactly one case must fail; neither can pass on enumeration luck.
         const string connA = "conn-priority-a";
@@ -349,7 +349,7 @@ public class JobSchedulingTests
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
         await scheduler.EnqueueJobAsync(Submission());
 
-        var (winner, loser) = priorityA > priorityB ? (workerA, workerB) : (workerB, workerA);
+        var (winner, loser) = priorityA == StandardPriority.High ? (workerA, workerB) : (workerB, workerA);
 
         Assert.That(await RunningJobCountAsync(winner), Is.EqualTo(1),
             "the job must go to the highest-priority ready worker");
@@ -362,8 +362,8 @@ public class JobSchedulingTests
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
 
         // Both workers are ready, registered lowest-first so a first-match scan would find the Low one.
-        var lowWorker = await RegisterReadyWorkerAsync("conn-queued-low", WorkerPriority.Low);
-        var highWorker = await RegisterReadyWorkerAsync("conn-queued-high", WorkerPriority.High);
+        var lowWorker = await RegisterReadyWorkerAsync("conn-queued-low", StandardPriority.Low);
+        var highWorker = await RegisterReadyWorkerAsync("conn-queued-high", StandardPriority.High);
 
         // Queued behind the scheduler's back, so the dispatch below is the first to see it with both workers ready (a worker becoming ready dispatches by itself, and would take it first).
         Guid jobId;
@@ -386,7 +386,7 @@ public class JobSchedulingTests
     public async Task Dispatch_HighestPriorityWorkerIsBusy_FallsThroughToNext()
     {
         const string connHigh = "conn-fallthrough-high";
-        var highWorker = await RegisterReadyWorkerAsync(connHigh, WorkerPriority.High);
+        var highWorker = await RegisterReadyWorkerAsync(connHigh, StandardPriority.High);
 
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
 
@@ -396,7 +396,7 @@ public class JobSchedulingTests
         // A confused report has the high-priority worker idle while it is still running that job. It sorts first in every scan, so a job that stops at the top candidate would stall forever.
         await ReportIdleAsync(connHigh);
 
-        var lowWorker = await RegisterReadyWorkerAsync("conn-fallthrough-low", WorkerPriority.Low);
+        var lowWorker = await RegisterReadyWorkerAsync("conn-fallthrough-low", StandardPriority.Low);
 
         var jobId = await scheduler.EnqueueJobAsync(Submission());
 
@@ -408,11 +408,11 @@ public class JobSchedulingTests
         Assert.That(await _workers[connHigh].IsReadyAsync(), Is.False, "a worker with a running job is never ready");
     }
 
-    [TestCase(WorkerPriority.Medium, WorkerPriority.Medium, true)]
-    [TestCase(WorkerPriority.Medium, WorkerPriority.High, false)]
-    [TestCase(WorkerPriority.High, WorkerPriority.Medium, true)]
-    [TestCase(WorkerPriority.Low, WorkerPriority.Low, true)]
-    public async Task EnqueueJob_MinWorkerPriority_GatesOnWorkerPriority(WorkerPriority workerPriority, WorkerPriority minWorkerPriority, bool runs)
+    [TestCase(StandardPriority.Medium, StandardPriority.Medium, true)]
+    [TestCase(StandardPriority.Medium, StandardPriority.High, false)]
+    [TestCase(StandardPriority.High, StandardPriority.Medium, true)]
+    [TestCase(StandardPriority.Low, StandardPriority.Low, true)]
+    public async Task EnqueueJob_MinWorkerPriority_GatesOnWorkerPriority(string workerPriority, string minWorkerPriority, bool runs)
     {
         var workerId = await RegisterReadyWorkerAsync("conn-min-gate", workerPriority);
 
@@ -428,10 +428,10 @@ public class JobSchedulingTests
     {
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
 
-        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
-        var anyWorkerJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.Low));
+        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
+        var anyWorkerJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.Low));
 
-        var workerId = await RegisterReadyWorkerAsync("conn-ineligible-head", WorkerPriority.Medium);
+        var workerId = await RegisterReadyWorkerAsync("conn-ineligible-head", StandardPriority.Medium);
         await scheduler.DispatchAsync();
 
         Assert.That(await JobStatusAsync(anyWorkerJob), Is.EqualTo(JobStatus.Running),
@@ -445,10 +445,10 @@ public class JobSchedulingTests
     {
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
 
-        var olderJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.Low));
-        var newerJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+        var olderJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.Low));
+        var newerJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
 
-        await RegisterReadyWorkerAsync("conn-oldest-eligible", WorkerPriority.High);
+        await RegisterReadyWorkerAsync("conn-oldest-eligible", StandardPriority.High);
         await scheduler.DispatchAsync();
 
         // Deliberately first-come first-served among the jobs a worker qualifies for: the High worker does not pass over the older job to favor the one only it could run.
@@ -459,13 +459,13 @@ public class JobSchedulingTests
     [Test]
     public async Task Dispatch_EligibleWorkerBecomesReady_TakesWaitingJob()
     {
-        var mediumWorker = await RegisterReadyWorkerAsync("conn-waiting-medium", WorkerPriority.Medium);
+        var mediumWorker = await RegisterReadyWorkerAsync("conn-waiting-medium", StandardPriority.Medium);
 
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
-        var jobId = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+        var jobId = await scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
         Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Queued));
 
-        var highWorker = await RegisterReadyWorkerAsync("conn-waiting-high", WorkerPriority.High);
+        var highWorker = await RegisterReadyWorkerAsync("conn-waiting-high", StandardPriority.High);
         await scheduler.DispatchAsync();
 
         Assert.That(await RunningJobCountAsync(highWorker), Is.EqualTo(1));
@@ -475,13 +475,13 @@ public class JobSchedulingTests
     [Test]
     public async Task UpdateWorker_RaisingPriority_DispatchesWaitingJob()
     {
-        var workerId = await RegisterReadyWorkerAsync("conn-promoted", WorkerPriority.Medium);
+        var workerId = await RegisterReadyWorkerAsync("conn-promoted", StandardPriority.Medium);
 
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
-        var jobId = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+        var jobId = await scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
         Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Queued));
 
-        var response = await _fixture.HttpClient.PutAsJsonAsync($"/api/workers/{workerId}", new WorkerUpdate { Priority = WorkerPriority.High });
+        var response = await _fixture.HttpClient.PutAsJsonAsync($"/api/workers/{workerId}", new WorkerUpdate { Priority = StandardPriority.High });
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
 
         Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Running),
@@ -499,8 +499,8 @@ public class JobSchedulingTests
     public async Task GetUnsatisfiableJobs_NoWorkerConnected_ListsEveryQueuedJob()
     {
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
-        var anyWorkerJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.Low));
-        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+        var anyWorkerJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.Low));
+        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
 
         var report = await GetUnsatisfiableJobsAsync();
 
@@ -512,19 +512,19 @@ public class JobSchedulingTests
     [Test]
     public async Task GetUnsatisfiableJobs_ListsOnlyJobsAboveTheHighestAvailableWorker()
     {
-        await RegisterReadyWorkerAsync("conn-unsatisfiable-busy", WorkerPriority.Medium);
+        await RegisterReadyWorkerAsync("conn-unsatisfiable-busy", StandardPriority.Medium);
 
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
         var runningJob = await scheduler.EnqueueJobAsync(Submission());
         Assert.That(await JobStatusAsync(runningJob), Is.EqualTo(JobStatus.Running));
 
-        var anyWorkerJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.Low));
-        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+        var anyWorkerJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.Low));
+        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
 
         var report = await GetUnsatisfiableJobsAsync();
 
         // The busy Medium worker will take the Low job once it is free, so only the High job is stuck.
-        Assert.That(report.HighestAvailableWorkerPriority, Is.EqualTo(WorkerPriority.Medium));
+        Assert.That(report.HighestAvailableWorkerPriority?.Name, Is.EqualTo(StandardPriority.Medium));
         Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { highOnlyJob }));
         Assert.That(await JobStatusAsync(anyWorkerJob), Is.EqualTo(JobStatus.Queued));
     }
@@ -532,14 +532,14 @@ public class JobSchedulingTests
     [Test]
     public async Task GetUnsatisfiableJobs_IdleReadyWorkerBelowTheMinimum_CountsAsAvailable()
     {
-        await RegisterReadyWorkerAsync("conn-unsatisfiable-idle", WorkerPriority.Medium);
+        await RegisterReadyWorkerAsync("conn-unsatisfiable-idle", StandardPriority.Medium);
 
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
-        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+        var highOnlyJob = await scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
 
         var report = await GetUnsatisfiableJobsAsync();
 
-        Assert.That(report.HighestAvailableWorkerPriority, Is.EqualTo(WorkerPriority.Medium),
+        Assert.That(report.HighestAvailableWorkerPriority?.Name, Is.EqualTo(StandardPriority.Medium),
             "an idle worker is available even when it can't take the stuck job; the report must not claim no worker is available");
         Assert.That(report.Jobs.Select(j => j.Id), Is.EqualTo(new[] { highOnlyJob }));
     }
@@ -575,11 +575,11 @@ public class JobSchedulingTests
     public async Task GetUnsatisfiableJobs_ConnectedWorkerThatIsNeitherReadyNorBusy_DoesNotCount()
     {
         const string conn = "conn-unsatisfiable-not-ready";
-        await RegisterReadyWorkerAsync(conn, WorkerPriority.High);
+        await RegisterReadyWorkerAsync(conn, StandardPriority.High);
         await _workers[conn].ReportAsync(_workers[conn].Idle(DiagnosticStatus.Unhealthy));
 
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
-        var jobId = await scheduler.EnqueueJobAsync(Submission(WorkerPriority.High));
+        var jobId = await scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
 
         var report = await GetUnsatisfiableJobsAsync();
 
@@ -592,7 +592,7 @@ public class JobSchedulingTests
     public async Task GetUnsatisfiableJobs_OnlyWorkerDisconnects_QueuedJobsBecomeUnsatisfiable()
     {
         const string conn = "conn-unsatisfiable-disconnect";
-        await RegisterReadyWorkerAsync(conn, WorkerPriority.Low);
+        await RegisterReadyWorkerAsync(conn, StandardPriority.Low);
 
         var scheduler = _fixture.Services.GetRequiredService<JobScheduler>();
         await scheduler.EnqueueJobAsync(Submission());

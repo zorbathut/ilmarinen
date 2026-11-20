@@ -1,5 +1,6 @@
 using Ilmarinen.Database.Entities;
 using Ilmarinen.Database;
+using Ilmarinen.Protocol;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
 using System.Security.Cryptography;
@@ -13,12 +14,14 @@ public class WorkerRegistrationService
     private readonly IlmarinenDbContext _db;
     private readonly ServerKeyService _serverKey;
     private readonly WorkerRepository _workers;
+    private readonly PriorityRepository _priorities;
 
-    public WorkerRegistrationService(IlmarinenDbContext db, ServerKeyService serverKey, WorkerRepository workers)
+    public WorkerRegistrationService(IlmarinenDbContext db, ServerKeyService serverKey, WorkerRepository workers, PriorityRepository priorities)
     {
         _db = db;
         _serverKey = serverKey;
         _workers = workers;
+        _priorities = priorities;
     }
 
     public async Task<WorkerRegistrationResult> RegisterWorkerAsync(string name)
@@ -46,16 +49,18 @@ public class WorkerRegistrationService
         var workerId = Guid.CreateVersion7();
         var now = DateTime.UtcNow;
 
+        var defaultPriority = await _priorities.GetDefaultAsync(PriorityKind.Worker);
         var worker = new Worker
         {
             Id = workerId,
             Name = name,
             PublicKey = workerPublicKeyBytes,
             RegisteredAt = now,
-            LastSeen = now
+            LastSeen = now,
+            PriorityId = defaultPriority.Id
         };
         _db.Workers.Add(worker);
-        await _db.SaveChangesAsync();
+        await PriorityRepository.WritingReferencesAsync(() => _db.SaveChangesAsync());
 
         // Build combined key: {name}:{guid}:{workerPrivBase64}:{serverPubBase64}
         var workerPrivBase64 = Convert.ToBase64String(workerPrivateScalar);

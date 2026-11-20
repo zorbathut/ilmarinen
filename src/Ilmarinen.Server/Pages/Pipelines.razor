@@ -1,9 +1,12 @@
 @page "/pipelines"
+@using Ilmarinen.Protocol
 @using Ilmarinen.Protocol.Requests
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
-@inject PipelineRepository PipelineRepo
-@inject RepositoryRepository RepositoryRepo
+@using Microsoft.Extensions.DependencyInjection
+@implements IDisposable
+@inject IServiceScopeFactory ScopeFactory
+@inject UIEventService UIEvents
 @inject IJSRuntime JS
 
 <h1 class="page-title">Pipelines</h1>
@@ -47,18 +50,19 @@
         <div>
             <label>Min Worker Priority</label>
             <select @bind="newMinWorkerPriority">
-                @foreach (var priority in Enum.GetValues<WorkerPriority>())
+                <option value="@PriorityNames.AnyWorker">Any worker</option>
+                @foreach (var priority in workerPriorities)
                 {
-                    <option value="@priority">@priority</option>
+                    <option value="@priority.Name">@priority.Name</option>
                 }
             </select>
         </div>
         <div>
             <label>Job Priority</label>
             <select @bind="newPriority">
-                @foreach (var priority in Enum.GetValues<JobPriority>())
+                @foreach (var priority in jobPriorities)
                 {
-                    <option value="@priority">@priority</option>
+                    <option value="@priority.Name">@priority.Name</option>
                 }
             </select>
         </div>
@@ -76,6 +80,9 @@
         @(creating ? "Creating..." : "Create Pipeline")
     </button>
 </div>
+
+<FilteredByPriority PriorityId="PriorityFilter" What="pipelines of job priority" ClearHref="/pipelines" />
+<FilteredByPriority PriorityId="MinWorkerPriorityFilter" What="pipelines needing worker priority" ClearHref="/pipelines" />
 
 <div class="card">
     <div class="table-scroll">
@@ -119,16 +126,71 @@
     private string newDefaultRef = "main";
     private string newScriptPath = "";
     private string newSchedule = "";
-    private WorkerPriority newMinWorkerPriority = WorkerPriority.Low;
-    private JobPriority newPriority = JobPriority.Medium;
+    // By name, as a submission gives them; the lists are highest first.
+    private IReadOnlyList<Ilmarinen.Database.Entities.Priority> workerPriorities = [];
+    private IReadOnlyList<Ilmarinen.Database.Entities.Priority> jobPriorities = [];
+    private string newMinWorkerPriority = PriorityNames.AnyWorker;
+    private string newPriority = "";
     private NotificationPolicy newNotificationPolicy = NotificationPolicy.All;
     private string? error;
     private bool creating;
 
+    /// <summary>Only the pipelines of this job priority.</summary>
+    [SupplyParameterFromQuery(Name = "priority")]
+    public Guid? PriorityFilter { get; set; }
+
+    /// <summary>Only the pipelines needing this worker priority.</summary>
+    [SupplyParameterFromQuery(Name = "minWorkerPriority")]
+    public Guid? MinWorkerPriorityFilter { get; set; }
+
+    /// <summary>Each read or write in a scope of its own: a context held for the page's life would serve priorities as they were when it first read them.</summary>
+    private async Task<T> InScopeAsync<T>(Func<IServiceProvider, Task<T>> use)
+    {
+        using var scope = ScopeFactory.CreateScope();
+        return await use(scope.ServiceProvider);
+    }
+
+    // Raised from whichever circuit changed the priorities; the choices here follow.
+    private async void OnPrioritiesChanged()
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadPrioritiesAsync();
+                pipelines = await InScopeAsync(s => s.GetRequiredService<PipelineRepository>().GetAllAsync(PriorityFilter, MinWorkerPriorityFilter));
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            error = $"Reloading the priorities failed: {ex.Message}";
+        }
+    }
+
+    public void Dispose()
+    {
+        UIEvents.OnPrioritiesChanged -= OnPrioritiesChanged;
+    }
+
     protected override async Task OnInitializedAsync()
     {
-        pipelines = await PipelineRepo.GetAllAsync();
-        repositories = await RepositoryRepo.GetAllAsync();
+        UIEvents.OnPrioritiesChanged += OnPrioritiesChanged;
+        repositories = await InScopeAsync(s => s.GetRequiredService<RepositoryRepository>().GetAllAsync());
+        await LoadPrioritiesAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        pipelines = await InScopeAsync(s => s.GetRequiredService<PipelineRepository>().GetAllAsync(PriorityFilter, MinWorkerPriorityFilter));
+    }
+
+    private async Task LoadPrioritiesAsync()
+    {
+        workerPriorities = await InScopeAsync(s => s.GetRequiredService<PriorityRepository>().GetAllAsync(PriorityKind.Worker));
+        jobPriorities = await InScopeAsync(s => s.GetRequiredService<PriorityRepository>().GetAllAsync(PriorityKind.Job));
+        newMinWorkerPriority = PriorityNames.AnyWorker;
+        newPriority = jobPriorities.First(p => p.IsDefault).Name;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -176,18 +238,17 @@
                 NotificationPolicy = newNotificationPolicy
             };
 
-            await PipelineRepo.CreateAsync(submission);
+            await InScopeAsync(s => s.GetRequiredService<PipelineRepository>().CreateAsync(submission));
 
             newName = "";
             newRepositoryId = "";
             newDefaultRef = "main";
             newScriptPath = "";
             newSchedule = "";
-            newMinWorkerPriority = WorkerPriority.Low;
-            newPriority = JobPriority.Medium;
+            await LoadPrioritiesAsync();
             newNotificationPolicy = NotificationPolicy.All;
 
-            pipelines = await PipelineRepo.GetAllAsync();
+            pipelines = await InScopeAsync(s => s.GetRequiredService<PipelineRepository>().GetAllAsync(PriorityFilter, MinWorkerPriorityFilter));
         }
         catch (Exception ex)
         {

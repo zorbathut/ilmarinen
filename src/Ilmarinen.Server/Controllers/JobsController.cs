@@ -117,10 +117,14 @@ public class JobsController : ControllerBase
         return job != null ? Ok(job) : NotFound();
     }
 
+    /// <param name="priority">Only jobs of the job priority with this name.</param>
+    /// <param name="minWorkerPriority">Only jobs needing the worker priority with this name.</param>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<JobInfo>>> GetAllJobs()
+    public async Task<ActionResult<IReadOnlyList<JobInfo>>> GetAllJobs([FromQuery] string? priority, [FromQuery] string? minWorkerPriority, [FromServices] PriorityRepository priorities)
     {
-        return Ok(await _jobs.GetAllAsync());
+        var priorityId = priority != null ? (await priorities.ResolveAsync(PriorityKind.Job, priority)).Id : (Guid?)null;
+        var minWorkerPriorityId = minWorkerPriority != null ? (await priorities.ResolveAsync(PriorityKind.Worker, minWorkerPriority)).Id : (Guid?)null;
+        return Ok(await _jobs.GetAllAsync(priorityId, minWorkerPriorityId));
     }
 
     /// <summary>

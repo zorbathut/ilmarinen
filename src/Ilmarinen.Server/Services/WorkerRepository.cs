@@ -101,8 +101,8 @@ public class WorkerRepository
         return WorkerReadiness.IsReady(session, hold, _sessions.DiagnosticOwed(session.WorkerId), paused, hasRunningJob, _bundles.CurrentHash);
     }
 
-    /// <summary>A connected worker as of one read of the sessions and the database: everything readiness and availability are decided from.</summary>
-    private sealed record ConnectedWorker(WorkerSession Session, string Name, WorkerPriority Priority, bool Paused, bool Busy, WorkerHold? Hold);
+    /// <summary>A connected worker as of one read of the sessions and the database: everything readiness and availability are decided from. Rank is its priority's.</summary>
+    private sealed record ConnectedWorker(WorkerSession Session, string Name, int Rank, bool Paused, bool Busy, WorkerHold? Hold);
 
     /// <summary>Every worker with a session, read through the workers table so a revoked worker still holding a connection never appears.</summary>
     private async Task<IReadOnlyList<ConnectedWorker>> GetConnectedWorkersAsync()
@@ -119,7 +119,7 @@ public class WorkerRepository
         var workerIds = sessions.Select(s => s.WorkerId).ToList();
         var rows = (await db.Workers
             .Where(w => workerIds.Contains(w.Id))
-            .Select(w => new { w.Id, w.Name, w.Priority, w.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, w.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .ToListAsync()).ToDictionary(w => w.Id);
 
         return sessions
@@ -127,7 +127,7 @@ public class WorkerRepository
             .Select(s =>
             {
                 var row = rows[s.WorkerId];
-                return new ConnectedWorker(s, row.Name, row.Priority, row.Paused, row.Busy, s.State?.Hold);
+                return new ConnectedWorker(s, row.Name, row.Rank, row.Paused, row.Busy, s.State?.Hold);
             })
             .ToList();
     }
@@ -144,14 +144,14 @@ public class WorkerRepository
     }
 
     /// <summary>
-    /// The ready workers and their priorities, highest priority first. Ties are ordered arbitrarily. A snapshot: dispatch re-checks each candidate under its lock before assigning.
+    /// The ready workers and the ranks of their priorities, highest first. Ties are ordered arbitrarily. A snapshot: dispatch re-checks each candidate under its lock before assigning.
     /// </summary>
-    public async Task<IReadOnlyList<(Guid WorkerId, WorkerPriority Priority)>> GetReadyWorkersByPriorityAsync()
+    public async Task<IReadOnlyList<(Guid WorkerId, int Rank)>> GetReadyWorkersByPriorityAsync()
     {
         return (await GetConnectedWorkersAsync())
             .Where(IsReady)
-            .OrderByDescending(w => w.Priority)
-            .Select(w => (w.Session.WorkerId, w.Priority))
+            .OrderByDescending(w => w.Rank)
+            .Select(w => (w.Session.WorkerId, w.Rank))
             .ToList();
     }
 
@@ -170,7 +170,7 @@ public class WorkerRepository
     {
         var connected = await GetConnectedWorkersAsync();
         return new WorkerAvailability(
-            connected.Where(IsAvailable).Select(w => new AvailableWorker(w.Session.WorkerId, w.Priority)).ToList(),
+            connected.Where(IsAvailable).Select(w => new AvailableWorker(w.Session.WorkerId, w.Rank)).ToList(),
             HeldBackOnly(connected.Where(w => w.Paused)),
             HeldBackOnly(connected.Where(w => w.Hold == WorkerHold.InUse)),
             connected.Count);
@@ -182,7 +182,7 @@ public class WorkerRepository
         return workers
             .Where(w => IsAvailable(w with { Paused = false, Hold = w.Hold == WorkerHold.InUse ? null : w.Hold }))
             .OrderBy(w => w.Name)
-            .Select(w => new HeldBackWorker(w.Name, w.Priority))
+            .Select(w => new HeldBackWorker(w.Name, w.Rank))
             .ToList();
     }
 
@@ -193,28 +193,33 @@ public class WorkerRepository
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
         var rows = await db.Workers
-            .Select(w => new { w.Id, w.Name, w.Priority, w.Paused, w.WakeMacAddress, w.LastSeen, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, w.Paused, w.WakeMacAddress, w.LastSeen, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .ToListAsync();
 
         return rows.Select(w =>
         {
             var session = _sessions.ByWorker(w.Id);
             var lastSeen = new DateTimeOffset(DateTime.SpecifyKind(w.LastSeen, DateTimeKind.Utc));
-            return new Wake.WakeWorker(w.Id, w.Name, w.Priority, w.Paused, w.WakeMacAddress, lastSeen, session != null, session != null && IsReady(session, session.State?.Hold, w.Paused, w.Busy), w.Busy);
+            return new Wake.WakeWorker(w.Id, w.Name, w.Rank, w.Paused, w.WakeMacAddress, lastSeen, session != null, session != null && IsReady(session, session.State?.Hold, w.Paused, w.Busy), w.Busy);
         }).ToList();
     }
 
     /// <summary>
     /// Writes the stored priority and nothing else. To change a worker's priority use JobScheduler.SetWorkerPriorityAsync, which keeps the write from racing a dispatch and dispatches afterwards.
     /// </summary>
-    public async Task<bool> SetPriorityAsync(Guid workerId, WorkerPriority priority)
+    public async Task<bool> SetPriorityAsync(Guid workerId, Guid priorityId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
-        var rows = await db.Workers
+        if (!await db.Priorities.AnyAsync(p => p.Id == priorityId && p.Kind == PriorityKind.Worker))
+        {
+            throw new InvalidSubmissionException($"There is no worker priority {priorityId}.");
+        }
+
+        var rows = await PriorityRepository.WritingReferencesAsync(() => db.Workers
             .Where(w => w.Id == workerId)
-            .ExecuteUpdateAsync(s => s.SetProperty(w => w.Priority, priority));
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.PriorityId, priorityId)));
 
         return rows > 0;
     }
@@ -316,7 +321,7 @@ public class WorkerRepository
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
-        var w = await db.Workers.FirstOrDefaultAsync(x => x.Id == id);
+        var w = await db.Workers.Include(x => x.Priority).FirstOrDefaultAsync(x => x.Id == id);
         if (w == null) return null;
 
         var session = _sessions.ByWorker(w.Id);
@@ -340,7 +345,7 @@ public class WorkerRepository
             RegisteredAt = w.RegisteredAt,
             LastSeen = w.LastSeen,
             LastIpAddress = w.LastIpAddress,
-            Priority = w.Priority,
+            Priority = PriorityRepository.ToRef(w.Priority!),
             IsPaused = w.Paused,
             Hold = session?.State?.Hold,
             WakeMacAddress = w.WakeMacAddress,
@@ -354,12 +359,15 @@ public class WorkerRepository
         };
     }
 
-    public async Task<IReadOnlyList<WorkerView>> GetAllAsync()
+    /// <summary>Every worker, or only those of one priority.</summary>
+    public async Task<IReadOnlyList<WorkerView>> GetAllAsync(Guid? priorityId = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
         var workers = await db.Workers
+            .Where(w => priorityId == null || w.PriorityId == priorityId)
+            .Include(w => w.Priority)
             .OrderBy(w => w.Name)
             .ThenBy(w => w.Id)
             .ToListAsync();
@@ -389,7 +397,7 @@ public class WorkerRepository
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 LastIpAddress = w.LastIpAddress,
-                Priority = w.Priority,
+                Priority = PriorityRepository.ToRef(w.Priority!),
                 IsPaused = w.Paused,
                 Hold = session?.State?.Hold,
                 WakeMacAddress = w.WakeMacAddress,
@@ -405,10 +413,11 @@ public class WorkerRepository
     }
 }
 
-public record AvailableWorker(Guid WorkerId, WorkerPriority Priority);
+/// <summary>An available worker, with the rank of its priority.</summary>
+public record AvailableWorker(Guid WorkerId, int Rank);
 
-/// <summary>A worker that would be available but for one thing an operator or a person at its machine can undo.</summary>
-public record HeldBackWorker(string Name, WorkerPriority Priority);
+/// <summary>A worker that would be available but for one thing an operator or a person at its machine can undo, with the rank of its priority.</summary>
+public record HeldBackWorker(string Name, int Rank);
 
 public record WorkerAvailability(IReadOnlyList<AvailableWorker> Available, IReadOnlyList<HeldBackWorker> PausedButOtherwiseAvailable, IReadOnlyList<HeldBackWorker> InUseButOtherwiseAvailable, int Connected);
 
@@ -422,7 +431,7 @@ public class WorkerView
     public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
     public string? LastIpAddress { get; init; }
-    public WorkerPriority Priority { get; init; }
+    public required PriorityRef Priority { get; init; }
     public bool IsPaused { get; init; }
 
     /// <summary>Why the worker says it is taking no new jobs, if it is.</summary>

@@ -1,0 +1,278 @@
+@page "/priorities"
+@using Ilmarinen.Database.Entities
+@using Ilmarinen.Protocol
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
+@implements IDisposable
+@inject ILogger<Priorities> Logger
+@inject IServiceScopeFactory ScopeFactory
+@inject JobScheduler Scheduler
+@inject UIEventService UIEvents
+
+<h1 class="page-title">Priorities</h1>
+
+@if (error != null)
+{
+    <div class="error-message">@error</div>
+}
+
+@foreach (var kind in Kinds)
+{
+    <div class="card" style="margin-bottom: 1rem;">
+        <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 0.5rem;">@Title(kind)</h2>
+        <p style="color: var(--text-secondary); margin-bottom: 1rem;">@Explanation(kind)</p>
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Default</th>
+                        <th>Order</th>
+                        <th>Used by</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var list = lists[kind]; }
+                    @for (var i = 0; i < list.Count; i++)
+                    {
+                        var index = i;
+                        var priority = list[i];
+                        <tr @key="priority.Id">
+                            <td>
+                                @* Keyed on the save counter too, so a rejected rename puts the stored name back. *@
+                                <input @key="(priority.Name, saves)" type="text" value="@priority.Name" maxlength="@PriorityRepository.MaxNameLength" disabled="@busy"
+                                       @onchange="e => Rename(priority, (string)e.Value!)" />
+                            </td>
+                            <td>
+                                @if (priority.IsDefault)
+                                {
+                                    <span class="status-badge">Default</span>
+                                }
+                                else
+                                {
+                                    <button class="btn" disabled="@busy" title="What new workers, or jobs given no priority, get" @onclick="() => MakeDefault(priority)">Make default</button>
+                                }
+                            </td>
+                            <td>
+                                <button class="btn" disabled="@(busy || index == 0)" title="Higher" @onclick="() => Move(kind, index, -1)">▲</button>
+                                <button class="btn" disabled="@(busy || index == list.Count - 1)" title="Lower" @onclick="() => Move(kind, index, 1)">▼</button>
+                            </td>
+                            <td>
+                                @{ var used = usage.GetValueOrDefault(priority.Id) ?? new PriorityUsage(); }
+                                @if (kind == PriorityKind.Worker)
+                                {
+                                    <a href="/workers?priority=@priority.Id">@Count(used.Workers, "worker")</a>
+                                    <span> · needed by </span>
+                                    <a href="/pipelines?minWorkerPriority=@priority.Id">@Count(used.PipelinesNeedingIt, "pipeline")</a>
+                                    <span> and </span>
+                                    <a href="/jobs?minWorkerPriority=@priority.Id">@Count(used.JobsNeedingIt, "job")</a>
+                                }
+                                else
+                                {
+                                    <a href="/pipelines?priority=@priority.Id">@Count(used.Pipelines, "pipeline")</a>
+                                    <span> · </span>
+                                    <a href="/jobs?priority=@priority.Id">@Count(used.Jobs, "job")</a>
+                                }
+                            </td>
+                            <td>
+                                @if (deleting == priority.Id)
+                                {
+                                    <span>Move what uses it to</span>
+                                    <select @bind="replacementId">
+                                        @foreach (var other in list.Where(p => p.Id != priority.Id))
+                                        {
+                                            <option value="@other.Id">@other.Name</option>
+                                        }
+                                    </select>
+                                    <button class="btn btn-danger" disabled="@busy" @onclick="() => Delete(priority)">Delete</button>
+                                    <button class="btn" disabled="@busy" @onclick="() => deleting = null">Cancel</button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-danger"
+                                            disabled="@(busy || list.Count == 1)"
+                                            title="@(list.Count == 1 ? "The only one can't be deleted: there is nothing to move what uses it to" : "")"
+                                            @onclick="() => StartDelete(priority)">Delete</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="form-row" style="margin-top: 1rem;">
+            <input type="text" placeholder="New @Noun(kind)" maxlength="@PriorityRepository.MaxNameLength" @bind="newNames[kind]" />
+            <button class="btn" disabled="@busy" @onclick="() => Add(kind)">Add</button>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly PriorityKind[] Kinds = [PriorityKind.Worker, PriorityKind.Job];
+
+    // Each list highest first.
+    private Dictionary<PriorityKind, IReadOnlyList<Priority>> lists = Kinds.ToDictionary(k => k, _ => (IReadOnlyList<Priority>)[]);
+    private Dictionary<PriorityKind, string> newNames = Kinds.ToDictionary(k => k, _ => "");
+    private IReadOnlyDictionary<Guid, PriorityUsage> usage = new Dictionary<Guid, PriorityUsage>();
+    private Guid? deleting;
+    private Guid replacementId;
+    private bool busy;
+    private int saves;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        UIEvents.OnPrioritiesChanged += OnChanged;
+    }
+
+    // Raised from whichever circuit made the change, so the reload runs on this page's own.
+    private async void OnChanged()
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadAsync();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException ex)
+        {
+            Logger.LogDebug(ex, "Priorities page went away mid-refresh");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Refreshing the priorities page failed");
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var priorities = scope.ServiceProvider.GetRequiredService<PriorityRepository>();
+        var loaded = new Dictionary<PriorityKind, IReadOnlyList<Priority>>();
+        foreach (var kind in Kinds)
+        {
+            loaded[kind] = await priorities.GetAllAsync(kind);
+        }
+        lists = loaded;
+        usage = await priorities.GetUsageAsync();
+    }
+
+    private static string Count(int count, string noun)
+    {
+        return count == 1 ? $"1 {noun}" : $"{count} {noun}s";
+    }
+
+    private static string Title(PriorityKind kind)
+    {
+        return kind == PriorityKind.Worker ? "Worker priorities" : "Job priorities";
+    }
+
+    private static string Noun(PriorityKind kind)
+    {
+        return PriorityRepository.Describe(kind);
+    }
+
+    private static string Explanation(PriorityKind kind)
+    {
+        return kind == PriorityKind.Worker
+            ? "Highest first. The highest-priority ready worker takes the next job, and a job with a minimum worker priority runs only on a worker at least that high."
+            : "Highest first. A free worker takes the highest-priority queued job it can run, oldest first among equals.";
+    }
+
+    /// <summary>Runs one change to the lists, showing why it was refused if it was. The change is false when the priority it was for is gone, deleted from elsewhere.</summary>
+    private async Task ChangeAsync(Func<PriorityRepository, Task<bool>> change)
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            if (!await Scheduler.ChangePrioritiesAsync(change))
+            {
+                error = "That priority has been deleted meanwhile.";
+            }
+        }
+        catch (InvalidSubmissionException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Changing the priorities failed");
+            error = $"Changing the priorities failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+            saves++;
+        }
+
+        try
+        {
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Reloading the priorities failed");
+            error ??= $"Reloading the priorities failed: {ex.Message}";
+        }
+    }
+
+    private async Task Add(PriorityKind kind)
+    {
+        var name = newNames[kind];
+        await ChangeAsync(async p =>
+        {
+            await p.CreateAsync(kind, name);
+            return true;
+        });
+        if (error == null)
+        {
+            newNames[kind] = "";
+        }
+    }
+
+    private Task Rename(Priority priority, string name)
+    {
+        return ChangeAsync(p => p.RenameAsync(priority.Id, name));
+    }
+
+    private Task MakeDefault(Priority priority)
+    {
+        return ChangeAsync(p => p.SetDefaultAsync(priority.Id));
+    }
+
+    private Task Move(PriorityKind kind, int index, int by)
+    {
+        var order = lists[kind].Select(p => p.Id).ToList();
+        (order[index], order[index + by]) = (order[index + by], order[index]);
+        return ChangeAsync(async p =>
+        {
+            await p.ReorderAsync(kind, order);
+            return true;
+        });
+    }
+
+    private void StartDelete(Priority priority)
+    {
+        deleting = priority.Id;
+        replacementId = lists[priority.Kind].First(p => p.Id != priority.Id).Id;
+    }
+
+    private async Task Delete(Priority priority)
+    {
+        var replacement = replacementId;
+        await ChangeAsync(p => p.DeleteAsync(priority.Id, replacement));
+        deleting = null;
+    }
+
+    public void Dispose()
+    {
+        UIEvents.OnPrioritiesChanged -= OnChanged;
+    }
+}

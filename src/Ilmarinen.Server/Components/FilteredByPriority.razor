@@ -1,0 +1,36 @@
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
+@inject IServiceScopeFactory ScopeFactory
+
+@* Says what a list has been narrowed to, with the way back to all of it. *@
+@if (PriorityId != null)
+{
+    <div class="card" style="margin-bottom: 1rem;">
+        Showing only @What <strong>@(name ?? "a deleted priority")</strong> · <a href="@ClearHref">show all</a>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public Guid? PriorityId { get; set; }
+
+    /// <summary>What the list holds, as far as the priority's name: "jobs needing worker priority", say.</summary>
+    [Parameter]
+    public string What { get; set; } = "";
+
+    [Parameter]
+    public string ClearHref { get; set; } = "";
+
+    private string? name;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (PriorityId is not { } id)
+        {
+            name = null;
+            return;
+        }
+        using var scope = ScopeFactory.CreateScope();
+        name = (await scope.ServiceProvider.GetRequiredService<PriorityRepository>().FindAsync(id))?.Name;
+    }
+}

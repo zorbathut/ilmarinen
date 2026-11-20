@@ -210,9 +210,17 @@ Step("example")
 - Each worker clones the repo, loads the pipeline script, and executes it
 - Job status updates flow back through SignalR
 
-### Job Priority
+### Priorities
 
-Every job has a priority, Low, Medium or High (Medium unless set). Whenever a worker is free, it takes the highest-priority queued job it qualifies for, and the oldest among equals. Priority only decides what starts next: a running job is never stopped to make room. A pipeline's priority is what its jobs get unless a trigger overrides it, and `submit` and `trigger` take `--priority`. It is a strict order, so under steady higher-priority load a Low job waits until the queue above it is empty.
+There are two lists of priorities, both the operator's own: worker priorities and job priorities. Each is an ordered list of names, and one entry in each is the default. A fresh install has just "Default" in each; an install upgraded from the fixed Low, Medium and High priorities keeps those that were in use, with Medium the default where it was used. Requests, the CLI and the API name priorities by name, in any case.
+
+A worker has a worker priority (the default when it registers). When several workers are ready, the one with the highest priority takes the next job.
+
+A job has a job priority (the default unless it or its pipeline names one). Whenever a worker is free, it takes the highest-priority queued job it qualifies for, and the oldest among equals. Priority only decides what starts next: a running job is never stopped to make room. A pipeline's priority is what its jobs get unless a trigger overrides it, and `submit` and `trigger` take `--priority`. It is a strict order, so under steady higher-priority load a lower job waits until the queue above it is empty.
+
+A job may also have a minimum worker priority: only a worker of at least that priority runs it. With none, any worker may run it, which is what a job gets unless it or its pipeline names one. `--min-worker-priority any` (or `"any"` over the API) asks for no minimum, overriding a pipeline's.
+
+The Priorities page manages both lists: add, rename, move up and down, choose the default, and delete. Deleting asks for another priority of the same kind and moves every worker, pipeline and job using the deleted one onto it, finished jobs included; the last one of a kind can't be deleted. Changes take effect on the next dispatch. Each entry shows what uses it, linking to the workers, pipelines and jobs narrowed to it. Over the API the same is `/api/priorities/{worker|job}` (list, `POST` to add, `PUT …/order` to reorder), `PUT`, `DELETE ?replacement=` and `POST …/default` on `/api/priorities/{id}`, and `?priority=` (and `?minWorkerPriority=` for pipelines and jobs) on the list endpoints.
 
 ### Pausing a Worker
 
@@ -226,7 +234,7 @@ Ilmarinen includes a notification framework that pushes job completion events to
 
 The Discord bot posts build results (success/failure) to a Discord channel as rich embeds showing repository, branch, duration, and pipeline info.
 
-It also watches for stuck jobs: queued jobs that no available worker can take, either because no worker is available or because none has the minimum worker priority a job requires. A worker is available when it is connected, not paused, and either ready for work or already running a job, so a worker busy with a long job still counts. Once jobs have been stuck for 5 minutes, the bot posts an alert listing them, naming any paused workers that could take them, and it posts again when none are.
+It also watches for stuck jobs: queued jobs that no available worker can take, either because no worker is available or because none has the minimum worker priority a job requires (a job with no minimum is stuck only when no worker is available at all). A worker is available when it is connected, not paused, and either ready for work or already running a job, so a worker busy with a long job still counts. Once jobs have been stuck for 5 minutes, the bot posts an alert listing them, naming any paused workers that could take them, and it posts again when none are.
 
 The bot learns this by polling `GET /api/jobs/unsatisfiable` and keeps no record of what it has posted. After a restart it alerts again about jobs that are still stuck, and if the jobs come unstuck while the bot is down, no recovery message is posted.
 

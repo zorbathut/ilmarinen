@@ -10,10 +10,10 @@ public record PipelineSubmission
     public required string Ref { get; init; }
     public required string ScriptPath { get; init; }
     public string? Schedule { get; init; }
-    [EnumDataType(typeof(WorkerPriority))]
-    public WorkerPriority MinWorkerPriority { get; init; }
-    [EnumDataType(typeof(JobPriority))]
-    public JobPriority Priority { get; init; }
+    /// <summary>A worker priority's name; null or "any" for no minimum.</summary>
+    public string? MinWorkerPriority { get; init; }
+    /// <summary>A job priority's name; null for the default one.</summary>
+    public string? Priority { get; init; }
     [EnumDataType(typeof(NotificationPolicy))]
     public NotificationPolicy NotificationPolicy { get; init; }
 }

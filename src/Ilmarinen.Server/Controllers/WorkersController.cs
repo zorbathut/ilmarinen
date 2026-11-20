@@ -18,25 +18,30 @@ public class WorkersController : ControllerBase
     private readonly WorkspaceDeletionService _deletionService;
     private readonly WorkerMessenger _messenger;
     private readonly JobScheduler _scheduler;
+    private readonly PriorityRepository _priorities;
 
     public WorkersController(
         WorkerRepository workers,
         WorkerRegistrationService registration,
         WorkspaceDeletionService deletionService,
         WorkerMessenger messenger,
-        JobScheduler scheduler)
+        JobScheduler scheduler,
+        PriorityRepository priorities)
     {
         _workers = workers;
         _registration = registration;
         _deletionService = deletionService;
         _messenger = messenger;
         _scheduler = scheduler;
+        _priorities = priorities;
     }
 
+    /// <param name="priority">Only workers of the worker priority with this name.</param>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<WorkerView>>> GetWorkers()
+    public async Task<ActionResult<IReadOnlyList<WorkerView>>> GetWorkers([FromQuery] string? priority)
     {
-        return Ok(await _workers.GetAllAsync());
+        var priorityId = priority != null ? (await _priorities.ResolveAsync(PriorityKind.Worker, priority)).Id : (Guid?)null;
+        return Ok(await _workers.GetAllAsync(priorityId));
     }
 
     [HttpPost]
@@ -59,7 +64,8 @@ public class WorkersController : ControllerBase
     [HttpPut("{workerId}")]
     public async Task<ActionResult> UpdateWorker(Guid workerId, [FromBody] WorkerUpdate update)
     {
-        if (!await _scheduler.SetWorkerPriorityAsync(workerId, update.Priority))
+        var priority = await _priorities.ResolveAsync(PriorityKind.Worker, update.Priority);
+        if (!await _scheduler.SetWorkerPriorityAsync(workerId, priority.Id))
         {
             return NotFound(new { error = "Worker not found." });
         }
