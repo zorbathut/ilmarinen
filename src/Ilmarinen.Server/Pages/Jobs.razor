@@ -43,6 +43,10 @@
                                 {
                                     <span class="status-badge job-priority-@job.Priority.ToString().ToLower()" title="Job priority">@job.Priority</span>
                                 }
+                                @if (job.Status == JobStatus.Queued)
+                                {
+                                    <WakingFor JobId="job.Id" />
+                                }
                                 @if (job.Status is JobStatus.Failed or JobStatus.Cancelled)
                                 {
                                     @if (job.CanRetry)

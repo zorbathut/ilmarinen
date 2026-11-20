@@ -307,6 +307,15 @@ public class JobRepository
             .ToListAsync();
     }
 
+    /// <summary>The queued jobs, in dispatch order, with when each was submitted.</summary>
+    public async Task<IReadOnlyList<(Guid Id, WorkerPriority MinWorkerPriority, DateTime CreatedAt)>> GetQueuedJobsAsync()
+    {
+        var queued = await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued))
+            .Select(j => new { j.Id, j.MinWorkerPriority, j.CreatedAt })
+            .ToListAsync();
+        return queued.Select(j => (j.Id, j.MinWorkerPriority, j.CreatedAt)).ToList();
+    }
+
     /// <summary>The jobs Running for a worker, with the assignment each is running under.</summary>
     public async Task<IReadOnlyList<RunningAssignment>> GetRunningAssignmentsAsync(Guid workerId)
     {

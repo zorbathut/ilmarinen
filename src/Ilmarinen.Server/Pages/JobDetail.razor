@@ -22,7 +22,13 @@
                 <span class="detail-value">@job.Id</span>
 
                 <span class="detail-label">Status</span>
-                <span class="detail-value"><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></span>
+                <span class="detail-value">
+                    <span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span>
+                    @if (job.Status == JobStatus.Queued)
+                    {
+                        <WakingFor JobId="job.Id" />
+                    }
+                </span>
 
                 <span class="detail-label">Repository</span>
                 <span class="detail-value">@job.RepoUrl</span>

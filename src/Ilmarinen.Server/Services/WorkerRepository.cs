@@ -18,6 +18,7 @@ public class WorkerRepository
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly WorkerSessions _sessions;
     private readonly WorkerBundleService _bundles;
+    private readonly Wake.WakeStatus _wakeStatus;
 
     // Diagnostic state, keyed by worker ID (not connection ID) so it survives reconnects. Cleared on revoke, not disconnect — a reconnecting worker re-pushes its cached diagnostic so the value here is replaced anyway, and keeping it across the brief reconnect window avoids a "no diagnostic" UI flicker.
     private readonly ConcurrentDictionary<Guid, DiagnosticReport> _workerDiagnostics = new();
@@ -25,11 +26,12 @@ public class WorkerRepository
     // Latest workspace disk usage, keyed by worker ID for the same reason as diagnostics: a reconnect shouldn't blank every size until the worker's next measurement lands. The connection-keyed workspace list still decides which workspaces are shown.
     private readonly ConcurrentDictionary<Guid, WorkspaceUsageReport> _workerUsage = new();
 
-    public WorkerRepository(IServiceScopeFactory scopeFactory, WorkerSessions sessions, WorkerBundleService bundles)
+    public WorkerRepository(IServiceScopeFactory scopeFactory, WorkerSessions sessions, WorkerBundleService bundles, Wake.WakeStatus wakeStatus)
     {
         _scopeFactory = scopeFactory;
         _sessions = sessions;
         _bundles = bundles;
+        _wakeStatus = wakeStatus;
     }
 
     /// <summary>Records an authenticated handshake in the database, and returns whether the worker owes a diagnostic.</summary>
@@ -184,6 +186,24 @@ public class WorkerRepository
             .ToList();
     }
 
+    /// <summary>Every registered worker, connected or not, as waking sees it (<see cref="Wake.WakePlan"/>).</summary>
+    public async Task<IReadOnlyList<Wake.WakeWorker>> GetWakeWorkersAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var rows = await db.Workers
+            .Select(w => new { w.Id, w.Name, w.Priority, w.Paused, w.WakeMacAddress, w.LastSeen, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .ToListAsync();
+
+        return rows.Select(w =>
+        {
+            var session = _sessions.ByWorker(w.Id);
+            var lastSeen = new DateTimeOffset(DateTime.SpecifyKind(w.LastSeen, DateTimeKind.Utc));
+            return new Wake.WakeWorker(w.Id, w.Name, w.Priority, w.Paused, w.WakeMacAddress, lastSeen, session != null, session != null && IsReady(session, session.State?.Hold, w.Paused, w.Busy), w.Busy);
+        }).ToList();
+    }
+
     /// <summary>
     /// Writes the stored priority and nothing else. To change a worker's priority use JobScheduler.SetWorkerPriorityAsync, which keeps the write from racing a dispatch and dispatches afterwards.
     /// </summary>
@@ -324,6 +344,8 @@ public class WorkerRepository
             IsPaused = w.Paused,
             Hold = session?.State?.Hold,
             WakeMacAddress = w.WakeMacAddress,
+            IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
+            WakeFailedAt = session == null ? _wakeStatus.FailedAt(w.Id) : null,
             Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
             MirrorsSizeBytes = usage?.MirrorsSizeBytes,
             UsageMeasured = usage != null,
@@ -370,6 +392,8 @@ public class WorkerRepository
                 IsPaused = w.Paused,
                 Hold = session?.State?.Hold,
                 WakeMacAddress = w.WakeMacAddress,
+                IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
+                WakeFailedAt = session == null ? _wakeStatus.FailedAt(w.Id) : null,
                 Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
                 MirrorsSizeBytes = usage?.MirrorsSizeBytes,
                 UsageMeasured = usage != null,
@@ -406,6 +430,11 @@ public class WorkerView
     /// <summary>The MAC address the worker's host is woken by, if it can be.</summary>
     public string? WakeMacAddress { get; init; }
 
+    /// <summary>Asleep, and being woken.</summary>
+    public bool IsWaking { get; init; }
+
+    /// <summary>Asleep, and didn't wake when last woken, at this time; not counted on until it is next seen.</summary>
+    public DateTimeOffset? WakeFailedAt { get; init; }
     public IReadOnlyList<WorkspaceView> Workspaces { get; init; } = [];
 
     /// <summary>

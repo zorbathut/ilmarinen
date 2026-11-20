@@ -12,7 +12,7 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [TestFixture]
 public class WorkerBadgeTests
 {
-    private static WorkerView Worker(bool connected = true, bool ready = false, bool busy = false, bool paused = false, DiagnosticStatus? diagnostic = null, WorkerHold? hold = null)
+    private static WorkerView Worker(bool connected = true, bool ready = false, bool busy = false, bool paused = false, DiagnosticStatus? diagnostic = null, WorkerHold? hold = null, bool waking = false, DateTimeOffset? wakeFailedAt = null)
     {
         return new WorkerView
         {
@@ -23,6 +23,8 @@ public class WorkerBadgeTests
             IsReady = ready,
             IsPaused = paused,
             Hold = hold,
+            IsWaking = waking,
+            WakeFailedAt = wakeFailedAt,
             CurrentJobs = busy ? [Guid.NewGuid()] : []
         };
     }
@@ -81,5 +83,16 @@ public class WorkerBadgeTests
 
         Assert.That(labels.Distinct().Count(), Is.EqualTo(labels.Count));
         Assert.That(labels, Does.Not.Contain(WorkerBadge.GetStatusLabel(Worker())));
+    }
+
+    [Test]
+    public void AnOfflineWorker_SaysWhetherItIsBeingWoken_OrDidntWake()
+    {
+        var offline = WorkerBadge.GetStatusLabel(Worker(connected: false));
+        var waking = WorkerBadge.GetStatusLabel(Worker(connected: false, waking: true));
+        var unreachable = WorkerBadge.GetStatusLabel(Worker(connected: false, wakeFailedAt: DateTimeOffset.UtcNow));
+
+        Assert.That(new[] { offline, waking, unreachable }.Distinct().Count(), Is.EqualTo(3));
+        Assert.That(WorkerBadge.GetBadgeClass(Worker(connected: false, waking: true)), Is.Not.EqualTo(WorkerBadge.GetBadgeClass(Worker(connected: false))));
     }
 }

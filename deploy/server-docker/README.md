@@ -59,6 +59,28 @@ Workers must be built from a ref whose protocol hash matches this server's, or t
 
 **`POSTGRES_PASSWORD`.** Postgres only applies it at `initdb`, on the first boot with an empty volume. Changing it in `.env` afterwards does *not* change the database — it just means the server can no longer authenticate, permanently, until you `down -v` (which destroys the database). Set it once.
 
+## Waking sleeping workers
+
+The server can wake a worker whose host has gone to sleep when a queued job needs it, with a wake-on-LAN packet. It is off until you tell the server where to send the packet:
+
+```yaml
+    environment:
+      Server__WakeAddress: 192.168.1.255:9   # the workers' LAN broadcast address; the port defaults to 9
+```
+
+Then give each worker that can be woken its host's MAC address on its page (*Wake address*), and check it with the *Wake* button there while the host is asleep.
+
+What happens: a job that has been queued for 30 seconds with nobody to take it gets one sleeping worker woken for it, the highest priority that can take it first. The job stays in the queue, marked *waiting for X to wake*; whichever worker is ready first takes it. A worker that isn't back and ready within `Server__WakeTimeout` (default `00:05:00`) is given up on and left alone for `Server__WakeBackoff` (default `01:00:00`), and the next sleeper is woken instead. A sleeper that can still be woken counts as available to the stuck-jobs alert; once a wake of it has failed it doesn't, until it is next seen, and the alert names it. A worker put to sleep with a job running is left asleep: the job carries on when it next wakes.
+
+**Getting the packet onto the LAN.** The packet is a broadcast, and a broadcast from this compose file's bridged server container stops at the Docker bridge. Either:
+
+- set `Server__WakeAddress` to the LAN's *directed* broadcast address (`192.168.1.255`, not `255.255.255.255`) and let the server host forward it: `sysctl -w net.ipv4.conf.all.bc_forwarding=1 net.ipv4.conf.<lan-interface>.bc_forwarding=1 net.ipv4.conf.<docker-bridge>.bc_forwarding=1` (persist it in `/etc/sysctl.d/`); or
+- run the server with host networking, which also means reaching Postgres through a published port rather than as `postgres`.
+
+To check: run `tcpdump -i <lan-interface> udp port 9` on the server host and press *Wake*.
+
+**On the workers' hosts.** Wake-on-LAN needs wired Ethernet, enabled in the firmware and on the interface, persistently: `nmcli connection modify <connection> 802-3-ethernet.wake-on-lan magic`, then check with `ethtool <interface> | grep Wake-on` (`g` means magic packets). Pair it with the sleep-inhibit overlay (`deploy/worker-docker/`), which also has the worker tell the server just before the host sleeps.
+
 ## Operations
 
 **Backups.** `docker compose exec postgres pg_dump -U ilmarinen ilmarinen > backup.sql`, plus the `artifacts` volume, plus `.env`. All three, or the backup is not restorable.

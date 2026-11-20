@@ -13,7 +13,7 @@ public static class WorkerBadge
     {
         if (!w.IsConnected)
         {
-            return "disconnected";
+            return w.IsWaking ? "waking" : "disconnected";
         }
         if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy)
         {
@@ -40,7 +40,8 @@ public static class WorkerBadge
         var paused = w.IsPaused ? ", paused" : "";
         if (!w.IsConnected)
         {
-            return $"Offline{paused}";
+            var asleep = w.IsWaking ? "Waking…" : w.WakeFailedAt is { } at ? $"Offline, didn't wake at {at.UtcDateTime:HH:mm}" : "Offline";
+            return $"{asleep}{paused}";
         }
         if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy)
         {

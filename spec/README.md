@@ -63,7 +63,7 @@ The model takes these for granted; this is where the C# makes them true.
 | `WOnDiagnosticRequest`, `WDiagnosticStart`, `WDiagnosticDone` | `WorkerService.OnDiagnosticRequestedAsync`, `TryStartDiagnosticAsync`, `RunDiagnosticAsync` |
 | `WHeartbeat`, `WAbandon` | `WorkerService.KeepAliveAsync`, `EndSession` |
 
-Out of scope: sweeping Running jobs after a server restart, fencing artifact uploads (plain HTTP), log streaming (which needs only a current connection), the bundle-update drain, priorities beyond one competitor, the competitor being cancelled.
+Out of scope: waking sleeping workers (the server only sends wake-on-LAN packets; a woken worker connects like any other), sweeping Running jobs after a server restart, fencing artifact uploads (plain HTTP), log streaming (which needs only a current connection), the bundle-update drain, priorities beyond one competitor, the competitor being cancelled.
 
 ### Modelling choices
 

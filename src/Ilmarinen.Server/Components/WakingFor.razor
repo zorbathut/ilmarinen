@@ -1,0 +1,12 @@
+@using Ilmarinen.Server.Services.Wake
+@inject WakeStatus Wake
+
+@if (Wake.WaitingFor(JobId) is { } worker)
+{
+    <span style="color: var(--text-secondary); margin-left: 0.5rem;">waiting for <WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /> to wake</span>
+}
+
+@code {
+    [Parameter]
+    public Guid JobId { get; set; }
+}

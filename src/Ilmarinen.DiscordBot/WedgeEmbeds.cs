@@ -32,6 +32,10 @@ public static class WedgeEmbeds
         {
             cause += $" Workers whose machines are in use that could take them: {Names(report.InUseWorkers)}.";
         }
+        if (report.UnreachableWorkers.Count > 0)
+        {
+            cause += $" Sleeping workers that didn't wake when woken: {Names(report.UnreachableWorkers)}.";
+        }
 
         var embed = new EmbedBuilder()
             .WithTitle("Jobs Stuck")

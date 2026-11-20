@@ -46,12 +46,15 @@ public class IntegrationTestFixture : IAsyncDisposable
     /// <summary>Completes when the in-process worker host stops — including when the worker stops itself to request a bundle update.</summary>
     public Task? WorkerRunTask { get; private set; }
 
+    /// <summary>The server's clock. Set before SetupAsync to control it; server-side waking reads it.</summary>
+    public TimeProvider ServerTime { get; init; } = TimeProvider.System;
+
     public async Task SetupAsync(string? workerBundlePath = null)
     {
         // Limit concurrent fixtures to avoid exhausting Docker's network address pool. Each fixture may run a job that creates a Docker network.
         await DockerCleanup.NetworkSemaphore.WaitAsync();
 
-        _factory = new IlmarinenWebApplicationFactory { WorkerBundlePath = workerBundlePath };
+        _factory = new IlmarinenWebApplicationFactory { WorkerBundlePath = workerBundlePath, Time = ServerTime };
         await _factory.InitializeAsync();
 
         _httpClient = _factory.CreateClient();

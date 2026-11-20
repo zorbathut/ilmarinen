@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -36,6 +37,9 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
     private string? _serverKeyBase64;
     private int _publicPort;
     private int _workerPort;
+
+    /// <summary>The server's clock. Set before InitializeAsync.</summary>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
 
     /// <summary>Bundle zip served to launcher-run workers. Set before InitializeAsync; null = feature off.</summary>
     public string? WorkerBundlePath { get; set; }
@@ -164,6 +168,9 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         builder.Services.AddSingleton<WorkerConnectionControl>();
         builder.Services.AddSingleton<RecordingWakeSender>();
         builder.Services.AddSingleton<IWakeSender>(sp => sp.GetRequiredService<RecordingWakeSender>());
+        builder.Services.AddSingleton(Time);
+        // Tests run waking's rounds themselves, against their own clock, rather than on its timer.
+        builder.Services.Remove(builder.Services.Single(d => d.ImplementationType == typeof(WorkerWakeService)));
         builder.Services.AddSignalR().AddHubOptions<WorkerHub>(options => options.AddFilter<WorkerConnectionControl>());
         builder.Services.AddHealthChecks();
 

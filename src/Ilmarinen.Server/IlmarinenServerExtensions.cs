@@ -39,11 +39,14 @@ public static class IlmarinenServerExtensions
         services.AddSingleton<LogSubscriptionService>();
         services.AddSingleton<LogStreamService>();
         services.AddSingleton<WorkspaceDeletionService>();
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IWakeSender, UdpWakeSender>();
+        services.AddSingleton<WakeStatus>();
         services.AddSingleton<WorkerWaker>();
         services.AddScoped<DashboardService>();
         services.AddHostedService<PipelineSchedulerService>();
         services.AddHostedService<NotificationCleanupService>();
+        services.AddHostedService<WorkerWakeService>();
 
         return services;
     }

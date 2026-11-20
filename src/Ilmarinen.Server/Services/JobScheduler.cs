@@ -1,6 +1,7 @@
 using Ilmarinen.Protocol;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Server.Services.Wake;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
@@ -19,6 +20,7 @@ public class JobScheduler
     private readonly WorkerSessions _sessions;
     private readonly UIEventService _uiEvents;
     private readonly LogStreamService _logStream;
+    private readonly WorkerWaker _waker;
     private readonly ILogger<JobScheduler> _logger;
 
     // Serializes dispatch: which job goes next, and to which worker. Taken before a worker's session lock (WorkerSessions), never inside one, so a hub handler holding a worker's lock dispatches only after releasing it.
@@ -33,6 +35,7 @@ public class JobScheduler
         WorkerSessions sessions,
         UIEventService uiEvents,
         LogStreamService logStream,
+        WorkerWaker waker,
         ILogger<JobScheduler> logger)
     {
         _scopeFactory = scopeFactory;
@@ -40,6 +43,7 @@ public class JobScheduler
         _sessions = sessions;
         _uiEvents = uiEvents;
         _logStream = logStream;
+        _waker = waker;
         _logger = logger;
     }
 
@@ -200,7 +204,7 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Queued jobs no available worker can take, with the highest priority on offer. Taken without _assignLock: it is a read-only snapshot, and a momentary disagreement with an in-flight dispatch clears on the next read.
+    /// Queued jobs no available worker can take, with the highest priority on offer. A sleeping worker that can still be woken counts as available here, and only here (the queue forecast assumes no wake delay): its jobs aren't stuck until waking it has failed. Taken without _assignLock: it is a read-only snapshot, and a momentary disagreement with an in-flight dispatch clears on the next read.
     /// </summary>
     public async Task<UnsatisfiableJobsReport> GetUnsatisfiableJobsAsync()
     {
@@ -209,7 +213,9 @@ public class JobScheduler
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         var availability = await workers.GetAvailabilityAsync();
-        var highestAvailablePriority = availability.Available.Count == 0 ? (WorkerPriority?)null : availability.Available.Max(w => w.Priority);
+        var (wakeable, failedToWake) = await _waker.GetSleepersAsync();
+        var onOffer = availability.Available.Select(w => w.Priority).Concat(wakeable).ToList();
+        var highestAvailablePriority = onOffer.Count == 0 ? (WorkerPriority?)null : onOffer.Max();
         var stuck = await jobs.GetUnsatisfiableJobsAsync(highestAvailablePriority);
 
         bool CouldTakeOne(WorkerPriority priority)
@@ -222,7 +228,8 @@ public class JobScheduler
             HighestAvailableWorkerPriority = highestAvailablePriority,
             Jobs = stuck,
             PausedWorkers = availability.PausedButOtherwiseAvailable.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList(),
-            InUseWorkers = availability.InUseButOtherwiseAvailable.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList()
+            InUseWorkers = availability.InUseButOtherwiseAvailable.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList(),
+            UnreachableWorkers = failedToWake.Where(w => CouldTakeOne(w.Priority)).Select(w => w.Name).ToList()
         };
     }
 
