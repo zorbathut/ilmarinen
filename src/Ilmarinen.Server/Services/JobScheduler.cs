@@ -149,16 +149,7 @@ public class JobScheduler
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         // Under the dispatch lock, so a demotion can't land between a dispatch reading this worker's priority and handing it a job only the old priority qualified it for.
-        bool updated;
-        await _assignLock.WaitAsync();
-        try
-        {
-            updated = await workers.SetPriorityAsync(workerId, priority);
-        }
-        finally
-        {
-            _assignLock.Release();
-        }
+        var updated = await UnderDispatchLockAsync(() => workers.SetPriorityAsync(workerId, priority));
 
         if (!updated)
         {
@@ -170,6 +161,20 @@ public class JobScheduler
         return true;
     }
 
+    /// <summary>Runs a change to what dispatch decides from, so that no dispatch is part-way through deciding from the old values when it lands.</summary>
+    private async Task<T> UnderDispatchLockAsync<T>(Func<Task<T>> change)
+    {
+        await _assignLock.WaitAsync();
+        try
+        {
+            return await change();
+        }
+        finally
+        {
+            _assignLock.Release();
+        }
+    }
+
     /// <summary>
     /// Pauses or unpauses a worker; unpausing dispatches, since the worker may be ready for a job that is waiting. A paused worker is sent no new jobs, connected or not; what it is running carries on. Returns false if the worker doesn't exist.
     /// </summary>
@@ -179,16 +184,7 @@ public class JobScheduler
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         // Under the dispatch lock, so once a pause returns no dispatch can still be acting on the worker as unpaused.
-        bool updated;
-        await _assignLock.WaitAsync();
-        try
-        {
-            updated = await workers.SetPausedAsync(workerId, paused);
-        }
-        finally
-        {
-            _assignLock.Release();
-        }
+        var updated = await UnderDispatchLockAsync(() => workers.SetPausedAsync(workerId, paused));
 
         if (!updated)
         {
