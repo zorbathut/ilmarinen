@@ -4,6 +4,7 @@
 @using Ilmarinen.Protocol.Requests
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
+@using Ilmarinen.Server.Services.Wake
 @using Microsoft.Extensions.DependencyInjection
 @using Microsoft.Extensions.Logging
 @using System.Threading
@@ -16,6 +17,7 @@
 @inject UIEventService UIEvents
 @inject NavigationManager Navigation
 @inject WorkerBundleService BundleService
+@inject WorkerWaker Waker
 
 <h1 class="page-title">Worker @(worker?.Name ?? Id)</h1>
 
@@ -57,6 +59,26 @@
 
             <span class="detail-label">Last IP</span>
             <span class="detail-value">@(worker.LastIpAddress ?? "-")</span>
+
+            <span class="detail-label">Wake address</span>
+            <span class="detail-value">
+                <input type="text" @bind="macInput" placeholder="aa:bb:cc:dd:ee:ff" style="width: 12rem;"
+                       title="The MAC address of this worker's host, for waking it with wake-on-LAN; empty if it can't be woken" />
+                <button class="btn" style="margin-left: 0.5rem;" disabled="@savingMac" @onclick="SaveMac">Save</button>
+                @if (!worker.IsConnected && worker.WakeMacAddress != null && Waker.Enabled)
+                {
+                    <button class="btn" style="margin-left: 0.5rem;" disabled="@waking" @onclick="WakeNow"
+                            title="Send this worker's host a wake-on-LAN packet now">Wake</button>
+                }
+                @if (!Waker.Enabled)
+                {
+                    <span style="margin-left: 1rem; color: var(--text-secondary);">Waking is off: set Server__WakeAddress on the server.</span>
+                }
+                @if (wakeMessage != null)
+                {
+                    <span style="margin-left: 1rem; color: @(wakeMessageIsError ? "var(--error)" : "var(--text-secondary)");">@wakeMessage</span>
+                }
+            </span>
 
             <span class="detail-label">Bundle</span>
             <span class="detail-value">
@@ -267,6 +289,12 @@ else
     private string? diagnosticError;
     private bool savingPause;
     private string? pauseError;
+    private string? macInput;
+    private bool macLoaded;
+    private bool savingMac;
+    private bool waking;
+    private string? wakeMessage;
+    private bool wakeMessageIsError;
     private Timer? _timer;
 
     private bool IsDiagnosticRunning() =>
@@ -335,6 +363,71 @@ else
         }
     }
 
+    private async Task SaveMac()
+    {
+        if (worker == null)
+        {
+            return;
+        }
+
+        string? mac = null;
+        if (!string.IsNullOrWhiteSpace(macInput))
+        {
+            mac = MagicPacket.Normalize(macInput);
+            if (mac == null)
+            {
+                (wakeMessage, wakeMessageIsError) = ("Not a MAC address: use aa:bb:cc:dd:ee:ff.", true);
+                return;
+            }
+        }
+
+        savingMac = true;
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var saved = await scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetWakeMacAddressAsync(worker.Id, mac);
+            (wakeMessage, wakeMessageIsError) = saved ? (mac == null ? "Cleared." : "Saved.", false) : ("Worker not found.", true);
+            macInput = mac;
+            await RefreshAsync(worker.Id);
+        }
+        catch (Exception ex)
+        {
+            (wakeMessage, wakeMessageIsError) = ($"Failed to save the wake address: {ex.Message}", true);
+        }
+        finally
+        {
+            savingMac = false;
+        }
+    }
+
+    private async Task WakeNow()
+    {
+        if (worker == null)
+        {
+            return;
+        }
+
+        waking = true;
+        try
+        {
+            (wakeMessage, wakeMessageIsError) = await Waker.WakeNowAsync(worker.Id, CancellationToken.None) switch
+            {
+                WakeRequestResult.Sent => ("Wake packet sent.", false),
+                WakeRequestResult.NoMacAddress => ("No wake address is set.", true),
+                WakeRequestResult.WakingOff => ("Waking is off on this server.", true),
+                _ => ("Worker not found.", true)
+            };
+        }
+        catch (Exception ex)
+        {
+            (wakeMessage, wakeMessageIsError) = ($"Failed to send the wake packet: {ex.Message}", true);
+        }
+        finally
+        {
+            waking = false;
+        }
+    }
+
     private async Task RunDiagnostic()
     {
         diagnosticError = null;
@@ -386,6 +479,12 @@ else
         var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
         worker = await workerRepo.GetByIdAsync(ulid);
+        // Once: the page refreshes every second and on every change, and would otherwise overwrite what is being typed.
+        if (worker != null && !macLoaded)
+        {
+            macInput = worker.WakeMacAddress;
+            macLoaded = true;
+        }
 
         // Assigned together: the page re-renders every second, and new jobs shown against old estimates would mislabel any that just finished
         var fetchedJobs = await jobRepo.GetByWorkerAsync(ulid);

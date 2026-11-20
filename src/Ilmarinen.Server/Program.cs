@@ -1,5 +1,6 @@
 using Ilmarinen.Database;
 using Ilmarinen.Protocol;
+using Ilmarinen.Server.Services.Wake;
 using Ilmarinen.Server.Services;
 using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
@@ -77,6 +78,20 @@ else
 {
     Log.Information("Worker bundle serving disabled (Server__WorkerBundlePath not set)");
 }
+
+// Eagerly too, for the same reason: a malformed Server__WakeAddress should stop the server, not the first wake.
+IWakeSender wakeSender;
+try
+{
+    wakeSender = app.Services.GetRequiredService<IWakeSender>();
+}
+catch (ConfigurationException ex)
+{
+    Log.Fatal("{Message}", ex.Message);
+    await Log.CloseAndFlushAsync();
+    return 1;
+}
+Log.Information(wakeSender.Enabled ? "Waking sleeping workers with wake-on-LAN to {WakeAddress}" : "Waking sleeping workers is off (Server__WakeAddress not set)", serverConfig.WakeAddress);
 
 if (serverKey.IsPlaceholder)
 {

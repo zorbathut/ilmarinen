@@ -408,6 +408,9 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<DateTime>("RegisteredAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("WakeMacAddress")
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
 
                     b.HasIndex("Name")

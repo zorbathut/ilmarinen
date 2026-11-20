@@ -214,6 +214,19 @@ public class WorkerRepository
         return rows > 0;
     }
 
+    /// <summary>Stores the MAC address the worker's host is woken by, already normalized (<see cref="Wake.MagicPacket.Normalize"/>), or null for none. False if there is no such worker.</summary>
+    public async Task<bool> SetWakeMacAddressAsync(Guid workerId, string? mac)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+
+        var rows = await db.Workers
+            .Where(w => w.Id == workerId)
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.WakeMacAddress, mac));
+
+        return rows > 0;
+    }
+
     public void SetBundleHash(string connectionId, string? bundleHash)
     {
         var session = _sessions.ByConnection(connectionId);
@@ -310,6 +323,7 @@ public class WorkerRepository
             Priority = w.Priority,
             IsPaused = w.Paused,
             Hold = session?.State?.Hold,
+            WakeMacAddress = w.WakeMacAddress,
             Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
             MirrorsSizeBytes = usage?.MirrorsSizeBytes,
             UsageMeasured = usage != null,
@@ -355,6 +369,7 @@ public class WorkerRepository
                 Priority = w.Priority,
                 IsPaused = w.Paused,
                 Hold = session?.State?.Hold,
+                WakeMacAddress = w.WakeMacAddress,
                 Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
                 MirrorsSizeBytes = usage?.MirrorsSizeBytes,
                 UsageMeasured = usage != null,
@@ -387,6 +402,9 @@ public class WorkerView
 
     /// <summary>Why the worker says it is taking no new jobs, if it is.</summary>
     public WorkerHold? Hold { get; init; }
+
+    /// <summary>The MAC address the worker's host is woken by, if it can be.</summary>
+    public string? WakeMacAddress { get; init; }
 
     public IReadOnlyList<WorkspaceView> Workspaces { get; init; } = [];
 

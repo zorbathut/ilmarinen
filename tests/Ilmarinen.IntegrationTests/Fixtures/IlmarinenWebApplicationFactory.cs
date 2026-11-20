@@ -1,5 +1,6 @@
 using Ilmarinen.Database;
 using Ilmarinen.Server.Hubs;
+using Ilmarinen.Server.Services.Wake;
 using Ilmarinen.Server.Services;
 using Ilmarinen.Server;
 using Microsoft.AspNetCore.Builder;
@@ -161,6 +162,8 @@ public class IlmarinenWebApplicationFactory : IAsyncDisposable
         builder.Services.AddSingleton<RecordingWorkerClients>();
         builder.Services.AddSingleton<IWorkerClients>(sp => sp.GetRequiredService<RecordingWorkerClients>());
         builder.Services.AddSingleton<WorkerConnectionControl>();
+        builder.Services.AddSingleton<RecordingWakeSender>();
+        builder.Services.AddSingleton<IWakeSender>(sp => sp.GetRequiredService<RecordingWakeSender>());
         builder.Services.AddSignalR().AddHubOptions<WorkerHub>(options => options.AddFilter<WorkerConnectionControl>());
         builder.Services.AddHealthChecks();
 

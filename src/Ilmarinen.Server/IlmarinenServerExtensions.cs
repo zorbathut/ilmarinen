@@ -1,4 +1,5 @@
 using Ilmarinen.Server.Hubs;
+using Ilmarinen.Server.Services.Wake;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -38,6 +39,8 @@ public static class IlmarinenServerExtensions
         services.AddSingleton<LogSubscriptionService>();
         services.AddSingleton<LogStreamService>();
         services.AddSingleton<WorkspaceDeletionService>();
+        services.AddSingleton<IWakeSender, UdpWakeSender>();
+        services.AddSingleton<WorkerWaker>();
         services.AddScoped<DashboardService>();
         services.AddHostedService<PipelineSchedulerService>();
         services.AddHostedService<NotificationCleanupService>();

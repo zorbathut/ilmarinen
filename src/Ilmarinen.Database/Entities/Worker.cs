@@ -23,4 +23,7 @@ public class Worker
 
     // The operator has held this worker back from new jobs; what it is running carries on.
     public bool Paused { get; set; }
+
+    // The MAC address of the worker's host, in aa:bb:cc:dd:ee:ff form, for waking it with a wake-on-LAN packet; null if it can't be woken. Entered by an operator: a worker in a container can't see its host's network card.
+    public string? WakeMacAddress { get; set; }
 }
