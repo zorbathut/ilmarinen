@@ -1107,6 +1107,8 @@ public class WorkerService : BackgroundService
                 await _usageRequests.Reader.ReadAsync(stoppingToken);
                 try
                 {
+                    // First, so space a failed delete left held is freed before it is measured, and tried again each pass while it can't be.
+                    _workspaceManager.SweepDeletions();
                     var stopwatch = Stopwatch.StartNew();
                     var report = await _workspaceManager.MeasureUsageAsync(stoppingToken);
                     _logger.LogInformation("Measured disk usage of {Count} workspaces and the mirrors in {ElapsedMs} ms", report.WorkspaceSizes.Count, stopwatch.ElapsedMilliseconds);

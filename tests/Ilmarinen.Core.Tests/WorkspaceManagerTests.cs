@@ -112,6 +112,52 @@ public class WorkspaceManagerTests
     }
 
     [Test]
+    public void TryDelete_RemovesTheWorkspace_AndLeavesNothingAside()
+    {
+        var dir = Path.Combine(_tempDir, "doomed-ws");
+        Directory.CreateDirectory(Path.Combine(dir, "sub"));
+        File.WriteAllText(Path.Combine(dir, "sub", "file.txt"), "x");
+        File.SetAttributes(Path.Combine(dir, "sub", "file.txt"), FileAttributes.ReadOnly);
+
+        var result = _manager.TryDelete("doomed-ws");
+
+        Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.Success));
+        Assert.That(Directory.Exists(dir), Is.False);
+        Assert.That(Directory.GetDirectories(_tempDir), Is.Empty, "the tree moved aside for deleting is gone too");
+    }
+
+    // The name is freed the moment the delete starts, by moving the tree aside: a job that starts on the workspace then makes it afresh instead of using a tree half deleted beneath it, and a delete that fails partway leaves its remains under a name no job uses.
+    [Test]
+    public void TryDelete_ThatCanNotDeleteEveryFile_StillFreesTheName()
+    {
+        if (Environment.UserName == "root")
+        {
+            Assert.Ignore("root deletes through any permissions, so there is no undeletable file to make");
+        }
+        var dir = Path.Combine(_tempDir, "stubborn-ws");
+        var locked = Path.Combine(dir, "locked");
+        Directory.CreateDirectory(locked);
+        File.WriteAllText(Path.Combine(locked, "file.txt"), "x");
+        File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            var result = _manager.TryDelete("stubborn-ws");
+
+            Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.Success), "the workspace is gone, whatever became of its files: the server must drop it");
+            Assert.That(Directory.Exists(dir), Is.False, "no job may find a half-deleted tree under the workspace's name");
+            Assert.That(_manager.DiscoverWorkspaces(), Is.Empty, "the remains are hidden from listings and from eviction");
+            Assert.That(Directory.GetDirectories(_tempDir, ".deleting-*"), Has.Length.EqualTo(1), "left for a later sweep");
+        }
+        finally
+        {
+            foreach (var left in Directory.GetDirectories(_tempDir, "*", SearchOption.AllDirectories))
+            {
+                File.SetUnixFileMode(left, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+    }
+
+    [Test]
     public void TryDelete_DeletesSymlinksAsThemselves_LeavingWhatTheyPointAtAlone()
     {
         var outside = Path.Combine(_tempDir, ".outside");
@@ -141,6 +187,24 @@ public class WorkspaceManagerTests
 
         Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.Error));
         Assert.That(Directory.Exists(buildDir), Is.True, "a running ephemeral job uses it without marking it active");
+    }
+
+    [Test]
+    public void SweepDeletions_RemovesTreesLeftByDeletesThatDidNotFinish()
+    {
+        var left = Path.Combine(_tempDir, ".deleting-0123");
+        Directory.CreateDirectory(Path.Combine(left, "sub"));
+        File.WriteAllText(Path.Combine(left, "sub", "file.txt"), "x");
+        Directory.CreateDirectory(Path.Combine(_tempDir, "kept-ws"));
+        Directory.CreateDirectory(Path.Combine(_tempDir, ".mirrors"));
+
+        Assert.That(_manager.DiscoverWorkspaces().Select(w => w.Name), Is.EqualTo(new[] { "kept-ws" }));
+
+        _manager.SweepDeletions();
+
+        Assert.That(Directory.Exists(left), Is.False);
+        Assert.That(Directory.Exists(Path.Combine(_tempDir, "kept-ws")), Is.True);
+        Assert.That(Directory.Exists(Path.Combine(_tempDir, ".mirrors")), Is.True, "only the deletion remains are swept");
     }
 
     [Test]

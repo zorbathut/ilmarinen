@@ -20,6 +20,9 @@ public class WorkspaceManager
 {
     private const string MirrorsDirName = ".mirrors";
 
+    // Where a workspace being deleted is moved first; dot-named, so listings skip it, and no workspace can be named so (WorkspaceConfig.IsValidName refuses a leading dot), so the sweep never takes one.
+    private const string DeletingPrefix = ".deleting-";
+
     /// <summary>
     /// Long enough to walk any real workspace; a find still running past it is stuck (on a dead mount, say) and would hold up every later measurement.
     /// </summary>
@@ -28,6 +31,9 @@ public class WorkspaceManager
     private readonly WorkerConfig _config;
     private readonly ILogger<WorkspaceManager> _logger;
     private string? _activeWorkspace;
+
+    // Trees moved aside that a delete is still deleting, which the sweep leaves to it.
+    private readonly HashSet<string> _deleting = new();
     private readonly object _lock = new();
 
     // Paths whose last measurement failed, so a failure that persists warns once rather than on every pass. Only the measuring loop touches it.
@@ -147,6 +153,8 @@ public class WorkspaceManager
 
     /// <summary>
     /// Attempts to delete a workspace directory. Refuses if in use by a running job.
+    ///
+    /// The tree is first moved aside, under the lock that marks a workspace active, to a dot-name listings skip, and deleted from there. So the name is free from that instant: a job starting on the workspace meanwhile makes it afresh rather than using a tree half deleted beneath it, and a delete that fails partway leaves its remains where no job looks, for <see cref="SweepDeletions"/> to clear.
     /// </summary>
     public DeleteWorkspaceResult TryDelete(string name)
     {
@@ -160,19 +168,6 @@ public class WorkspaceManager
         if (Guid.TryParse(name, out _))
         {
             return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Error, Error = $"'{name}' is a job's build directory, not a workspace." };
-        }
-
-        // Check if in use
-        lock (_lock)
-        {
-            if (_activeWorkspace == name)
-            {
-                return new DeleteWorkspaceResult
-                {
-                    Status = DeleteWorkspaceStatus.InUse,
-                    Error = "Workspace is currently in use by a running job."
-                };
-            }
         }
 
         var workDir = Path.Combine(_config.WorkspacePath, name);
@@ -190,32 +185,100 @@ public class WorkspaceManager
             };
         }
 
-        if (!Directory.Exists(workDir))
+        var doomed = Path.Combine(_config.WorkspacePath, $"{DeletingPrefix}{Guid.NewGuid():N}");
+        lock (_lock)
         {
-            return new DeleteWorkspaceResult
+            if (_activeWorkspace == name)
             {
-                Status = DeleteWorkspaceStatus.NotFound,
-                Error = $"Workspace '{name}' does not exist."
-            };
+                return new DeleteWorkspaceResult
+                {
+                    Status = DeleteWorkspaceStatus.InUse,
+                    Error = "Workspace is currently in use by a running job."
+                };
+            }
+
+            if (!Directory.Exists(workDir))
+            {
+                return new DeleteWorkspaceResult
+                {
+                    Status = DeleteWorkspaceStatus.NotFound,
+                    Error = $"Workspace '{name}' does not exist."
+                };
+            }
+
+            try
+            {
+                Directory.Move(workDir, doomed);
+                _deleting.Add(doomed);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError(ex, "Failed to move workspace {WorkspaceName} aside for deletion", name);
+                return new DeleteWorkspaceResult
+                {
+                    Status = DeleteWorkspaceStatus.Error,
+                    Error = $"Failed to delete workspace: {ex.Message}"
+                };
+            }
         }
 
+        // Once moved aside the workspace is gone, whatever becomes of its tree: no job can reach it by name, so the delete has succeeded. Space the tree still holds is the sweep's to recover.
         try
         {
-            // Normalize file attributes before deletion (handles git read-only files)
-            SetAttributesNormal(new DirectoryInfo(workDir));
-            Directory.Delete(workDir, recursive: true);
+            DeleteTree(doomed);
             _logger.LogInformation("Deleted workspace: {WorkspaceName}", name);
-            return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Success };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to delete workspace: {WorkspaceName}", name);
-            return new DeleteWorkspaceResult
-            {
-                Status = DeleteWorkspaceStatus.Error,
-                Error = $"Failed to delete workspace: {ex.Message}"
-            };
+            _logger.LogError(ex, "Deleted workspace {WorkspaceName}, but not all of its files: what remains is in {Remains}, and holds space until a later sweep clears it", name, doomed);
         }
+        finally
+        {
+            lock (_lock)
+            {
+                _deleting.Remove(doomed);
+            }
+        }
+        return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Success };
+    }
+
+    /// <summary>
+    /// Deletes what earlier deletes moved aside and didn't finish: one that failed partway, or one the worker was stopped in the middle of. Run with each usage measurement, so a tree that couldn't be deleted once is tried again; one a delete is still working on is left to it.
+    /// </summary>
+    public void SweepDeletions()
+    {
+        if (!Directory.Exists(_config.WorkspacePath))
+        {
+            return;
+        }
+
+        foreach (var remains in Directory.GetDirectories(_config.WorkspacePath, DeletingPrefix + "*"))
+        {
+            lock (_lock)
+            {
+                if (_deleting.Contains(remains))
+                {
+                    continue;
+                }
+            }
+
+            try
+            {
+                DeleteTree(remains);
+                _logger.LogInformation("Cleared the remains of an unfinished workspace delete: {Remains}", remains);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not clear the remains of an unfinished workspace delete: {Remains}", remains);
+            }
+        }
+    }
+
+    private static void DeleteTree(string path)
+    {
+        // Normalize file attributes before deletion (handles git read-only files)
+        SetAttributesNormal(new DirectoryInfo(path));
+        Directory.Delete(path, recursive: true);
     }
 
     // A symlink is deleted as itself, never followed: chmodding through one would reach files outside the tree being deleted.
