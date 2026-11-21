@@ -241,6 +241,10 @@ public class WorkerHub : Hub<IWorkerClient>
             }
 
             session.State = state;
+            if (resume.DiskSpace is { } diskSpace)
+            {
+                scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetDiskSpace(session.WorkerId, diskSpace);
+            }
             session.Resumed = true;
 
             if (recheck)
@@ -433,6 +437,19 @@ public class WorkerHub : Hub<IWorkerClient>
         scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetDiagnostic(session.WorkerId, report);
         _uiEvents.NotifyWorkersChanged();
         _logger.LogInformation("Worker {WorkerId} diagnostic: {Status} - {Summary}", session.WorkerId, report.Status, report.Summary);
+        return SessionAnswer.Ok;
+    }
+
+    public SessionAnswer ReportDiskSpace(DiskSpaceReport report)
+    {
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
+        {
+            return SessionAnswer.Fenced;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetDiskSpace(session.WorkerId, report);
+        _uiEvents.NotifyWorkersChanged();
         return SessionAnswer.Ok;
     }
 

@@ -26,6 +26,9 @@ public class WorkerRepository
     // Latest workspace disk usage, keyed by worker ID for the same reason as diagnostics: a reconnect shouldn't blank every size until the worker's next measurement lands. The connection-keyed workspace list still decides which workspaces are shown.
     private readonly ConcurrentDictionary<Guid, WorkspaceUsageReport> _workerUsage = new();
 
+    // Kept across disconnects, like the usage: the last that is known of a sleeping worker's disk.
+    private readonly ConcurrentDictionary<Guid, DiskSpaceReport> _workerDisk = new();
+
     public WorkerRepository(IServiceScopeFactory scopeFactory, WorkerSessions sessions, WorkerBundleService bundles, Wake.WakeStatus wakeStatus)
     {
         _scopeFactory = scopeFactory;
@@ -295,6 +298,12 @@ public class WorkerRepository
         }
         _workerDiagnostics.TryRemove(workerId, out _);
         _workerUsage.TryRemove(workerId, out _);
+        _workerDisk.TryRemove(workerId, out _);
+    }
+
+    public void SetDiskSpace(Guid workerId, DiskSpaceReport report)
+    {
+        _workerDisk[workerId] = report;
     }
 
     public void SetWorkspaceUsage(Guid workerId, WorkspaceUsageReport report)
@@ -354,6 +363,7 @@ public class WorkerRepository
             Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
             MirrorsSizeBytes = usage?.MirrorsSizeBytes,
             UsageMeasured = usage != null,
+            DiskSpace = _workerDisk.GetValueOrDefault(id),
             Diagnostic = diagnostic,
             BundleHash = session?.BundleHash
         };
@@ -406,6 +416,7 @@ public class WorkerRepository
                 Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
                 MirrorsSizeBytes = usage?.MirrorsSizeBytes,
                 UsageMeasured = usage != null,
+                DiskSpace = _workerDisk.GetValueOrDefault(w.Id),
                 Diagnostic = diagnostic,
                 BundleHash = session?.BundleHash
             };
@@ -463,6 +474,29 @@ public class WorkerView
     public bool ShowsMirrors
     {
         get { return UsageMeasured && MirrorsSizeBytes != 0; }
+    }
+
+    /// <summary>The worker's latest report of free space on its workspace filesystem; null until one arrives. Kept while the worker is away, so it may be stale then.</summary>
+    public DiskSpaceReport? DiskSpace { get; init; }
+
+    /// <summary>Free space is below the floor the worker keeps.</summary>
+    public bool LowOnDisk
+    {
+        get { return DiskSpace != null && DiskSpace.FreeBytes < DiskSpace.MinFreeBytes; }
+    }
+
+    /// <summary>Of the space in use, what the workspaces and mirrors don't account for: the host's own, and on a containerized worker usually Docker's images and build cache too, which deleting workspaces can't free. It includes any space the filesystem reserves for root, which isn't free to the worker either. Null until both a disk report and a usage measurement have arrived.</summary>
+    public long? OtherUseBytes
+    {
+        get
+        {
+            if (DiskSpace == null || !UsageMeasured)
+            {
+                return null;
+            }
+            var workspaces = Workspaces.Sum(w => w.SizeBytes ?? 0) + (MirrorsSizeBytes ?? 0);
+            return Math.Max(0, DiskSpace.TotalBytes - DiskSpace.FreeBytes - workspaces);
+        }
     }
     public DiagnosticReport? Diagnostic { get; init; }
     public string? BundleHash { get; init; }

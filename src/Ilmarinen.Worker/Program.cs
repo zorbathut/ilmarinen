@@ -28,6 +28,11 @@ var inUseIdleTime = Environment.GetEnvironmentVariable("ILMARINEN_IN_USE_IDLE_MI
         ? TimeSpan.FromMinutes(minutes)
         : throw new InvalidOperationException($"ILMARINEN_IN_USE_IDLE_MINUTES must be a positive number of minutes; got '{idleMinutes}'.")
     : (TimeSpan?)null;
+var minFreeBytes = Environment.GetEnvironmentVariable("ILMARINEN_MIN_FREE_GB") is { } minFreeGb
+    ? double.TryParse(minFreeGb, NumberStyles.Float, CultureInfo.InvariantCulture, out var gb) && gb >= 0
+        ? (long)(gb * 1024 * 1024 * 1024)
+        : throw new InvalidOperationException($"ILMARINEN_MIN_FREE_GB must be a number of gigabytes, 0 or more; got '{minFreeGb}'.")
+    : (long?)null;
 
 var config = new WorkerConfig
 {
@@ -36,7 +41,8 @@ var config = new WorkerConfig
     WorkspacePath = workspacePath ?? WorkerConfig.GetDefaultWorkspacePath(),
     BundleHash = bundleHash,
     MetricsInterval = metricsInterval ?? WorkerConfig.DefaultMetricsInterval,
-    InUseIdleTime = inUseIdleTime ?? WorkerConfig.DefaultInUseIdleTime
+    InUseIdleTime = inUseIdleTime ?? WorkerConfig.DefaultInUseIdleTime,
+    MinFreeBytes = minFreeBytes ?? WorkerConfig.DefaultMinFreeBytes
 };
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -56,6 +62,7 @@ builder.Services.AddSerilog();
 
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<WorkspaceManager>();
+builder.Services.AddSingleton<IDiskSpace, DriveDiskSpace>();
 builder.Services.AddSingleton<IWorkerDiagnostic, DockerWorkerDiagnostic>();
 builder.Services.AddSingleton<SleepInhibitor>();
 builder.Services.AddSingleton<UpdateSignal>();

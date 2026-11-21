@@ -1,0 +1,16 @@
+@using Ilmarinen.Server.Services
+
+@if (Worker.DiskSpace is { } disk)
+{
+    <span style="@(Worker.LowOnDisk ? "color: var(--warning, orange);" : "")"
+          title="@(Worker.LowOnDisk ? $"Below the {DisplayFormat.Size(disk.MinFreeBytes)} this worker keeps free" : "")">@DisplayFormat.Size(disk.FreeBytes) of @DisplayFormat.Size(disk.TotalBytes)@(Worker.LowOnDisk ? " (low)" : "")</span>
+}
+else
+{
+    <span>-</span>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public WorkerView Worker { get; set; } = null!;
+}

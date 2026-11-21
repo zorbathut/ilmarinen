@@ -85,6 +85,15 @@ public class IntegrationTestFixture : IAsyncDisposable
     /// <summary>How often workers started from here on sample a job's resource use; off by default.</summary>
     public TimeSpan WorkerMetricsInterval { get; set; } = TimeSpan.Zero;
 
+    /// <summary>The floor the next worker started keeps free on its disk (<see cref="WorkerDisk"/>).</summary>
+    public long WorkerMinFreeBytes { get; set; } = FakeDiskSpace.Gb;
+
+    /// <summary>The disk of the worker started last, which a test can fill or empty.</summary>
+    public FakeDiskSpace WorkerDisk
+    {
+        get { return _workerBuilder?.Disk ?? throw new InvalidOperationException("No worker has been started"); }
+    }
+
     public Task<Guid> StartWorkerAsync() => StartWorkerAsync(diagnostic: null, waitForReady: true);
 
     public async Task<Guid> StartWorkerAsync(Func<IServiceProvider, Ilmarinen.Worker.Services.IWorkerDiagnostic>? diagnostic, bool waitForReady, string? bundleHash = null)
@@ -95,7 +104,7 @@ public class IntegrationTestFixture : IAsyncDisposable
         var registrationService = scope.ServiceProvider.GetRequiredService<WorkerRegistrationService>();
         var result = await registrationService.RegisterWorkerAsync($"test-worker-{_workerCount}");
 
-        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey, diagnostic, bundleHash) { MetricsInterval = WorkerMetricsInterval };
+        _workerBuilder = new TestWorkerBuilder(WorkerUrl, result.WorkerKey, diagnostic, bundleHash) { MetricsInterval = WorkerMetricsInterval, MinFreeBytes = WorkerMinFreeBytes };
         _workerHost = _workerBuilder.Build();
         WorkerUpdateSignal = _workerHost.Services.GetRequiredService<Ilmarinen.Worker.Services.UpdateSignal>();
         _workerCts = new CancellationTokenSource();

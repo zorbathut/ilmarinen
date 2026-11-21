@@ -54,6 +54,7 @@
                     <th class="hide-mobile">ID</th>
                     <th>Priority</th>
                     <th>Current Job</th>
+                    <th>Disk Free</th>
                     <th class="hide-mobile">Bundle</th>
                     <th class="hide-mobile">Registered</th>
                     <th class="hide-mobile">Last Seen</th>
@@ -85,6 +86,7 @@
                                 </select>
                             </td>
                             <td><JobsLink JobIds="worker.CurrentJobs" /></td>
+                            <td><DiskFree Worker="worker" /></td>
                             <td class="hide-mobile">
                                 @if (worker.BundleHash == null)
                                 {

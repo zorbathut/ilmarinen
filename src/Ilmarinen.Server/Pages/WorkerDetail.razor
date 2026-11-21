@@ -145,6 +145,17 @@
         {
             <p style="color: var(--text-secondary);">Git mirrors: @DisplayFormat.MeasuredSize(true, worker.MirrorsSizeBytes)</p>
         }
+        <p style="color: var(--text-secondary);">
+            Disk: <DiskFree Worker="worker" />
+            @if (worker.DiskSpace is { } disk)
+            {
+                <span> · keeps @DisplayFormat.Size(disk.MinFreeBytes) free</span>
+            }
+            @if (worker.OtherUseBytes is { } other)
+            {
+                <span title="Space in use that isn't workspaces or git mirrors: the host's own files and, for a containerized worker, usually Docker's images and build cache. Deleting workspaces can't free it."> · other use @DisplayFormat.Size(other)</span>
+            }
+        </p>
     </div>
 
     @if (deleteError != null)

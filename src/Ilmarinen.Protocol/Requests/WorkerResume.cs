@@ -11,4 +11,7 @@ public record WorkerResume
 
     /// <summary>Every outcome the server hasn't acknowledged yet.</summary>
     public required IReadOnlyList<JobOutcome> Outcomes { get; init; }
+
+    /// <summary>Free disk space now, so the server knows it before it first dispatches to the worker; null if it can't be read.</summary>
+    public DiskSpaceReport? DiskSpace { get; init; }
 }

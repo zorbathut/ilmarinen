@@ -42,6 +42,12 @@ public class TestWorkerBuilder
     /// <summary>Off unless a test is about metrics: the suite runs in parallel, and every job sampling the Docker daemon would load it for nothing.</summary>
     public TimeSpan MetricsInterval { get; init; } = TimeSpan.Zero;
 
+    /// <summary>The worker's disk, as it will see it.</summary>
+    public FakeDiskSpace Disk { get; } = new();
+
+    /// <summary>The floor the worker keeps free; small, against <see cref="Disk"/>'s roomy default.</summary>
+    public long MinFreeBytes { get; init; } = FakeDiskSpace.Gb;
+
     public Guid WorkerId => _workerId;
     public string WorkspacePath => _workspacePath;
 
@@ -55,7 +61,10 @@ public class TestWorkerBuilder
             BundleHash = _bundleHash,
             // Measure after every job, so a test doesn't wait out the production spacing
             WorkspaceUsageInterval = TimeSpan.Zero,
-            MetricsInterval = MetricsInterval
+            MetricsInterval = MetricsInterval,
+            MinFreeBytes = MinFreeBytes,
+            // Often, so a test that changes Disk sees the server learn of it soon
+            DiskSpaceInterval = TimeSpan.FromSeconds(1)
         };
 
         var builder = Host.CreateApplicationBuilder();
@@ -71,6 +80,7 @@ public class TestWorkerBuilder
 
         builder.Services.AddSingleton(config);
         builder.Services.AddSingleton<WorkspaceManager>();
+        builder.Services.AddSingleton<IDiskSpace>(Disk);
         var diagnostic = _diagnosticOverride ?? (_ => new DiagnosticStub());
         builder.Services.AddSingleton<IWorkerDiagnostic>(sp => diagnostic(sp));
         // Point the inhibitor at a dead bus: tests have no business registering inhibitors with the developer's logind, and the worker treats an unreachable bus as a no-op.

@@ -49,6 +49,16 @@ public class WorkerConfig
     public static readonly TimeSpan DefaultInUseIdleTime = TimeSpan.FromMinutes(30);
 
     /// <summary>
+    /// Disk space the worker keeps free on its workspace filesystem: the server sends it no job that would need it to go lower, and a running job that takes free space below it is stopped. Set via ILMARINEN_MIN_FREE_GB.
+    /// </summary>
+    public long MinFreeBytes { get; init; } = DefaultMinFreeBytes;
+
+    public const long DefaultMinFreeBytes = 5L * 1024 * 1024 * 1024;
+
+    /// <summary>How often free disk space is reported while nothing else would report it.</summary>
+    public TimeSpan DiskSpaceInterval { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Hash of the bundle this worker was launched from. Set via ILMARINEN_BUNDLE_HASH by the launcher; null means classic mode (no self-update behavior).
     /// </summary>
     public string? BundleHash { get; init; }

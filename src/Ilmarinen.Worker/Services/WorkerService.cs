@@ -42,6 +42,7 @@ public class WorkerService : BackgroundService
     private readonly WorkerConfig _config;
     private readonly Guid _workerId;
     private readonly WorkspaceManager _workspaceManager;
+    private readonly IDiskSpace _diskSpace;
     private readonly IWorkerDiagnostic _diagnostic;
     private readonly SleepInhibitor _sleepInhibitor;
     private readonly UpdateSignal _updateSignal;
@@ -82,6 +83,7 @@ public class WorkerService : BackgroundService
     public WorkerService(
         WorkerConfig config,
         WorkspaceManager workspaceManager,
+        IDiskSpace diskSpace,
         IWorkerDiagnostic diagnostic,
         SleepInhibitor sleepInhibitor,
         UpdateSignal updateSignal,
@@ -91,6 +93,7 @@ public class WorkerService : BackgroundService
         _config = config;
         _workerId = config.GetWorkerId();
         _workspaceManager = workspaceManager;
+        _diskSpace = diskSpace;
         _diagnostic = diagnostic;
         _sleepInhibitor = sleepInhibitor;
         _updateSignal = updateSignal;
@@ -114,6 +117,7 @@ public class WorkerService : BackgroundService
 
         var diagnosticRetries = RetryUnhealthyDiagnosticAsync(stoppingToken);
         var usageMeasurements = MeasureWorkspaceUsageAsync(stoppingToken);
+        var diskSpaceReports = ReportDiskSpaceAsync(stoppingToken);
 
         HubSession? session = null;
         while (!stoppingToken.IsCancellationRequested)
@@ -169,6 +173,7 @@ public class WorkerService : BackgroundService
 
         await diagnosticRetries;
         await usageMeasurements;
+        await diskSpaceReports;
 
         // The session outlives the stop signal so the jobs it just cancelled can still report how they ended.
         await DrainInFlightWorkAsync();
@@ -364,7 +369,8 @@ public class WorkerService : BackgroundService
             var response = await session.Connection.InvokeAsync<ResumeResponse>("Resume", new WorkerResume
             {
                 State = _state.Snapshot(),
-                Outcomes = outcomes
+                Outcomes = outcomes,
+                DiskSpace = ReadDiskSpace()
             }, call.Token);
             if (response.Answer != SessionAnswer.Ok)
             {
@@ -747,6 +753,8 @@ public class WorkerService : BackgroundService
             HoldIfStopping();
             var outcome = _state.FinishJob(status, duration, workspaces);
             _logger.LogInformation("Job {JobId} finished: {Status}", job.Id, status);
+            // Ahead of the outcome, which frees the worker for its next job: the server should judge that job by the space this one left.
+            ReportDiskSpace();
             ReportOutcome(outcome);
             StartDiagnosticIfWanted();
             ReportState();
@@ -1038,6 +1046,38 @@ public class WorkerService : BackgroundService
                 // Nothing else observes these tasks, so a fault here would otherwise vanish.
                 _logger.LogError(ex, "A job faulted while the worker was shutting down");
             }
+        }
+    }
+
+    private DiskSpaceReport? ReadDiskSpace()
+    {
+        return _diskSpace.Read(_config.WorkspacePath) is { } reading
+            ? new DiskSpaceReport { FreeBytes = reading.FreeBytes, TotalBytes = reading.TotalBytes, MinFreeBytes = _config.MinFreeBytes }
+            : null;
+    }
+
+    private void ReportDiskSpace()
+    {
+        if (ReadDiskSpace() is { } report)
+        {
+            Report(s => SendAsync(s, "ReportDiskSpace", report));
+        }
+    }
+
+    /// <summary>Reports free disk space every <see cref="WorkerConfig.DiskSpaceInterval"/>, so the server sees it change while the worker runs a long job or sits idle. Dropped while there is no session, like every report; Resume carries a fresh one.</summary>
+    private async Task ReportDiskSpaceAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(_config.DiskSpaceInterval, stoppingToken);
+                ReportDiskSpace();
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Stopped reporting free disk space");
         }
     }
 
