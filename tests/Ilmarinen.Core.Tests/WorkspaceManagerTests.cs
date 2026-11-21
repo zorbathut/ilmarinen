@@ -112,6 +112,26 @@ public class WorkspaceManagerTests
     }
 
     [Test]
+    public void TryDelete_DeletesSymlinksAsThemselves_LeavingWhatTheyPointAtAlone()
+    {
+        var outside = Path.Combine(_tempDir, ".outside");
+        Directory.CreateDirectory(outside);
+        var precious = Path.Combine(outside, "precious.txt");
+        File.WriteAllText(precious, "keep");
+        File.SetAttributes(precious, FileAttributes.ReadOnly);
+        var dir = Path.Combine(_tempDir, "linky-ws");
+        Directory.CreateDirectory(dir);
+        Directory.CreateSymbolicLink(Path.Combine(dir, "to-outside"), outside);
+        File.CreateSymbolicLink(Path.Combine(dir, "to-precious"), precious);
+
+        Assert.That(_manager.TryDelete("linky-ws").Status, Is.EqualTo(DeleteWorkspaceStatus.Success));
+
+        Assert.That(Directory.Exists(dir), Is.False);
+        Assert.That(File.ReadAllText(precious), Is.EqualTo("keep"));
+        Assert.That(File.GetAttributes(precious).HasFlag(FileAttributes.ReadOnly), Is.True, "nothing reached through a link was touched");
+    }
+
+    [Test]
     public void TryDelete_NonExistentWorkspace_ReturnsError()
     {
         var result = _manager.TryDelete("no-such-ws");

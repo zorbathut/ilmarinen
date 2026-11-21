@@ -212,14 +212,15 @@ public class WorkspaceManager
         }
     }
 
+    // A symlink is deleted as itself, never followed: chmodding through one would reach files outside the tree being deleted.
     private static void SetAttributesNormal(DirectoryInfo dir)
     {
-        foreach (var subDir in dir.GetDirectories())
+        foreach (var subDir in dir.GetDirectories().Where(d => d.LinkTarget == null))
         {
             SetAttributesNormal(subDir);
         }
 
-        foreach (var file in dir.GetFiles())
+        foreach (var file in dir.GetFiles().Where(f => f.LinkTarget == null))
         {
             file.Attributes = FileAttributes.Normal;
         }

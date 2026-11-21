@@ -8,6 +8,7 @@ using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.Http;
@@ -346,14 +347,15 @@ public class JobRunner
         };
     }
 
+    // A symlink is deleted as itself, never followed: chmodding through one would reach files outside the tree being deleted.
     private static void SetAttributesNormal(DirectoryInfo dir)
     {
-        foreach (var subDir in dir.GetDirectories())
+        foreach (var subDir in dir.GetDirectories().Where(d => d.LinkTarget == null))
         {
             SetAttributesNormal(subDir);
         }
 
-        foreach (var file in dir.GetFiles())
+        foreach (var file in dir.GetFiles().Where(f => f.LinkTarget == null))
         {
             file.Attributes = FileAttributes.Normal;
         }
