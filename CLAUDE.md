@@ -283,6 +283,12 @@ The server accepts any worker whose protocol version lies from `WorkerProtocol.M
 - A new worker→server member that has an initializer (`= []`) reads as that default from an older worker, which is safe, but `WorkerShapeDiff` can't see initializers and calls it a break. Make it nullable instead.
 - **Content carried in strings** is a contract the shape can't see. The log NDJSON in `LogChunk.Content` (`{"t","d","ts"}`, read by `LogChunkParser` and `log-viewer.js`) keeps its keys and only gains line types, which readers skip when they don't know them. The metrics NDJSON versions its own records (`MetricsRecords`).
 
+**Retiring compatibility code.** `COMPAT.md` registers code kept only for older workers, under the version that retires it. `CompatRegisterTests` fails once `MinSupportedVersion` reaches an entry's version.
+- Code written for older workers gets its entry, and a test that sends it an older worker's message, in the same commit.
+- **Report it.** When `COMPAT.md` has entries, tell the user what is waiting and on which version. Do this whenever you bump `WorkerProtocol.Version`, and at the start of any work on the worker protocol: `Ilmarinen.Protocol`, `WorkerHub`, or the worker's connection in `WorkerService`. Don't stay quiet because it was mentioned before.
+- **Check the fleet.** To see whether every worker is past that version, ask the server: `GET /api/workers` gives each worker's `protocolVersion` (the version it last connected with, asleep or not), and the Workers page flags workers behind the server. If you don't know the server's URL, or can't reach it, ask the user.
+- **Raise the minimum.** If every worker is past it, propose raising `MinSupportedVersion` and deleting the entries' code, tests and shape files. Raising the minimum past a version is not a breaking deploy when no worker still speaks it.
+
 **Deploying.** The server's deploy README (`deploy/server-docker/README.md`, Upgrading) has the recipes: a compatible change just deploys; a raised minimum, or a rollback across a version change, drains first (`ilmarinen drain --wait`).
 
 ### Worker Self-Update (launcher mode)
