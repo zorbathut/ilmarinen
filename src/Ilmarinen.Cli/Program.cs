@@ -160,7 +160,6 @@ internal class Commands
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
         using var http = new HttpClient();
-        await CheckProtocolAsync(http, server, jsonOptions);
 
         var submission = new JobSubmission
         {
@@ -209,7 +208,6 @@ internal class Commands
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
         using var http = new HttpClient();
-        await CheckProtocolAsync(http, serverUrl, jsonOptions);
 
         var trigger = new PipelineTrigger
         {
@@ -386,33 +384,6 @@ internal class Commands
 
         Console.Error.WriteLine($"Server URL must be an absolute http:// or https:// URL, not '{server}'.");
         return null;
-    }
-
-    /// <summary>Warns, without failing the command, when the server's protocol differs from this CLI's or can't be checked.</summary>
-    private static async Task CheckProtocolAsync(HttpClient http, string server, JsonSerializerOptions jsonOptions)
-    {
-        VersionInfo? versionResponse;
-        try
-        {
-            versionResponse = await http.GetFromJsonAsync<VersionInfo>($"{server}/api/version", jsonOptions);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or NotSupportedException)
-        {
-            Console.Error.WriteLine($"Warning: could not check protocol compatibility with the server: {ex.Message}");
-            return;
-        }
-
-        if (versionResponse?.ProtocolHash != ProtocolVersion.Hash)
-        {
-            Console.Error.WriteLine($"Warning: Protocol mismatch with server.");
-            Console.Error.WriteLine($"  CLI:    {ProtocolVersion.Hash}");
-            Console.Error.WriteLine($"  Server: {versionResponse?.ProtocolHash ?? "unknown"}");
-            Console.Error.WriteLine("Rebuild CLI and server with the same protocol definitions.");
-            if (Environment.GetEnvironmentVariable("DEBUG") != null)
-            {
-                Console.Error.WriteLine($"CLI protocol hash input:\n{ProtocolVersion.HashInput}");
-            }
-        }
     }
 
     /// <summary>How often --wait asks what is still running. A drain waits on jobs that run for minutes; nothing gains from asking faster.</summary>

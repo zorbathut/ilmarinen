@@ -342,7 +342,7 @@ The host figures describe the machine the worker process runs on. With a remote 
 
 Memory is sampled, so short spikes can be missed; memory pressure is the signal for those. A container that starts and stops between two samples is missed entirely.
 
-The metrics travel with the job's log and change the protocol: server and workers must be on the same version.
+The metrics travel with the job's log as their own versioned records, so a server and workers on different builds still exchange them.
 
 ## Development
 

@@ -4,7 +4,7 @@ using System;
 namespace Ilmarinen.Server.Services;
 
 /// <summary>
-/// A step's summary via GET /api/jobs/{id}/steps (JobStep says what the figures cover). Server-side only: a type in the protocol namespaces would change the protocol hash for a read-only report.
+/// A step's summary via GET /api/jobs/{id}/steps (JobStep says what the figures cover).
 /// </summary>
 public record JobStepInfo
 {

@@ -36,6 +36,9 @@ public sealed class WorkerSession
     /// <summary>Reported at authentication by launcher-run workers; null for classic workers.</summary>
     public volatile string? BundleHash;
 
+    /// <summary>The worker protocol version the worker connected with, from the supported range. What the server sends that an older version would skip, rather than act on, it sends or relies on only when this says the worker understands it.</summary>
+    public int ProtocolVersion { get; init; }
+
     public ImmutableList<WorkspaceInfo> Workspaces = ImmutableList<WorkspaceInfo>.Empty;
 }
 
@@ -235,4 +238,5 @@ public sealed class PendingHandshake
     public required byte[] ServerNonce { get; init; }
     public required DateTime CreatedAt { get; init; }
     public string? BundleHash { get; init; }
+    public required int ProtocolVersion { get; init; }
 }

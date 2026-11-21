@@ -6,7 +6,7 @@ using System;
 namespace Ilmarinen.Protocol.Metrics;
 
 /// <summary>
-/// The records of a job's resource-metrics stream: one JSON object per line, each with a version and a kind, so the stream can grow fields without a migration or a protocol change. Carried as text inside JobMetricsChunk, which is why this namespace stays out of the protocol hash.
+/// The records of a job's resource-metrics stream: one JSON object per line, each with a version and a kind, so the stream can grow fields without a migration or a protocol change. Carried as text inside JobMetricsChunk, which is why these records stay out of the worker protocol's shape (WorkerProtocol).
 ///
 /// Figures cover the whole host and the containers on the job's network (plus the worker's own container). Work the build does elsewhere — BuildKit image builds, image pulls, a script's own docker run or compose — shows only in the host figures. Memory figures are sampled, so they are lower bounds that can miss short spikes; memory pressure is the signal for those.
 /// </summary>

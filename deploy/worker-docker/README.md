@@ -54,7 +54,7 @@ A healthy start logs its container ID, the discovered host workspace path, and a
 
 ## Upgrading
 
-The server rejects workers whose protocol hash doesn't match its own, so the worker must be rebuilt from a ref compatible with the server's:
+The server rejects workers outside the range of worker protocol versions it supports. That range usually spans several versions, so a classic worker can lag the server, but once the server's minimum passes the worker's version it must be rebuilt from a ref compatible with the server's (see the server's [Upgrading](../server-docker/README.md#upgrading)):
 
 ```bash
 git pull                          # or: git checkout <the server's ref>
@@ -62,8 +62,6 @@ docker compose up -d --build
 ```
 
 This recreates the container, which kills any job running on it — the step containers and the job's Docker network are orphaned rather than cleaned up. Check the server UI for a job on this worker before upgrading.
-
-Note for the server deploy that first introduces the self-update feature (`deploy/workerlauncher-docker/`): that change alters the protocol hash like any other protocol change, so every classic worker needs one final manual rebuild — and no launcher-run workers exist yet to ride it out automatically.
 
 ## Security
 
@@ -119,7 +117,7 @@ The overlay mounts the host's `/dev/input`, which is every keystroke on the host
 |---|---|
 | Compose refuses to start: `set ILMARINEN_SERVER_URL in .env` | No `.env`, or you ran Compose from a different directory. |
 | Connection refused / timeout | The server isn't publishing its worker port, or a firewall is dropping it. See above. |
-| Protocol mismatch logged on repeat, forever | Worker built from a ref incompatible with the server's. It retries rather than exiting, so this repeats until you rebuild — see Upgrading. |
+| Protocol version mismatch logged on repeat, forever | The worker's protocol version is outside the range the server supports: older than its minimum, or newer than the server. It retries rather than exiting, so this repeats until you rebuild — see Upgrading. |
 | Crash-loops: `no Docker mount backs the workspace path` | The `workspaces` volume's destination and `ILMARINEN_WORKSPACE_PATH` disagree. They must be identical; that equality is how the worker finds the host-side path it bind-mounts into job containers. |
 | Crash-loops: cannot connect to the Docker daemon | `/var/run/docker.sock` isn't mounted, or this host runs rootless Docker (whose socket lives elsewhere — unsupported here). |
 | Startup diagnostic reports `docker_daemon failed` | The worker reached the daemon but a check against it failed; the diagnostic names the failing step. The worker stays online but takes no jobs until it passes. |

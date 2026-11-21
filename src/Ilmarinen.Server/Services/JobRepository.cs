@@ -469,7 +469,7 @@ public class JobRepository
     private const int EstimateSampleSize = 11;
 
     /// <summary>
-    /// Expected durations of the running jobs among <paramref name="jobs"/>, keyed by job ID, for those whose worker has run the same script of the same repository successfully more than once. Web UI only: JobInfo is a protocol type, and growing it would change the protocol hash for a display feature.
+    /// Expected durations of the running jobs among <paramref name="jobs"/>, keyed by job ID, for those whose worker has run the same script of the same repository successfully more than once.
     /// </summary>
     public async Task<IReadOnlyDictionary<Guid, TimeSpan>> GetDurationEstimatesAsync(IEnumerable<JobInfo> jobs)
     {

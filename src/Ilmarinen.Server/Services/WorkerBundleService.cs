@@ -8,7 +8,7 @@ namespace Ilmarinen.Server.Services;
 
 /// <summary>
 /// Serves the worker bundle (a zipped worker publish output baked into the server image) to launcher-run workers.
-/// The bundle's identity is the SHA-256 of the zip; ProtocolVersion.Hash can't serve here because it only reflects DTO shapes and doesn't change on logic-only updates.
+/// The bundle's identity is the SHA-256 of the zip; the worker protocol's version can't serve here, because it only changes with the protocol, not on logic-only updates.
 /// The hash is computed once per process, so the bundle can only "change" via a server restart — which drops every worker connection, so workers learn about updates at re-handshake time without any polling.
 /// </summary>
 public class WorkerBundleService

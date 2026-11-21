@@ -257,12 +257,33 @@ The `IJobContext` interface provides these capabilities to step actions:
 The protocol is specified and model-checked in `spec/` (`spec/README.md`; run `scripts/check-protocol.sh` after changing it). Each worker connection is a session identified by (process instance, connection counter); a later epoch supersedes an earlier one, and calls on a superseded connection are answered `SessionAnswer.Fenced`. Readiness is derived from the worker's reported state and what the server itself holds about the worker (a diagnostic owed, a stale bundle, an operator's pause), never signalled.
 
 SignalR hub methods:
-- `Connect(WorkerConnect)` → `AuthChallenge` - Protocol-hash check, mutual ECDSA challenge bound to the connection's epoch; exchanges bundle hashes for launcher-run workers
+- `Connect(WorkerConnect)` → `AuthChallenge` - Protocol version check (see Protocol compatibility), mutual ECDSA challenge bound to the connection's epoch; exchanges bundle hashes for launcher-run workers
 - `Authenticate(WorkerAuthenticate)` → `SessionAnswer` - Signature verification, then the connection becomes the worker's session if its epoch allows
 - `Resume(WorkerResume)` → `ResumeResponse` - First call on a session: the worker's state plus unacknowledged outcomes; the server applies them and reconciles running jobs
 - `ReportState(WorkerState)` / `ReportOutcome(JobOutcome)` - State after each change; a job's completion or hand-back, acknowledged by the answer
 - `StreamLogs(LogChunk)`, `StreamMetrics(JobMetricsChunk)`, `ReportCommit`, `ReportDiagnostic`, `ReportWorkspaceUsage`, `WorkspaceDeleted` - Accepted from the current session
 - `Heartbeat()` → `SessionAnswer` - How a superseded or dead connection is noticed
+
+The hub's methods are declared in `IWorkerHub`, the server's calls to a worker in `IWorkerClient`, and the worker's plain-HTTP calls beside the hub (an artifact upload) in `IWorkerHttp`, all in `Ilmarinen.Protocol`. Together they are the worker protocol: an endpoint under `/hub/workers/` belongs in `IWorkerHttp`, and a hub method in `IWorkerHub` (`WorkerHubContractTests` checks that).
+
+### Protocol compatibility
+
+The server accepts any worker whose protocol version lies from `WorkerProtocol.MinSupportedVersion` to `WorkerProtocol.Version`. So a change that older workers can still speak deploys without stranding them: they reconnect, hand over their results, and launcher-run ones drain and relaunch on the new bundle. A breaking change raises the minimum, and needs the fleet drained before the deploy. The REST API isn't versioned. The CLI and the Discord bot read it as tolerantly, except for members they have as `required`, so redeploy the bot with the server, and grow REST responses rather than reshape them.
+
+**Recording a change.** `WorkerProtocol.ShapeText` is the protocol's wire shape, and `src/Ilmarinen.Protocol/WorkerShapes/v{N}.txt` records it per version. `WorkerProtocolVersionTests` fails when they differ, and rerunning it with `ILMARINEN_WRITE_SHAPE=1` writes the file.
+- **Has the current version shipped?** The server's `GET /api/version` reports the version and hash it runs. If it reports the current version, it has shipped. If you can't reach the server, ask the user.
+- **If it has,** bump `WorkerProtocol.Version`, add the shipped version's hash (`WorkerProtocol.HashOf` its file) to `WorkerProtocol.Sealed` (a test requires every version below the current one to be sealed), and write the new file.
+- **Only if it hasn't** may you amend the current version's file instead. If in doubt, bump: an unused version costs one file.
+- `WorkerShapeDiff` (in Core.Tests) checks that every supported version can still talk to the current one. If it reports a break, make the change compatible. Raise `MinSupportedVersion` to the new version only for a change that really has to break; that is a drained deploy and strands classic workers until they're rebuilt, so say so to the user.
+
+**Writing a compatible change.** Messages are System.Text.Json over SignalR: unknown members are skipped, a missing one reads as null or default unless it is `required` (which fails the whole call; in a server→worker invocation the worker logs and drops it), enums travel as integers, and a reference type's nullability isn't checked. So which changes are safe depends on direction (`WorkerShapeDiff` has the rules):
+- **Worker→server** (hub parameters): a new member must be nullable and not `required`, with null meaning "an older worker; behave as before". Dropping a member and adding an enum member are fine.
+- **Server→worker** (hub results, `IWorkerClient` parameters): adding a member is fine on the wire, but an older worker skips it, which is not the same as acting on it. When the server relies on a worker acting on something new (as it relies on `JobAssignment.StartFresh` to make room), it sends or relies on it only when `session.ProtocolVersion` says the worker understands it, and falls back otherwise. Don't drop a member or add an enum member.
+- Append enum members; never renumber or reuse values.
+- A new worker→server member that has an initializer (`= []`) reads as that default from an older worker, which is safe, but `WorkerShapeDiff` can't see initializers and calls it a break. Make it nullable instead.
+- **Content carried in strings** is a contract the shape can't see. The log NDJSON in `LogChunk.Content` (`{"t","d","ts"}`, read by `LogChunkParser` and `log-viewer.js`) keeps its keys and only gains line types, which readers skip when they don't know them. The metrics NDJSON versions its own records (`MetricsRecords`).
+
+**Deploying.** The server's deploy README (`deploy/server-docker/README.md`, Upgrading) has the recipes: a compatible change just deploys; a raised minimum, or a rollback across a version change, drains first (`ilmarinen drain --wait`).
 
 ### Worker Self-Update (launcher mode)
 
@@ -271,7 +292,7 @@ The server can serve a zipped worker publish output (baked into its image; `Serv
 ### Security
 
 - **Port Isolation**: Server exposes PublicPort (8080) externally, WorkerPort (8081) internally only
-- **Protocol Validation**: Server rejects workers with mismatched `ProtocolVersion.Hash`
+- **Protocol Validation**: Server rejects workers whose protocol version is outside the range it supports (see Protocol compatibility)
 - **Bearer Token Auth**: AgentApiServer uses random UUID tokens per pipeline run
 - **Network Isolation**: Each pipeline run gets unique Docker network
 

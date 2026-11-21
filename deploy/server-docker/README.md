@@ -51,7 +51,21 @@ Then point the worker at this server:
 - **Same host**: `ILMARINEN_SERVER_URL=http://server:8081` plus the same-host overlay — nothing needs publishing.
 - **Remote host**: set `WORKER_BIND_ADDR` here to a private address the worker can reach, and point `ILMARINEN_SERVER_URL` at `http://<that-address>:8081`.
 
-Workers must be built from a ref whose protocol hash matches this server's, or the server rejects them at registration. Rebuild both from the same ref when you upgrade.
+Workers must speak a worker protocol version this server supports (`WorkerProtocol.MinSupportedVersion` to `WorkerProtocol.Version`; the server logs the range at startup, and `GET /api/version` returns it), or it rejects them when they connect.
+
+### Upgrading
+
+How to deploy a new server depends on whether its worker protocol still accepts the workers you have:
+
+- **Same minimum version** (most changes): just deploy. Workers reconnect and hand over any job results they were holding. Launcher-run workers see the new bundle, finish what they're running, and relaunch on it. Classic workers keep working until you rebuild them.
+- **A raised minimum** (a breaking protocol change), or **rolling the server back past a version change**: drain first, so no worker is holding work the new server can't take from it.
+
+  ```bash
+  ilmarinen drain --server http://<server>:8080 --wait   # stop dispatching, wait for running jobs
+  # deploy the server; the restart ends the drain
+  ```
+
+  Launcher-run workers then relaunch on the new bundle by themselves. Classic workers need rebuilding.
 
 ## Two pieces of state you cannot regenerate
 

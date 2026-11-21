@@ -11,6 +11,11 @@ public class VersionController : ControllerBase
     [HttpGet]
     public ActionResult<VersionInfo> Get()
     {
-        return Ok(new VersionInfo { ProtocolHash = ProtocolVersion.Hash });
+        return Ok(new VersionInfo
+        {
+            WorkerProtocolVersion = WorkerProtocol.Version,
+            MinSupportedWorkerProtocolVersion = WorkerProtocol.MinSupportedVersion,
+            WorkerProtocolHash = WorkerProtocol.Hash
+        });
     }
 }

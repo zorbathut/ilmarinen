@@ -7,7 +7,7 @@ name: ilmarinen-worker
 services:
   worker:
     build:
-      # The worker is built from source: nothing publishes an image, and the server rejects workers whose protocol hash doesn't match, so the worker must be built from a ref compatible with the server's.
+      # The worker is built from source: nothing publishes an image, and the server rejects workers outside the range of worker protocol versions it supports, so the worker must be built from a ref compatible with the server's.
       context: ../..
       dockerfile: src/Ilmarinen.Worker/Dockerfile
     restart: unless-stopped

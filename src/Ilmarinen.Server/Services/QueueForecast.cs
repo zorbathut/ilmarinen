@@ -6,7 +6,7 @@ using System;
 namespace Ilmarinen.Server.Services;
 
 /// <summary>
-/// How backed up the fleet is, via GET /api/jobs/queue/estimate. Server-side only: a type in the protocol namespaces would change the protocol hash for a display feature.
+/// How backed up the fleet is, via GET /api/jobs/queue/estimate.
 /// </summary>
 public record QueueEstimate
 {

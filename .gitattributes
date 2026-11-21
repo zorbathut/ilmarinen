@@ -1,0 +1,2 @@
+# The worker protocol's recorded shapes are hashed when a version is sealed; keep their line endings fixed.
+src/Ilmarinen.Protocol/WorkerShapes/*.txt text eol=lf

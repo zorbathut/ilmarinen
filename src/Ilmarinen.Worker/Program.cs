@@ -75,8 +75,7 @@ builder.Services.AddSingleton<PresenceService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PresenceService>());
 builder.Services.AddHostedService<SleepWatcher>();
 
-Log.Information("Starting worker {WorkerId}, Protocol: {ProtocolHash}", config.GetWorkerId(), ProtocolVersion.Hash);
-Log.Debug("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
+Log.Information("Starting worker {WorkerId}, protocol v{ProtocolVersion} ({ProtocolHash})", config.GetWorkerId(), WorkerProtocol.Version, WorkerProtocol.Hash);
 if (config.BundleHash != null)
 {
     Log.Information("Running under launcher, bundle: {BundleHash}", config.BundleHash);

@@ -133,11 +133,12 @@ app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
 
 Log.Information(
-    "Ilmarinen Server starting - Public: {PublicPort}, Worker: {WorkerPort}, Protocol: {ProtocolHash}",
+    "Ilmarinen Server starting - Public: {PublicPort}, Worker: {WorkerPort}, worker protocol v{MinProtocolVersion}..v{ProtocolVersion} ({ProtocolHash})",
     serverConfig.PublicPort,
     serverConfig.WorkerPort,
-    ProtocolVersion.Hash);
-Log.Debug("Protocol hash input:\n{HashInput}", ProtocolVersion.HashInput);
+    WorkerProtocol.MinSupportedVersion,
+    WorkerProtocol.Version,
+    WorkerProtocol.Hash);
 
 app.Run();
 

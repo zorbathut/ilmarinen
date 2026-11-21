@@ -83,7 +83,7 @@ public sealed class DirectedWorker
         var challenge = await Hub.Connect(new WorkerConnect
         {
             WorkerId = WorkerId,
-            ProtocolHash = ProtocolVersion.Hash,
+            ProtocolVersion = WorkerProtocol.Version,
             Nonce = nonce,
             InstanceId = InstanceId,
             ConnectionCounter = counter,

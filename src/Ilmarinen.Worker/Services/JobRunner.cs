@@ -304,6 +304,7 @@ public class JobRunner
         {
             var artifactName = name ?? Path.GetFileName(localPath);
             var fileInfo = new FileInfo(localPath);
+            // IWorkerHttp.UploadArtifact: declared there so the worker protocol's shape covers it.
             var url = $"{baseUrl}/hub/workers/jobs/{_job.Id}/artifacts?name={Uri.EscapeDataString(artifactName)}";
 
             var jsonOptions = new JsonSerializerOptions

@@ -5,5 +5,7 @@ namespace Ilmarinen.Protocol.Responses;
 /// </summary>
 public record VersionInfo
 {
-    public required string ProtocolHash { get; init; }
+    public required int WorkerProtocolVersion { get; init; }
+    public required int MinSupportedWorkerProtocolVersion { get; init; }
+    public required string WorkerProtocolHash { get; init; }
 }

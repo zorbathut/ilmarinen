@@ -281,22 +281,13 @@ public class WorkerService : BackgroundService
         var challenge = await session.Connection.InvokeAsync<AuthChallenge>(nameof(IWorkerHub.Connect), new WorkerConnect
         {
             WorkerId = _workerId,
-            ProtocolHash = ProtocolVersion.Hash,
             Nonce = workerNonce,
+            ProtocolVersion = WorkerProtocol.Version,
+            ProtocolHash = WorkerProtocol.Hash,
             InstanceId = _instanceId,
             ConnectionCounter = session.Counter,
             BundleHash = _config.BundleHash
         }, call.Token);
-
-        if (challenge.ProtocolHash != ProtocolVersion.Hash)
-        {
-            _logger.LogError(
-                "Protocol mismatch: worker is '{WorkerHash}', server is '{ServerHash}'. Rebuild both with the same protocol definitions.",
-                ProtocolVersion.Hash, challenge.ProtocolHash);
-            throw new InvalidOperationException(
-                $"Protocol mismatch. Worker is '{ProtocolVersion.Hash}', server is '{challenge.ProtocolHash}'. " +
-                "Rebuild both with the same protocol definitions.");
-        }
 
         var challengeData = HandshakeChallenge.Build(_workerId, _instanceId, session.Counter, workerNonce, challenge.Nonce);
         using (var serverKey = _config.GetServerPublicKey())

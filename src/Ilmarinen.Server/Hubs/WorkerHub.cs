@@ -40,16 +40,21 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
 
     public async Task<AuthChallenge> Connect(WorkerConnect request)
     {
-        // Validate protocol compatibility early
-        if (request.ProtocolHash != ProtocolVersion.Hash)
+        // A worker newer than the server is turned away too: it would rely on a server that understands what it sends. A launcher-run one then exits and relaunches on the server's own bundle.
+        if (request.ProtocolVersion < WorkerProtocol.MinSupportedVersion || request.ProtocolVersion > WorkerProtocol.Version)
         {
+            var update = request.ProtocolVersion < WorkerProtocol.MinSupportedVersion ? "Update the worker" : "Update the server, or run the worker from the server's bundle";
             _logger.LogError(
-                "Worker {WorkerId} rejected: protocol mismatch (worker: {WorkerHash}, server: {ServerHash})",
-                request.WorkerId, request.ProtocolHash, ProtocolVersion.Hash);
-
+                "Worker {WorkerId} rejected: it speaks worker protocol v{WorkerVersion}, and this server accepts v{MinVersion} to v{Version}",
+                request.WorkerId, request.ProtocolVersion, WorkerProtocol.MinSupportedVersion, WorkerProtocol.Version);
             throw new HubException(
-                $"Protocol mismatch. Worker is '{request.ProtocolHash}', server is '{ProtocolVersion.Hash}'. " +
-                "Rebuild both with the same protocol definitions.");
+                $"Protocol version mismatch. The worker speaks v{request.ProtocolVersion}; the server accepts v{WorkerProtocol.MinSupportedVersion} to v{WorkerProtocol.Version}. {update}.");
+        }
+        if (request.ProtocolHash != null && WorkerProtocol.KnownHash(request.ProtocolVersion) is { } known && request.ProtocolHash != known)
+        {
+            _logger.LogWarning(
+                "Worker {WorkerId} claims worker protocol v{Version} with shape {WorkerHash}, but this server knows v{Version} as {ServerHash}: one of them was built from a version whose shape changed after it shipped",
+                request.WorkerId, request.ProtocolVersion, request.ProtocolHash, request.ProtocolVersion, known);
         }
 
         using var scope = _scopeFactory.CreateScope();
@@ -74,7 +79,8 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
             WorkerNonce = request.Nonce,
             ServerNonce = serverNonce,
             CreatedAt = DateTime.UtcNow,
-            BundleHash = request.BundleHash
+            BundleHash = request.BundleHash,
+            ProtocolVersion = request.ProtocolVersion
         });
 
         _logger.LogDebug("Issued auth challenge for worker {WorkerId}", request.WorkerId);
@@ -83,7 +89,6 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
         {
             Nonce = serverNonce,
             ServerSignature = serverSignature,
-            ProtocolHash = ProtocolVersion.Hash,
             CurrentBundleHash = _bundles.CurrentHash
         };
     }
@@ -122,7 +127,8 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
 
         var session = new WorkerSession(pending.WorkerId, Context.ConnectionId, pending.InstanceId, pending.ConnectionCounter)
         {
-            BundleHash = pending.BundleHash
+            BundleHash = pending.BundleHash,
+            ProtocolVersion = pending.ProtocolVersion
         };
         if (info.Workspaces != null)
         {

@@ -58,7 +58,7 @@ You can also remove or comment out the `wsl.defaultUser` line and the `<nixos-ws
 
 ## Updating
 
-The server rejects workers whose protocol hash doesn't match its own, so the worker must be rebuilt from a ref compatible with the server's. When the server is updated, re-run `deploy.sh` from that ref:
+The server rejects workers outside the range of worker protocol versions it supports, so once the server's minimum passes this worker's version it must be rebuilt from a ref compatible with the server's (see the server's [Upgrading](../server-docker/README.md#upgrading)). When that happens, re-run `deploy.sh` from that ref:
 
 ```bash
 git pull

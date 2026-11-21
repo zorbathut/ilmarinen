@@ -72,6 +72,7 @@ public static class IlmarinenServerExtensions
     {
         endpoints.MapHub<WorkerHub>("/hub/workers");
 
+        // IWorkerHttp.UploadArtifact: part of the worker protocol, so its shape is versioned with the hub's.
         endpoints.MapPost("/hub/workers/jobs/{jobId}/artifacts", async (
             Guid jobId,
             string name,
