@@ -393,7 +393,7 @@ public class WorkerRepository
             WakeMacAddress = w.WakeMacAddress,
             IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
             WakeFailedAt = session == null ? _wakeStatus.FailedAt(w.Id) : null,
-            Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
+            Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage, session?.State?.Workspace),
             MirrorsSizeBytes = usage?.MirrorsSizeBytes,
             UsageMeasured = usage != null,
             DiskSpace = _workerDisk.GetValueOrDefault(id),
@@ -447,7 +447,7 @@ public class WorkerRepository
                 WakeMacAddress = w.WakeMacAddress,
                 IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
                 WakeFailedAt = session == null ? _wakeStatus.FailedAt(w.Id) : null,
-                Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage),
+                Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage, session?.State?.Workspace),
                 MirrorsSizeBytes = usage?.MirrorsSizeBytes,
                 UsageMeasured = usage != null,
                 DiskSpace = _workerDisk.GetValueOrDefault(w.Id),
@@ -564,7 +564,11 @@ public record WorkspaceView
     /// </summary>
     public long? SizeBytes { get; init; }
 
-    public static IReadOnlyList<WorkspaceView> Join(IReadOnlyList<WorkspaceInfo> workspaces, WorkspaceUsageReport? usage)
+    /// <summary>The running job is using it, as the worker last reported; the worker refuses to delete it meanwhile.</summary>
+    public bool InUse { get; init; }
+
+    /// <param name="inUse">The workspace the worker's running job is using, if any.</param>
+    public static IReadOnlyList<WorkspaceView> Join(IReadOnlyList<WorkspaceInfo> workspaces, WorkspaceUsageReport? usage, string? inUse)
     {
         return workspaces.Select(ws =>
         {
@@ -576,7 +580,8 @@ public record WorkspaceView
                 Path = ws.Path,
                 LastUsed = ws.LastUsed,
                 Measured = measured,
-                SizeBytes = size
+                SizeBytes = size,
+                InUse = ws.Name == inUse
             };
         }).ToList();
     }

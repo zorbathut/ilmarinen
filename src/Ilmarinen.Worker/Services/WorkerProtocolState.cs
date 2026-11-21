@@ -23,6 +23,9 @@ internal sealed class WorkerProtocolState
 
     public DiagnosticStatus? DiagnosticStatus { get; private set; }
 
+    /// <summary>The persistent workspace the running job is using, once it has named one.</summary>
+    public string? Workspace { get; private set; }
+
     /// <summary>A diagnostic was asked for while the worker was busy; it runs as soon as the worker is idle.</summary>
     public bool DiagnosticWanted { get; private set; }
 
@@ -46,7 +49,8 @@ internal sealed class WorkerProtocolState
             JobId = Job?.Id,
             AssignmentId = Job?.AssignmentId,
             DiagnosticStatus = DiagnosticStatus,
-            Hold = Hold
+            Hold = Hold,
+            Workspace = Workspace
         };
     }
 
@@ -118,8 +122,25 @@ internal sealed class WorkerProtocolState
         _outcomes.Add(outcome);
         Activity = WorkerActivity.Idle;
         Job = null;
+        Workspace = null;
         _seq++;
         return outcome;
+    }
+
+    /// <summary>Records the workspace the running job is using; returns whether that changed, and so whether there is a new state to report. <see cref="FinishJob"/> clears it.</summary>
+    public bool SetWorkspace(string name)
+    {
+        if (Activity != WorkerActivity.RunningJob)
+        {
+            throw new InvalidOperationException($"No job is running to use workspace {name} (activity: {Activity})");
+        }
+        if (Workspace == name)
+        {
+            return false;
+        }
+        Workspace = name;
+        _seq++;
+        return true;
     }
 
     public void Acknowledge(IEnumerable<JobOutcome> outcomes)

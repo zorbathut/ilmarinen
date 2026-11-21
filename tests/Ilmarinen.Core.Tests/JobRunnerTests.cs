@@ -64,7 +64,8 @@ public class JobRunnerTests
             sender,
             logger,
             new LogCollector(job.Id, sender, logger),
-            metrics: null);
+            metrics: null,
+            takeWorkspace: _ => Task.CompletedTask);
 
         await runner.ExecuteAsync();
 

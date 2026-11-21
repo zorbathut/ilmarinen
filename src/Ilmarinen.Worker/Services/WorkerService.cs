@@ -674,7 +674,7 @@ public class WorkerService : BackgroundService
                 // Only once there is room: a worker below its floor when the job arrived would otherwise stop it before making any, and what making room freed isn't the job's to have used.
                 diskWatch.Start();
 
-                runner = new JobRunner(_config, _workspaceManager, job, _sender, jobLogger, logCollector, metrics);
+                runner = new JobRunner(_config, _workspaceManager, job, _sender, jobLogger, logCollector, metrics, TakeWorkspaceAsync);
                 var ran = await runner.ExecuteAsync(jobCts.Token);
 
                 // A pipeline that ran to the end reports what it actually did, even if the worker is on its way out by now. One the disk watch stopped failed, whatever a step made of being stopped.
@@ -754,6 +754,26 @@ public class WorkerService : BackgroundService
         {
             _logger.LogWarning(ex, "Could not start resource metrics for job {JobId}; it runs unmeasured", jobId);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// The running job takes its persistent workspace: marked active, so the worker refuses to delete it, and then reported, so the server shows it in use. In that order, and released (by JobRunner) before the job's end is reported, so the server may hear a workspace is in use when the worker would already let it go, but never the reverse.
+    /// </summary>
+    private async Task TakeWorkspaceAsync(string name)
+    {
+        _workspaceManager.SetActiveWorkspace(name);
+        await _stateLock.WaitAsync();
+        try
+        {
+            if (_state.SetWorkspace(name))
+            {
+                ReportState();
+            }
+        }
+        finally
+        {
+            _stateLock.Release();
         }
     }
 

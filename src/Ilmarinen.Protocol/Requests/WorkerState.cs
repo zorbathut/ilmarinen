@@ -22,4 +22,7 @@ public record WorkerState
 
     /// <summary>Set while the worker takes no new jobs; it hands back any that cross this report on the way.</summary>
     public WorkerHold? Hold { get; init; }
+
+    /// <summary>The persistent workspace the running job is using, once its script has named one; null otherwise. The worker refuses to delete it meanwhile.</summary>
+    public string? Workspace { get; init; }
 }

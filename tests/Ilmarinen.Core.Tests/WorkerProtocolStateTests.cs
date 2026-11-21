@@ -82,6 +82,36 @@ public class WorkerProtocolStateTests
     }
 
     [Test]
+    public void SetWorkspace_IsReportedOnChange_KeptThroughHolds_AndClearedWhenTheJobEnds()
+    {
+        var state = new WorkerProtocolState();
+        state.Assign(Assignment());
+        var seq = state.Snapshot().Seq;
+
+        Assert.That(state.SetWorkspace("ws"), Is.True);
+        Assert.That(state.Snapshot().Workspace, Is.EqualTo("ws"));
+        Assert.That(state.Snapshot().Seq, Is.GreaterThan(seq), "a change is a new state to report");
+
+        seq = state.Snapshot().Seq;
+        Assert.That(state.SetWorkspace("ws"), Is.False, "nothing changed, nothing to report");
+        Assert.That(state.Snapshot().Seq, Is.EqualTo(seq));
+
+        state.SetHold(WorkerHold.InUse, true);
+        Assert.That(state.Snapshot().Workspace, Is.EqualTo("ws"), "a hold doesn't end the job's use of its workspace");
+
+        state.FinishJob(JobStatus.Success, TimeSpan.Zero, [], Unknown);
+        Assert.That(state.Snapshot().Workspace, Is.Null);
+    }
+
+    [Test]
+    public void SetWorkspace_WhenNoJobIsRunning_Throws()
+    {
+        var state = new WorkerProtocolState();
+
+        Assert.Throws<InvalidOperationException>(() => state.SetWorkspace("ws"), "an idle worker reporting a workspace in use would show it so until some later job ended");
+    }
+
+    [Test]
     public void FinishJob_WhenNoJobIsRunning_Throws()
     {
         var state = new WorkerProtocolState();

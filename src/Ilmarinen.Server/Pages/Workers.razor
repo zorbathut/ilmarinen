@@ -145,14 +145,18 @@
                         {
                             <tr @key="(worker.Id, ws.Name)">
                                 <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
-                                <td>@ws.Name</td>
+                                <td>
+                                    @ws.Name
+                                    <WorkspaceInUse Workspace="ws" />
+                                </td>
                                 <td>@DisplayFormat.MeasuredSize(ws.Measured, ws.SizeBytes)</td>
                                 <td><TimeAgo When="ws.LastUsed" /></td>
                                 <td>
                                     @if (worker.IsConnected)
                                     {
                                         <button class="btn btn-danger"
-                                                disabled="@IsDeleting(worker.Id, ws.Name)"
+                                                disabled="@(ws.InUse || IsDeleting(worker.Id, ws.Name))"
+                                                title="@(ws.InUse ? WorkspaceInUse.Reason : null)"
                                                 @onclick="() => DeleteWorkspace(worker.Id, ws.Name)">Delete</button>
                                     }
                                 </td>

@@ -120,7 +120,10 @@
                         @foreach (var ws in worker.Workspaces)
                         {
                             <tr>
-                                <td>@ws.Name</td>
+                                <td>
+                                    @ws.Name
+                                    <WorkspaceInUse Workspace="ws" />
+                                </td>
                                 <td><code>@ws.Path</code></td>
                                 <td>@DisplayFormat.MeasuredSize(ws.Measured, ws.SizeBytes)</td>
                                 <td>
@@ -130,7 +133,8 @@
                                     @if (worker.IsConnected)
                                     {
                                         <button class="btn btn-danger"
-                                                disabled="@IsDeleting(ws.Name)"
+                                                disabled="@(ws.InUse || IsDeleting(ws.Name))"
+                                                title="@(ws.InUse ? WorkspaceInUse.Reason : null)"
                                                 @onclick="() => DeleteWorkspace(ws.Name)">Delete</button>
                                     }
                                 </td>

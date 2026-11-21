@@ -28,6 +28,7 @@ public class JobRunner
     private readonly ILogger _logger;
     private readonly LogCollector _logCollector;
     private readonly JobMetricsSampler? _metrics;
+    private readonly Func<string, Task> _takeWorkspace;
     private bool _mirrorRebuilt;
 
     /// <summary>What the run works in, once its script has said; Unknown until then, and for good if it never gets that far.</summary>
@@ -38,6 +39,7 @@ public class JobRunner
     /// <summary>The named workspace didn't exist before this run.</summary>
     public bool WorkspaceFresh { get; private set; }
 
+    /// <param name="takeWorkspace">Takes the persistent workspace the job is about to use: marks it active, so deletes refuse it, and reports it. Called before the job touches it; <see cref="WorkspaceManager.ReleaseActiveWorkspace"/> lets it go when the job ends.</param>
     public JobRunner(
         WorkerConfig config,
         WorkspaceManager workspaceManager,
@@ -45,7 +47,8 @@ public class JobRunner
         BufferedHubSender sender,
         ILogger logger,
         LogCollector logCollector,
-        JobMetricsSampler? metrics)
+        JobMetricsSampler? metrics,
+        Func<string, Task> takeWorkspace)
     {
         _config = config;
         _workspaceManager = workspaceManager;
@@ -54,6 +57,7 @@ public class JobRunner
         _logger = logger;
         _logCollector = logCollector;
         _metrics = metrics;
+        _takeWorkspace = takeWorkspace;
     }
 
     public async Task<JobStatus> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -198,7 +202,7 @@ public class JobRunner
         }
 
         _logger.LogInformation("Using persistent workspace: {WorkspaceName}", wsName);
-        _workspaceManager.SetActiveWorkspace(wsName);
+        await _takeWorkspace(wsName);
         WorkspaceKind = WorkspaceKind.Named;
         WorkspaceName = wsName;
         WorkspaceFresh = !Directory.Exists(workDir);

@@ -1,9 +1,15 @@
 using Ilmarinen.IntegrationTests.Fixtures;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
+using Ilmarinen.Server.Services;
+using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
+using System;
 
 namespace Ilmarinen.IntegrationTests.Tests;
 
@@ -98,6 +104,66 @@ public class PersistentWorkspaceTests
         var gitDir = Path.Combine(workspacePath, ".git");
         Assert.That(Directory.Exists(gitDir), Is.True,
             "Workspace should contain .git directory");
+    }
+
+    // The step waits, in its container, for a file the test creates in the workspace: the job holds its workspace until the test lets it go, and cancelling the job ends the wait with the container.
+    [Test]
+    public async Task AWorkspaceInUse_IsShownSo_AndTheWorkerRefusesToDeleteIt()
+    {
+        _repo.AddFile("pipeline.csx", """
+            Workspace("gated-ws");
+            Step("wait")
+                .Image("alpine:latest")
+                .Run(async ctx => await ctx.Shell("while [ ! -f /workspace/.gate ]; do sleep 0.1; done"));
+            """);
+        _repo.Commit("Add gated pipeline");
+        var submission = new JobSubmission { RepoUrl = _repo.Url, Ref = "master", ScriptPath = "pipeline.csx" };
+
+        // The first run makes the workspace, which the worker lists only once that job is done; the gate is already open for it.
+        var first = await _fixture.SubmitJobAsync(submission);
+        var gate = Path.Combine(_fixture.WorkerWorkspacePath!, "gated-ws", ".gate");
+        await WaitUntilAsync(() => Task.FromResult(Directory.Exists(Path.GetDirectoryName(gate))), "the first job to make its workspace");
+        File.WriteAllText(gate, "");
+        Assert.That((await _fixture.WaitForJobCompletionAsync(first)).Status, Is.EqualTo(JobStatus.Success));
+        File.Delete(gate);
+
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        var workerId = (await workers.GetAllAsync()).Single().Id;
+        async Task<bool> InUseAsync()
+        {
+            return (await workers.GetByIdAsync(workerId))!.Workspaces.Single(w => w.Name == "gated-ws").InUse;
+        }
+
+        var jobId = await _fixture.SubmitJobAsync(submission);
+        try
+        {
+            await WaitUntilAsync(InUseAsync, "the running job's workspace to be shown in use");
+
+            var refused = await _fixture.HttpClient.DeleteAsync($"/api/workers/{workerId}/workspaces/gated-ws");
+            Assert.That(refused.StatusCode, Is.EqualTo(HttpStatusCode.Conflict), "the worker itself refuses to delete it");
+        }
+        finally
+        {
+            // Released whatever happened above, so a failure can't leave the job, and the fixture's teardown, waiting forever.
+            File.WriteAllText(gate, "");
+        }
+
+        Assert.That((await _fixture.WaitForJobCompletionAsync(jobId)).Status, Is.EqualTo(JobStatus.Success));
+        // The outcome is reported ahead of the idle state that lets the workspace go, so give that a moment to follow.
+        await WaitUntilAsync(async () => !await InUseAsync(), "the finished job to let its workspace go");
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition, string what)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (!await condition())
+        {
+            if (deadline.Elapsed > TimeSpan.FromSeconds(60))
+            {
+                Assert.Fail($"Timed out waiting for {what}");
+            }
+            await Task.Delay(50);
+        }
     }
 
     [Test]

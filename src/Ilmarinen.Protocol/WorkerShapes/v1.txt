@@ -115,6 +115,7 @@ property Ilmarinen.Protocol.Requests.WorkerState.DiagnosticStatus Ilmarinen.Prot
 property Ilmarinen.Protocol.Requests.WorkerState.Hold Ilmarinen.Protocol.WorkerHold?
 property Ilmarinen.Protocol.Requests.WorkerState.JobId System.Guid?
 property Ilmarinen.Protocol.Requests.WorkerState.Seq System.Int64 required
+property Ilmarinen.Protocol.Requests.WorkerState.Workspace System.String?
 property Ilmarinen.Protocol.Requests.WorkspaceUsageReport.MirrorsSizeBytes System.Int64?
 property Ilmarinen.Protocol.Requests.WorkspaceUsageReport.WorkspaceSizes System.Collections.Generic.IReadOnlyDictionary<System.String, System.Int64?> required
 property Ilmarinen.Protocol.Responses.ArtifactInfo.CreatedAt System.DateTime

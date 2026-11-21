@@ -21,7 +21,7 @@ public class WorkspaceViewTests
     [Test]
     public void Join_NoReport_NothingIsMeasured()
     {
-        var views = WorkspaceView.Join(Listing, null);
+        var views = WorkspaceView.Join(Listing, null, inUse: null);
 
         Assert.That(views.Select(v => v.Name), Is.EqualTo(Listing.Select(w => w.Name)));
         Assert.That(views, Has.All.Matches<WorkspaceView>(v => !v.Measured && v.SizeBytes == null));
@@ -35,7 +35,7 @@ public class WorkspaceViewTests
             WorkspaceSizes = new Dictionary<string, long?> { ["measured"] = 4096, ["failed"] = null, ["deleted"] = 8192 }
         };
 
-        var views = WorkspaceView.Join(Listing, report).ToDictionary(v => v.Name);
+        var views = WorkspaceView.Join(Listing, report, inUse: null).ToDictionary(v => v.Name);
 
         Assert.That(views["measured"].Measured, Is.True);
         Assert.That(views["measured"].SizeBytes, Is.EqualTo(4096));
@@ -43,5 +43,26 @@ public class WorkspaceViewTests
         Assert.That(views["failed"].SizeBytes, Is.Null);
         Assert.That(views["new"].Measured, Is.False);
         Assert.That(views.Keys, Is.EquivalentTo(Listing.Select(w => w.Name)), "a workspace only the report still mentions is gone");
+    }
+
+    [Test]
+    public void Join_MarksOnlyTheWorkspaceTheRunningJobUses()
+    {
+        var views = WorkspaceView.Join(Listing, null, inUse: "failed").ToDictionary(v => v.Name);
+
+        Assert.That(views["failed"].InUse, Is.True);
+        Assert.That(views["measured"].InUse, Is.False);
+        Assert.That(views["new"].InUse, Is.False);
+        Assert.That(WorkspaceView.Join(Listing, null, inUse: null), Has.None.Matches<WorkspaceView>(v => v.InUse));
+    }
+
+    [Test]
+    public void Join_IgnoresAnInUseWorkspaceNotYetListed()
+    {
+        // A job making its workspace for the first time names it before the worker lists it; there is no row to mark yet, and nothing to delete.
+        var views = WorkspaceView.Join(Listing, null, inUse: "brand-new");
+
+        Assert.That(views, Has.None.Matches<WorkspaceView>(v => v.InUse));
+        Assert.That(views.Select(v => v.Name), Is.EqualTo(Listing.Select(w => w.Name)));
     }
 }
