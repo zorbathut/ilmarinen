@@ -62,9 +62,9 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Hands queued jobs to ready workers, highest-priority worker first, each taking the highest-priority job it qualifies for, oldest first among equals. Nothing running is ever displaced for a higher-priority job. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
+    /// Hands queued jobs to ready workers: each queued job in dispatch order (highest job priority, then oldest) goes to the highest-priority ready worker that qualifies for it (<see cref="DispatchPlan"/>). Nothing running is ever displaced for a higher-priority job. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
     ///
-    /// The matching is greedy: a worker visited first takes its best job even when a later worker could have run that one and only the first can run another, which then waits.
+    /// The matching is greedy: a job offered first takes its best worker even when a later job could only have run there, and then waits.
     /// </summary>
     public async Task DispatchAsync()
     {
@@ -75,22 +75,37 @@ public class JobScheduler
             var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-            // One pass is enough: each candidate takes at most one job, and after that it is busy. A worker that frees up meanwhile raises its own DispatchAsync, which is waiting on this lock.
-            foreach (var (workerId, rank) in await workers.GetReadyWorkersByPriorityAsync())
+            // One pass is enough: each worker takes at most one job, and after that it is busy. A worker that frees up meanwhile, or a job submitted meanwhile, raises its own DispatchAsync, which is waiting on this lock.
+            var free = (await workers.GetReadyWorkersByPriorityAsync()).Select(w => new DispatchWorker(w.WorkerId, w.Rank)).ToList();
+            if (free.Count == 0)
             {
-                // The list was a snapshot; under the worker's lock nothing about it can change while it is checked and handed a job.
-                using (await _sessions.LockAsync(workerId))
-                {
-                    var session = _sessions.ByWorker(workerId);
-                    if (session == null || !await workers.IsReadyAsync(session))
-                    {
-                        continue;
-                    }
+                return;
+            }
 
-                    // Candidates come highest priority first, and a worker qualifies for everything a lower-priority one does, so once nothing queued fits this worker nothing fits the rest.
-                    if (!await AssignNextJobAsync(jobs, session, rank))
+            foreach (var job in await jobs.GetQueuedJobsAsync())
+            {
+                if (free.Count == 0)
+                {
+                    return;
+                }
+
+                while (DispatchPlan.Pick(job.MinWorkerRank, free) is { } worker)
+                {
+                    // The list was a snapshot; under the worker's lock nothing about it can change while it is checked and handed a job. One no longer ready is out of this pass, and the job goes to the next best.
+                    using (await _sessions.LockAsync(worker.WorkerId))
                     {
-                        return;
+                        var session = _sessions.ByWorker(worker.WorkerId);
+                        if (session == null || !await workers.IsReadyAsync(session))
+                        {
+                            free.Remove(worker);
+                            continue;
+                        }
+
+                        if (await TryAssignAsync(jobs, session, job.Id))
+                        {
+                            free.Remove(worker);
+                        }
+                        break;
                     }
                 }
             }
@@ -102,42 +117,36 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Takes queued jobs this worker's priority qualifies it for, in dispatch order (highest job priority, then oldest), until one is handed to it. Returns false if none fit. Caller holds _assignLock and the worker's session lock, and has confirmed it is ready.
+    /// Hands this queued job to the worker. Returns false, leaving the worker free, when the job can't be handed out after all: it was cancelled meanwhile, or its git token can no longer be decrypted (and it has been failed). Caller holds _assignLock and the worker's session lock, and has confirmed it is ready.
     /// </summary>
-    private async Task<bool> AssignNextJobAsync(JobRepository jobs, WorkerSession session, int workerRank)
+    private async Task<bool> TryAssignAsync(JobRepository jobs, WorkerSession session, Guid jobId)
     {
-        while (await jobs.GetNextQueuedJobIdAsync(workerRank) is { } jobId)
+        var assignmentId = Guid.NewGuid();
+        JobAssignment assignment;
+        try
         {
-            var assignmentId = Guid.NewGuid();
-            JobAssignment assignment;
-            try
-            {
-                assignment = await jobs.GetAssignmentAsync(jobId, assignmentId);
-            }
-            catch (CryptographicException ex)
-            {
-                // The stored git token can't be decrypted, typically because the server key changed while the job was queued. No worker can ever run this job, and it is no fault of this one.
-                _logger.LogError(ex, "Job {JobId} has a git token that can no longer be decrypted; failing it", jobId);
-                await CompleteJobAsync(jobId, JobStatus.Failed);
-                continue;
-            }
-
-            // Gate the assignment on the status write: a refused write means the job went terminal (cancelled) while queued, so skip it. A cancel that lands after this write sends its CancelJob under this worker's lock too, so it reaches the worker after the assignment, never before.
-            if (!await jobs.AssignAsync(jobId, session.WorkerId, assignmentId, session.InstanceId))
-            {
-                _logger.LogInformation("Skipping queued job {JobId}: cancelled before it could be assigned", jobId);
-                continue;
-            }
-
-            _uiEvents.NotifyJobsChanged();
-
-            // Queued, not awaited: one unreachable worker must not hold up the jobs the rest of the fleet could take. If the send fails, the job is already marked Running against the worker, and its next Resume requeues it as never delivered.
-            _messenger.Send(session.ConnectionId, $"job {jobId}", client => client.AssignJob(assignment));
-
-            return true;
+            assignment = await jobs.GetAssignmentAsync(jobId, assignmentId);
+        }
+        catch (CryptographicException ex)
+        {
+            // The stored git token can't be decrypted, typically because the server key changed while the job was queued. No worker can ever run this job, and it is no fault of this one.
+            _logger.LogError(ex, "Job {JobId} has a git token that can no longer be decrypted; failing it", jobId);
+            await CompleteJobAsync(jobId, JobStatus.Failed);
+            return false;
         }
 
-        return false;
+        // Gate the assignment on the status write: a refused write means the job went terminal (cancelled) while queued, so skip it. A cancel that lands after this write sends its CancelJob under this worker's lock too, so it reaches the worker after the assignment, never before.
+        if (!await jobs.AssignAsync(jobId, session.WorkerId, assignmentId, session.InstanceId))
+        {
+            _logger.LogInformation("Skipping queued job {JobId}: cancelled before it could be assigned", jobId);
+            return false;
+        }
+
+        _uiEvents.NotifyJobsChanged();
+
+        // Queued, not awaited: one unreachable worker must not hold up the jobs the rest of the fleet could take. If the send fails, the job is already marked Running against the worker, and its next Resume requeues it as never delivered.
+        _messenger.Send(session.ConnectionId, $"job {jobId}", client => client.AssignJob(assignment));
+        return true;
     }
 
     /// <summary>

@@ -30,7 +30,7 @@ public record QueueEstimate
 }
 
 /// <summary>
-/// Simulates the server's dispatch over what is running and queued now: whenever a worker frees up, the highest-priority free worker takes the first queued job in dispatch order (highest job priority, then oldest) that it qualifies for, as JobScheduler.DispatchAsync does, and holds it for that job's estimated duration.
+/// Simulates the server's dispatch over what is running and queued now: whenever workers free up, the queue is matched to them as JobScheduler.DispatchAsync matches it (<see cref="DispatchPlan"/>), and each holds its job for that job's estimated duration.
 /// </summary>
 public static class QueueForecast
 {
@@ -39,11 +39,6 @@ public static class QueueForecast
 
     /// <summary>A Queued job, listed in dispatch order (JobRepository.GetUnfinishedJobsAsync), with the rank of its minimum worker priority; null for no minimum.</summary>
     public sealed record QueuedJob(int? MinWorkerRank, string RepoUrl, string ScriptPath);
-
-    private static bool Qualifies(int workerRank, QueuedJob job)
-    {
-        return job.MinWorkerRank == null || job.MinWorkerRank <= workerRank;
-    }
 
     /// <param name="estimates">A job's duration is its worker's own estimate for the script, else the estimate across all workers, else unknown (JobRepository.GetScriptEstimatesAsync).</param>
     public static QueueEstimate Estimate(
@@ -85,27 +80,26 @@ public static class QueueForecast
 
         // The same rule as JobRepository.GetUnsatisfiableJobsAsync, over the same workers, so the two agree.
         var highest = available.Count > 0 ? available.Max(w => w.Rank) : (int?)null;
-        var queue = queued.Where(j => highest is { } rank && Qualifies(rank, j)).ToList();
+        var queue = queued.Where(j => highest is { } rank && DispatchPlan.Qualifies(rank, j.MinWorkerRank)).ToList();
         var unsatisfiable = queued.Count - queue.Count;
 
-        // Each round either hands a worker a job or drops a worker that qualifies for nothing left, so it ends; a job some worker qualifies for always has that worker still in the running.
-        var active = available.OrderByDescending(w => w.Rank).ThenBy(w => w.WorkerId).ToList();
+        // Each round hands every worker free at that moment a job, or drops one that qualifies for nothing left (the queue only shrinks, so it never will), so it ends; a job some worker qualifies for always has that worker still in the running.
+        var active = available.Select(w => new DispatchWorker(w.WorkerId, w.Rank)).ToList();
         while (queue.Count > 0 && active.Count > 0)
         {
             var now = active.Min(w => freeAt[w.WorkerId]);
-            foreach (var worker in active.Where(w => freeAt[w.WorkerId] == now).ToList())
+            var freeNow = active.Where(w => freeAt[w.WorkerId] == now).ToList();
+            var matched = DispatchPlan.Match(queue, j => j.MinWorkerRank, freeNow);
+            foreach (var (job, worker) in matched)
             {
-                var job = queue.FirstOrDefault(j => Qualifies(worker.Rank, j));
-                if (job == null)
-                {
-                    active.Remove(worker);
-                    continue;
-                }
-
                 queue.Remove(job);
                 var duration = DurationOf(worker.WorkerId, job.RepoUrl, job.ScriptPath);
                 freeAt[worker.WorkerId] = now + duration;
                 drain = Max(drain, now + duration);
+            }
+            foreach (var idle in freeNow.Where(w => !matched.Any(m => m.Worker == w)))
+            {
+                active.Remove(idle);
             }
         }
 

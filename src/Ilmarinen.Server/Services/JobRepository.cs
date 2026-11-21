@@ -320,7 +320,7 @@ public class JobRepository
             .ToListAsync();
     }
 
-    /// <summary>The queued jobs, in dispatch order, with the rank of each one's minimum worker priority (null for none) and when it was submitted.</summary>
+    /// <summary>The queued jobs, in dispatch order, with the rank of each one's minimum worker priority (null for none) and when it was submitted. Ranks are read here, so a reorder of the priorities counts from the next dispatch on.</summary>
     public async Task<IReadOnlyList<(Guid Id, int? MinWorkerRank, DateTime CreatedAt)>> GetQueuedJobsAsync()
     {
         var queued = await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued))
@@ -520,16 +520,6 @@ public class JobRepository
             workerName: workerName,
             pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null,
             retryablePipelines: retryablePipelines)).ToList();
-    }
-
-    /// <summary>
-    /// The queued job dispatch should hand a worker of this priority next: the first, in dispatch order (<see cref="InDispatchOrder"/>), whose minimum it meets. Null when nothing queued fits. Ranks are read here, so a reorder of the priorities counts from the next dispatch on.
-    /// </summary>
-    public async Task<Guid?> GetNextQueuedJobIdAsync(int workerRank)
-    {
-        return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued && (j.MinWorkerPriority == null || j.MinWorkerPriority.Rank <= workerRank)))
-            .Select(j => (Guid?)j.Id)
-            .FirstOrDefaultAsync();
     }
 
     /// <summary>The order dispatch takes queued jobs in: highest priority first, oldest first among equals. The queue forecast reads the queue in this same order, so it simulates the dispatch that really happens.</summary>
