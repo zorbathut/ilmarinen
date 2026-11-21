@@ -20,6 +20,12 @@ public class WorkerNetworkTests
     public async Task AttachAsync_JobNetworkSortsFirst_DefaultRouteStaysOnWorkersNetwork()
     {
         using var client = DockerClientFactory.Create();
+        var version = await client.System.GetVersionAsync();
+        if (!WorkerNetwork.HonoursGatewayPriority(version.APIVersion))
+        {
+            // A worker on such a daemon has to run on the host, where job networks don't touch its routes; the diagnostic says which it is.
+            Assert.Ignore($"Docker {version.Version} (API {version.APIVersion}) ignores gateway priority, so the job network takes the default route here whatever the worker asks");
+        }
         var baseNetwork = $"zz-ilmarinen-test-{Guid.NewGuid():N}";
         var jobNetwork = $"ilmarinen-{Guid.NewGuid():N}";
         var createdNetworks = new List<string>();
