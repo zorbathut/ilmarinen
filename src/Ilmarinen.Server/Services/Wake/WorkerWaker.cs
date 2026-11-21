@@ -159,8 +159,8 @@ public sealed class WorkerWaker
         return WakeRequestResult.Sent;
     }
 
-    /// <summary>For the stuck report: the ranks of the priorities of the sleepers that can still be counted on to wake, and the names of those whose last wake failed and that could take a job of one of the priorities given. Empty while waking is off.</summary>
-    public async Task<(IReadOnlyList<int> Wakeable, IReadOnlyList<WakeWorker> Failed)> GetSleepersAsync()
+    /// <summary>For the stuck report: the sleepers that can still be counted on to wake, and those whose last wake failed. Empty while waking is off.</summary>
+    public async Task<(IReadOnlyList<WakeWorker> Wakeable, IReadOnlyList<WakeWorker> Failed)> GetSleepersAsync()
     {
         if (!_sender.Enabled)
         {
@@ -170,7 +170,7 @@ public sealed class WorkerWaker
         var state = _status.State;
         var sleepers = (await _workers.GetWakeWorkersAsync()).Where(w => !w.Connected).ToList();
         return (
-            sleepers.Where(w => WakePlan.IsWakeable(w, state)).Select(w => w.Rank).ToList(),
+            sleepers.Where(w => WakePlan.IsWakeable(w, state)).ToList(),
             sleepers.Where(w => state.FailedAt.ContainsKey(w.Id) && !w.Paused && w.Mac != null).OrderBy(w => w.Name).ToList());
     }
 

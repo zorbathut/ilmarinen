@@ -84,6 +84,7 @@ public class JobScheduler
 
             var queued = await jobs.GetQueuedJobsAsync();
             var history = await jobs.GetDiskHistoryAsync(queued.Select(j => (j.RepoUrl, j.ScriptPath)));
+            var fleet = workers.GetFleetDisks();
             foreach (var job in queued)
             {
                 if (free.Count == 0)
@@ -92,8 +93,8 @@ public class JobScheduler
                 }
 
                 var runs = history.GetValueOrDefault((job.RepoUrl, job.ScriptPath)) ?? [];
-                var wanted = new DispatchJob(job.MinWorkerRank, DiskEstimate.PredictedWorkspace(runs));
-                while (DispatchPlan.Pick(wanted, free) is { } worker)
+                var wanted = new DispatchJob(job.MinWorkerRank, DiskEstimate.PredictedWorkspace(runs), DiskEstimate.NeedOnFleet(runs, fleet));
+                while (DispatchPlan.Pick(wanted, free) is { Worker: var worker, Fit: var fit })
                 {
                     // The list was a snapshot; under the worker's lock nothing about it can change while it is checked and handed a job. One no longer ready is out of this pass, and the job goes to the next best.
                     using (await _sessions.LockAsync(worker.WorkerId))
@@ -105,7 +106,7 @@ public class JobScheduler
                             continue;
                         }
 
-                        if (await TryAssignAsync(jobs, session, job.Id))
+                        if (await TryAssignAsync(jobs, session, job.Id, wanted, fit))
                         {
                             free.Remove(worker);
                         }
@@ -123,13 +124,13 @@ public class JobScheduler
     /// <summary>
     /// Hands this queued job to the worker. Returns false, leaving the worker free, when the job can't be handed out after all: it was cancelled meanwhile, or its git token can no longer be decrypted (and it has been failed). Caller holds _assignLock and the worker's session lock, and has confirmed it is ready.
     /// </summary>
-    private async Task<bool> TryAssignAsync(JobRepository jobs, WorkerSession session, Guid jobId)
+    private async Task<bool> TryAssignAsync(JobRepository jobs, WorkerSession session, Guid jobId, DispatchJob wanted, DiskFit fit)
     {
         var assignmentId = Guid.NewGuid();
         JobAssignment assignment;
         try
         {
-            assignment = await jobs.GetAssignmentAsync(jobId, assignmentId);
+            assignment = await jobs.GetAssignmentAsync(jobId, assignmentId) with { PredictedWorkspace = wanted.Workspace, DiskNeededBytes = fit.NeededBytes, StartFresh = fit.StartFresh, DiskNeededToReuseBytes = wanted.Need.ReuseBytes };
         }
         catch (CryptographicException ex)
         {
@@ -242,9 +243,10 @@ public class JobScheduler
 
         var availability = await workers.GetAvailabilityAsync();
         var (wakeable, failedToWake) = await _waker.GetSleepersAsync();
-        var onOffer = availability.Available.Select(w => w.Rank).Concat(wakeable).ToList();
-        int? highestAvailableRank = onOffer.Count == 0 ? null : onOffer.Max();
+        var onOffer = availability.Available.Select(w => (Id: w.WorkerId, w.Rank)).Concat(wakeable.Select(w => (w.Id, w.Rank))).ToList();
+        int? highestAvailableRank = onOffer.Count == 0 ? null : onOffer.Max(w => w.Rank);
         var stuck = await jobs.GetUnsatisfiableJobsAsync(highestAvailableRank);
+        var noRoom = await GetNoRoomJobsAsync(jobs, workers, onOffer, stuck.Select(j => j.Id).ToHashSet());
         var workerPriorities = await priorities.GetAllAsync(PriorityKind.Worker);
         var rankById = workerPriorities.ToDictionary(p => p.Id, p => p.Rank);
 
@@ -258,10 +260,48 @@ public class JobScheduler
         {
             HighestAvailableWorkerPriority = highest != null ? PriorityRepository.ToRef(highest) : null,
             Jobs = stuck,
+            NoRoomJobs = noRoom,
             PausedWorkers = availability.PausedButOtherwiseAvailable.Where(w => CouldTakeOne(w.Rank)).Select(w => w.Name).ToList(),
             InUseWorkers = availability.InUseButOtherwiseAvailable.Where(w => CouldTakeOne(w.Rank)).Select(w => w.Name).ToList(),
             UnreachableWorkers = failedToWake.Where(w => CouldTakeOne(w.Rank)).Select(w => w.Name).ToList()
         };
+    }
+
+    /// <summary>
+    /// Queued jobs, other than those no worker on offer qualifies for (<paramref name="priorityStuck"/>), that no worker on offer they qualify for has room for, by the same rule dispatch goes by (<see cref="DiskEstimate.Fit"/>). A busy worker is judged by its latest reading, taken while its job runs, so a job waiting only for it to finish may be listed for a while; a worker that hasn't reported its disk has room for anything.
+    /// </summary>
+    private static async Task<IReadOnlyList<NoRoomJob>> GetNoRoomJobsAsync(JobRepository jobs, WorkerRepository workers, IReadOnlyList<(Guid Id, int Rank)> onOffer, IReadOnlySet<Guid> priorityStuck)
+    {
+        var queued = (await jobs.GetQueuedJobsAsync()).Where(j => !priorityStuck.Contains(j.Id)).OrderBy(j => j.CreatedAt).ToList();
+        if (queued.Count == 0 || onOffer.Count == 0)
+        {
+            return [];
+        }
+
+        var history = await jobs.GetDiskHistoryAsync(queued.Select(j => (j.RepoUrl, j.ScriptPath)));
+        var fleet = workers.GetFleetDisks();
+        var disks = onOffer.Select(w => (w.Rank, Disk: workers.DiskOf(w.Id))).ToList();
+
+        var noRoom = new List<NoRoomJob>();
+        foreach (var job in queued)
+        {
+            var runs = history.GetValueOrDefault((job.RepoUrl, job.ScriptPath)) ?? [];
+            var workspace = DiskEstimate.PredictedWorkspace(runs);
+            var need = DiskEstimate.NeedOnFleet(runs, fleet);
+            var qualified = disks.Where(w => DispatchPlan.Qualifies(w.Rank, job.MinWorkerRank)).Select(w => w.Disk).ToList();
+            if (qualified.Count == 0 || qualified.Any(d => DiskEstimate.Fit(workspace, need, d) != null))
+            {
+                continue;
+            }
+
+            // What the cheapest way in would take: reusing the workspace where a worker holds it.
+            var needed = workspace != null && qualified.Any(d => d.Workspaces.ContainsKey(workspace)) ? need.ReuseBytes : need.FreshBytes;
+            if (await jobs.GetAsync(job.Id) is { } info)
+            {
+                noRoom.Add(new NoRoomJob { Job = info, NeededBytes = needed, MostRoomBytes = qualified.Max(d => d.BestRoomBytes) });
+            }
+        }
+        return noRoom;
     }
 
     /// <summary>

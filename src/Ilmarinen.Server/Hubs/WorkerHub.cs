@@ -405,7 +405,8 @@ public class WorkerHub : Hub<IWorkerClient>
         return SessionAnswer.Ok;
     }
 
-    public SessionAnswer WorkspaceDeleted(string name, DeleteWorkspaceResult result)
+    /// <summary>The answer to an operator's delete request, or a worker's own deletion to make room for a job (which no request waits on).</summary>
+    public async Task<SessionAnswer> WorkspaceDeleted(string name, DeleteWorkspaceResult result)
     {
         if (_sessions.ByConnection(Context.ConnectionId) == null)
         {
@@ -420,6 +421,8 @@ public class WorkerHub : Hub<IWorkerClient>
         if (result.Status == DeleteWorkspaceStatus.Success)
         {
             workers.RemoveWorkspace(Context.ConnectionId, name);
+            _uiEvents.NotifyWorkersChanged();
+            await scope.ServiceProvider.GetRequiredService<JobScheduler>().DispatchAsync();
         }
 
         return SessionAnswer.Ok;
@@ -440,7 +443,8 @@ public class WorkerHub : Hub<IWorkerClient>
         return SessionAnswer.Ok;
     }
 
-    public SessionAnswer ReportDiskSpace(DiskSpaceReport report)
+    // Free space and workspace sizes decide which queued jobs a worker has room for, so a report of either dispatches: a job waiting for room must not wait on some unrelated event once the room is there.
+    public async Task<SessionAnswer> ReportDiskSpace(DiskSpaceReport report)
     {
         if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
         {
@@ -448,12 +452,16 @@ public class WorkerHub : Hub<IWorkerClient>
         }
 
         using var scope = _scopeFactory.CreateScope();
-        scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetDiskSpace(session.WorkerId, report);
-        _uiEvents.NotifyWorkersChanged();
+        // Free space drifts constantly by a little (logs, caches); sent every half minute, most reports change nothing that matters.
+        if (scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetDiskSpace(session.WorkerId, report))
+        {
+            _uiEvents.NotifyWorkersChanged();
+            await scope.ServiceProvider.GetRequiredService<JobScheduler>().DispatchAsync();
+        }
         return SessionAnswer.Ok;
     }
 
-    public SessionAnswer ReportWorkspaceUsage(WorkspaceUsageReport report)
+    public async Task<SessionAnswer> ReportWorkspaceUsage(WorkspaceUsageReport report)
     {
         if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
         {
@@ -463,6 +471,7 @@ public class WorkerHub : Hub<IWorkerClient>
         using var scope = _scopeFactory.CreateScope();
         scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetWorkspaceUsage(session.WorkerId, report);
         _uiEvents.NotifyWorkersChanged();
+        await scope.ServiceProvider.GetRequiredService<JobScheduler>().DispatchAsync();
         return SessionAnswer.Ok;
     }
 

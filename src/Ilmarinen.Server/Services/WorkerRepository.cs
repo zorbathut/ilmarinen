@@ -154,8 +154,25 @@ public class WorkerRepository
         return (await GetConnectedWorkersAsync())
             .Where(IsReady)
             .OrderByDescending(w => w.Rank)
-            .Select(w => new DispatchWorker(w.Session.WorkerId, w.Rank, w.Session.Workspaces.Select(ws => ws.Name).ToHashSet()))
+            .Select(w => new DispatchWorker(w.Rank, DiskOf(w.Session.WorkerId)))
             .ToList();
+    }
+
+    /// <summary>What the server last heard of a worker's disk: its free space, and the workspaces it holds — as listed on its session if it is connected, else as last measured — each with the space deleting it would free.</summary>
+    public WorkerDisk DiskOf(Guid workerId)
+    {
+        _workerUsage.TryGetValue(workerId, out var usage);
+        var names = _sessions.ByWorker(workerId) is { } session
+            ? session.Workspaces.Select(w => w.Name)
+            : usage?.WorkspaceSizes.Keys ?? [];
+        var held = names.Distinct().ToDictionary(n => n, n => usage?.WorkspaceSizes.GetValueOrDefault(n));
+        return new WorkerDisk(workerId, _workerDisk.GetValueOrDefault(workerId), held);
+    }
+
+    /// <summary>The disks of every worker the server has heard about since it started (<see cref="DiskOf"/>), connected or not: what a need is capped by, and what waking a sleeper is judged by.</summary>
+    public IReadOnlyList<WorkerDisk> GetFleetDisks()
+    {
+        return _workerDisk.Keys.Concat(_workerUsage.Keys).Concat(_sessions.All().Select(s => s.WorkerId)).Distinct().Select(DiskOf).ToList();
     }
 
     /// <summary>
@@ -301,9 +318,23 @@ public class WorkerRepository
         _workerDisk.TryRemove(workerId, out _);
     }
 
-    public void SetDiskSpace(Guid workerId, DiskSpaceReport report)
+    /// <summary>Less than this either way is drift, not a change worth dispatching or redrawing for.</summary>
+    private const long DiskSpaceChangeBytes = 256L * 1024 * 1024;
+
+    /// <summary>Records the worker's latest free space; returns whether it changed by more than drift (<see cref="DiskSpaceChangeBytes"/>) since the last one that did.</summary>
+    public bool SetDiskSpace(Guid workerId, DiskSpaceReport report)
     {
-        _workerDisk[workerId] = report;
+        var changed = false;
+        _workerDisk.AddOrUpdate(workerId, _ =>
+        {
+            changed = true;
+            return report;
+        }, (_, previous) =>
+        {
+            changed = Math.Abs(report.FreeBytes - previous.FreeBytes) >= DiskSpaceChangeBytes || report.TotalBytes != previous.TotalBytes || report.MinFreeBytes != previous.MinFreeBytes;
+            return changed ? report : previous;
+        });
+        return changed;
     }
 
     public void SetWorkspaceUsage(Guid workerId, WorkspaceUsageReport report)

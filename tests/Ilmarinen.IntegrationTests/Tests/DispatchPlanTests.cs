@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Server.Services;
 using NUnit.Framework;
 using System.Collections.Generic;
@@ -10,14 +11,24 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [TestFixture]
 public class DispatchPlanTests
 {
+    private const long Gb = 1024L * 1024 * 1024;
+
+    /// <summary>A worker whose disk isn't known yet, so it has room for anything.</summary>
     private static DispatchWorker Worker(int rank, params string[] workspaces)
     {
-        return new DispatchWorker(Guid.NewGuid(), rank, workspaces.ToHashSet());
+        return new DispatchWorker(rank, new WorkerDisk(Guid.NewGuid(), null, workspaces.ToDictionary(n => n, _ => (long?)null)));
     }
 
-    private static DispatchJob Job(int? minimum, string? workspace = null)
+    /// <summary>A worker with this much free, keeping 1 GB free, holding these workspaces of these sizes.</summary>
+    private static DispatchWorker Disk(int rank, long freeGb, params (string Name, long Gb)[] workspaces)
     {
-        return new DispatchJob(minimum, workspace);
+        var disk = new DiskSpaceReport { FreeBytes = freeGb * Gb, TotalBytes = 1000 * Gb, MinFreeBytes = Gb };
+        return new DispatchWorker(rank, new WorkerDisk(Guid.NewGuid(), disk, workspaces.ToDictionary(w => w.Name, w => (long?)(w.Gb * Gb))));
+    }
+
+    private static DispatchJob Job(int? minimum, string? workspace = null, long reuseGb = 0, long freshGb = 0)
+    {
+        return new DispatchJob(minimum, workspace, new DiskNeed(reuseGb * Gb, freshGb * Gb));
     }
 
     [Test]
@@ -26,9 +37,9 @@ public class DispatchPlanTests
         var low = Worker(0);
         var high = Worker(2);
 
-        Assert.That(DispatchPlan.Pick(Job(null), [low, high]), Is.EqualTo(high));
+        Assert.That(DispatchPlan.Pick(Job(null), [low, high])?.Worker, Is.EqualTo(high));
         Assert.That(DispatchPlan.Pick(Job(1), [low]), Is.Null);
-        Assert.That(DispatchPlan.Pick(Job(2), [low, high]), Is.EqualTo(high));
+        Assert.That(DispatchPlan.Pick(Job(2), [low, high])?.Worker, Is.EqualTo(high));
     }
 
     [Test]
@@ -40,7 +51,7 @@ public class DispatchPlanTests
         // Whatever the worker IDs, which otherwise break ties.
         foreach (var holder in holders)
         {
-            Assert.That(DispatchPlan.Pick(Job(null, "ws"), [.. others, holder]), Is.EqualTo(holder));
+            Assert.That(DispatchPlan.Pick(Job(null, "ws"), [.. others, holder])?.Worker, Is.EqualTo(holder));
         }
     }
 
@@ -50,7 +61,7 @@ public class DispatchPlanTests
         var holder = Worker(0, "ws");
         var higher = Worker(1);
 
-        Assert.That(DispatchPlan.Pick(Job(null, "ws"), [holder, higher]), Is.EqualTo(higher));
+        Assert.That(DispatchPlan.Pick(Job(null, "ws"), [holder, higher])?.Worker, Is.EqualTo(higher));
     }
 
     [Test]
@@ -59,7 +70,61 @@ public class DispatchPlanTests
         var holder = Worker(0, "ws");
         var qualified = Worker(2);
 
-        Assert.That(DispatchPlan.Pick(Job(1, "ws"), [holder, qualified]), Is.EqualTo(qualified));
+        Assert.That(DispatchPlan.Pick(Job(1, "ws"), [holder, qualified])?.Worker, Is.EqualTo(qualified));
+    }
+
+    [Test]
+    public void Pick_SkipsAWorkerWithoutRoom_EvenOfHigherPriority()
+    {
+        var full = Disk(2, freeGb: 5);
+        var roomy = Disk(0, freeGb: 50);
+
+        Assert.That(DispatchPlan.Pick(Job(null, freshGb: 20), [full, roomy])?.Worker, Is.EqualTo(roomy));
+        Assert.That(DispatchPlan.Pick(Job(null, freshGb: 100), [full, roomy]), Is.Null);
+    }
+
+    [Test]
+    public void Pick_AtEqualPriority_RoomWithoutDeletingBeatsDeleting_ThenLeastDeleted()
+    {
+        var mustDeleteMore = Disk(1, freeGb: 1, ("a", 30));
+        var mustDeleteLess = Disk(1, freeGb: 15, ("b", 30));
+        var hasRoom = Disk(1, freeGb: 25);
+
+        Assert.That(DispatchPlan.Pick(Job(null, freshGb: 20), [mustDeleteMore, mustDeleteLess, hasRoom])?.Worker, Is.EqualTo(hasRoom));
+        var pick = DispatchPlan.Pick(Job(null, freshGb: 20), [mustDeleteMore, mustDeleteLess]);
+        Assert.That(pick?.Worker, Is.EqualTo(mustDeleteLess));
+        Assert.That(pick!.Fit.EvictBytes, Is.EqualTo(6 * Gb), "20 needed and 1 kept free, of 15 free");
+    }
+
+    [Test]
+    public void Pick_AtEqualPriority_TheTightestFit_KeepingTheRoomiestDiskForBiggerJobs()
+    {
+        var roomy = Disk(1, freeGb: 500);
+        var snug = Disk(1, freeGb: 30);
+
+        Assert.That(DispatchPlan.Pick(Job(null, freshGb: 20), [roomy, snug])?.Worker, Is.EqualTo(snug));
+    }
+
+    [Test]
+    public void Pick_TheHolderThatCanReuse_BeatsOneWithMoreRoom()
+    {
+        var holder = Disk(1, freeGb: 10, ("ws", 40));
+        var roomy = Disk(1, freeGb: 500);
+
+        var pick = DispatchPlan.Pick(Job(null, "ws", reuseGb: 5, freshGb: 45), [roomy, holder]);
+
+        Assert.That(pick?.Worker, Is.EqualTo(holder));
+        Assert.That(pick!.Fit.StartFresh, Is.False);
+    }
+
+    [Test]
+    public void Match_AJobWithoutRoomIsPassedOver_AndASmallerOneTakesTheWorker()
+    {
+        var worker = Disk(0, freeGb: 10);
+
+        var matched = DispatchPlan.Match(new[] { "big", "small" }, j => j == "big" ? Job(null, freshGb: 50) : Job(null, freshGb: 2), [worker]);
+
+        Assert.That(matched.Select(m => m.Job), Is.EqualTo(new[] { "small" }));
     }
 
     [Test]

@@ -33,6 +33,9 @@ public class WorkspaceManager
     // Paths whose last measurement failed, so a failure that persists warns once rather than on every pass. Only the measuring loop touches it.
     private readonly HashSet<string> _unmeasurable = new();
 
+    // The latest measurement's sizes, for choosing what to delete to make room.
+    private volatile IReadOnlyDictionary<string, long?> _lastSizes = new Dictionary<string, long?>();
+
     public WorkspaceManager(WorkerConfig config, ILogger<WorkspaceManager> logger)
     {
         _config = config;
@@ -79,7 +82,18 @@ public class WorkspaceManager
         var mirrors = Path.Combine(_config.WorkspacePath, MirrorsDirName);
         long? mirrorsSize = Directory.Exists(mirrors) ? (await MeasureAsync(mirrors, cancellationToken))?.TotalBytes : 0;
 
+        _lastSizes = sizes;
         return new WorkspaceUsageReport { WorkspaceSizes = sizes, MirrorsSizeBytes = mirrorsSize };
+    }
+
+    /// <summary>The workspaces that could be deleted to make room, each with its last measured size; all but <paramref name="keep"/>.</summary>
+    public IReadOnlyList<RoomCandidate> RoomCandidates(string? keep)
+    {
+        var sizes = _lastSizes;
+        return DiscoverWorkspaces()
+            .Where(w => w.Name != keep)
+            .Select(w => new RoomCandidate(w.Name, w.LastUsed, sizes.GetValueOrDefault(w.Name)))
+            .ToList();
     }
 
     /// <summary>

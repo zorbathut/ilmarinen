@@ -43,6 +43,7 @@ public class WorkerService : BackgroundService
     private readonly Guid _workerId;
     private readonly WorkspaceManager _workspaceManager;
     private readonly IDiskSpace _diskSpace;
+    private readonly RoomMaker _roomMaker;
     private readonly IWorkerDiagnostic _diagnostic;
     private readonly SleepInhibitor _sleepInhibitor;
     private readonly UpdateSignal _updateSignal;
@@ -94,6 +95,7 @@ public class WorkerService : BackgroundService
         _workerId = config.GetWorkerId();
         _workspaceManager = workspaceManager;
         _diskSpace = diskSpace;
+        _roomMaker = new RoomMaker(config, workspaceManager, diskSpace);
         _diagnostic = diagnostic;
         _sleepInhibitor = sleepInhibitor;
         _updateSignal = updateSignal;
@@ -661,7 +663,6 @@ public class WorkerService : BackgroundService
         var jobLogger = new LoggerTee(_logger, logCollector);
         var metrics = StartMetrics(job.Id);
         await using var diskWatch = new DiskWatch(_diskSpace, _config.WorkspacePath, _config.MinFreeBytes, jobLogger);
-        diskWatch.Start();
         JobRunner? runner = null;
 
         try
@@ -674,6 +675,13 @@ public class WorkerService : BackgroundService
             {
                 // Keep the host from auto-suspending out from under us for as long as the job runs.
                 using var inhibitor = await _sleepInhibitor.AcquireAsync($"Ilmarinen job {job.Id}");
+
+                foreach (var (name, result) in _roomMaker.MakeRoom(job, jobLogger))
+                {
+                    Report(s => SendAsync(s, "WorkspaceDeleted", name, result));
+                }
+                // Only once there is room: a worker below its floor when the job arrived would otherwise stop it before making any, and what making room freed isn't the job's to have used.
+                diskWatch.Start();
 
                 runner = new JobRunner(_config, _workspaceManager, job, _sender, jobLogger, logCollector, metrics);
                 var ran = await runner.ExecuteAsync(jobCts.Token);

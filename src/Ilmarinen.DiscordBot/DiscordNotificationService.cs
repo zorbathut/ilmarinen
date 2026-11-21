@@ -276,12 +276,12 @@ public class DiscordNotificationService : BackgroundService, INotificationHandle
 
         var options = new RequestOptions { CancelToken = ct };
 
-        switch (tracker.Observe(report.Jobs.Count > 0, DateTime.UtcNow))
+        switch (tracker.Observe(report.Jobs.Count > 0 || report.NoRoomJobs.Count > 0, DateTime.UtcNow))
         {
             case WedgeAnnouncement.Wedged:
                 await (await GetChannelAsync()).SendMessageAsync(text: RoleMention(), embed: WedgeEmbeds.Wedged(report, BuildJobUrl), options: options);
                 tracker.MarkWedgeAnnounced();
-                _logger.LogInformation("Posted stuck-jobs alert to Discord for {Count} jobs", report.Jobs.Count);
+                _logger.LogInformation("Posted stuck-jobs alert to Discord for {Count} jobs", report.Jobs.Count + report.NoRoomJobs.Count);
                 break;
 
             case WedgeAnnouncement.Unwedged:

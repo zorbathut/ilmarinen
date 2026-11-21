@@ -84,13 +84,13 @@ public static class QueueForecast
         var unsatisfiable = queued.Count - queue.Count;
 
         // Each round hands every worker free at that moment a job, or drops one that qualifies for nothing left (the queue only shrinks, so it never will), so it ends; a job some worker qualifies for always has that worker still in the running.
-        // Workspaces are left out: which worker of a priority takes a job hardly changes how long the queue takes.
-        var active = available.Select(w => new DispatchWorker(w.WorkerId, w.Rank, new HashSet<string>())).ToList();
+        // Disk is left out: a job waiting for room is forecast as if it had it, and which worker of a priority takes a job hardly changes how long the queue takes.
+        var active = available.Select(w => new DispatchWorker(w.Rank, new WorkerDisk(w.WorkerId, null, new Dictionary<string, long?>()))).ToList();
         while (queue.Count > 0 && active.Count > 0)
         {
             var now = active.Min(w => freeAt[w.WorkerId]);
             var freeNow = active.Where(w => freeAt[w.WorkerId] == now).ToList();
-            var matched = DispatchPlan.Match(queue, j => new DispatchJob(j.MinWorkerRank, null), freeNow);
+            var matched = DispatchPlan.Match(queue, j => new DispatchJob(j.MinWorkerRank, null, DiskNeed.None), freeNow);
             foreach (var (job, worker) in matched)
             {
                 queue.Remove(job);

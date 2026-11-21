@@ -42,7 +42,7 @@ public class WedgeEmbedsTests
         {
             HighestAvailableWorkerPriority = new PriorityRef(Guid.NewGuid(), "Medium"),
             Jobs = Enumerable.Range(0, 50).Select(_ => Job(repoUrl: huge, gitRef: huge, pipelineName: huge)).ToList(),
-            PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = []
+            NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = []
         };
 
         var embed = WedgeEmbeds.Wedged(report, LinkTo);
@@ -57,7 +57,7 @@ public class WedgeEmbedsTests
     {
         var name = "**loud** " + new string('x', 500);
         var job = Job() with { MinWorkerPriority = new PriorityRef(Guid.NewGuid(), name) };
-        var report = new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = new PriorityRef(Guid.NewGuid(), name), Jobs = [job], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] };
+        var report = new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = new PriorityRef(Guid.NewGuid(), name), Jobs = [job], NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] };
 
         var embed = WedgeEmbeds.Wedged(report, LinkTo);
 
@@ -71,7 +71,7 @@ public class WedgeEmbedsTests
     public void Wedged_BlankPipelineName_NamesTheJobByItsRepository(string blankName)
     {
         var job = Job(pipelineName: blankName);
-        var report = new UnsatisfiableJobsReport { Jobs = [job], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] };
+        var report = new UnsatisfiableJobsReport { Jobs = [job], NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] };
 
         var embed = WedgeEmbeds.Wedged(report, LinkTo);
 
@@ -82,7 +82,7 @@ public class WedgeEmbedsTests
     public void Wedged_WithAndWithoutLinks_EveryJobCanBeFound()
     {
         var job = Job(pipelineName: "nightly");
-        var report = new UnsatisfiableJobsReport { Jobs = [job], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] };
+        var report = new UnsatisfiableJobsReport { Jobs = [job], NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] };
 
         var linked = WedgeEmbeds.Wedged(report, LinkTo);
         var unlinked = WedgeEmbeds.Wedged(report, _ => null);
@@ -97,8 +97,8 @@ public class WedgeEmbedsTests
     {
         var jobs = new[] { Job() };
 
-        var noWorker = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = null, Jobs = jobs, PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
-        var lowPriority = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = new PriorityRef(Guid.NewGuid(), "Medium"), Jobs = jobs, PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+        var noWorker = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = null, Jobs = jobs, NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+        var lowPriority = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { HighestAvailableWorkerPriority = new PriorityRef(Guid.NewGuid(), "Medium"), Jobs = jobs, NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
 
         Assert.That(noWorker.Description, Is.Not.EqualTo(lowPriority.Description));
     }
@@ -108,8 +108,8 @@ public class WedgeEmbedsTests
     {
         var jobs = new[] { Job() };
 
-        var none = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
-        var paused = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, PausedWorkers = ["builder-a", "builder-b"], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+        var none = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+        var paused = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, NoRoomJobs = [], PausedWorkers = ["builder-a", "builder-b"], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
 
         Assert.That(paused.Description, Is.Not.EqualTo(none.Description));
         Assert.That(paused.Description, Does.Contain("builder-a").And.Contain("builder-b"));
@@ -120,8 +120,8 @@ public class WedgeEmbedsTests
     {
         var jobs = new[] { Job() };
 
-        var paused = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, PausedWorkers = ["desk-a"], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
-        var inUse = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, PausedWorkers = [], InUseWorkers = ["desk-a"], UnreachableWorkers = [] }, LinkTo);
+        var paused = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, NoRoomJobs = [], PausedWorkers = ["desk-a"], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+        var inUse = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, NoRoomJobs = [], PausedWorkers = [], InUseWorkers = ["desk-a"], UnreachableWorkers = [] }, LinkTo);
 
         Assert.That(inUse.Description, Does.Contain("desk-a"));
         Assert.That(inUse.Description, Is.Not.EqualTo(paused.Description));
@@ -132,8 +132,8 @@ public class WedgeEmbedsTests
     {
         var jobs = new[] { Job() };
 
-        var none = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
-        var unreachable = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = ["desk-b"] }, LinkTo);
+        var none = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+        var unreachable = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = jobs, NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = ["desk-b"] }, LinkTo);
 
         Assert.That(unreachable.Description, Does.Contain("desk-b"));
         Assert.That(unreachable.Description, Is.Not.EqualTo(none.Description));
@@ -142,10 +142,35 @@ public class WedgeEmbedsTests
     [Test]
     public void Wedged_ManyPausedWorkersWithHugeNames_StaysWithinDiscordLimits()
     {
-        var report = new UnsatisfiableJobsReport { Jobs = [Job()], PausedWorkers = Enumerable.Range(0, 500).Select(i => new string('w', 5000)).ToList(), InUseWorkers = Enumerable.Range(0, 500).Select(i => new string('u', 5000)).ToList(), UnreachableWorkers = Enumerable.Range(0, 500).Select(i => new string('z', 5000)).ToList() };
+        var report = new UnsatisfiableJobsReport { Jobs = [Job()], NoRoomJobs = [], PausedWorkers = Enumerable.Range(0, 500).Select(i => new string('w', 5000)).ToList(), InUseWorkers = Enumerable.Range(0, 500).Select(i => new string('u', 5000)).ToList(), UnreachableWorkers = Enumerable.Range(0, 500).Select(i => new string('z', 5000)).ToList() };
 
         var embed = WedgeEmbeds.Wedged(report, LinkTo);
 
         Assert.That(embed.Description.Length, Is.LessThanOrEqualTo(EmbedBuilder.MaxDescriptionLength));
+    }
+
+    [Test]
+    public void Wedged_JobsWithoutRoomOnly_SayItIsDisk_AndListThem()
+    {
+        var job = Job(pipelineName: "big-build");
+        var byPriority = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = [job], NoRoomJobs = [], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+        var byDisk = WedgeEmbeds.Wedged(new UnsatisfiableJobsReport { Jobs = [], NoRoomJobs = [new NoRoomJob { Job = job, NeededBytes = 60L << 30, MostRoomBytes = 40L << 30 }], PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] }, LinkTo);
+
+        Assert.That(byDisk.Description, Is.Not.Empty.And.Not.EqualTo(byPriority.Description));
+        Assert.That(byDisk.Fields.Select(f => f.Name), Is.EqualTo(new[] { "big-build" }));
+        Assert.That(byDisk.Fields.Single().Value, Is.Not.EqualTo(byPriority.Fields.Single().Value));
+    }
+
+    [Test]
+    public void Wedged_ManyJobsOfBothKinds_StaysWithinDiscordLimits()
+    {
+        var huge = new string('x', 5000);
+        var jobs = Enumerable.Range(0, 30).Select(_ => Job(repoUrl: huge, gitRef: huge, pipelineName: huge)).ToList();
+        var report = new UnsatisfiableJobsReport { Jobs = jobs, NoRoomJobs = jobs.Select(j => new NoRoomJob { Job = j, NeededBytes = long.MaxValue, MostRoomBytes = null }).ToList(), PausedWorkers = [], InUseWorkers = [], UnreachableWorkers = [] };
+
+        var embed = WedgeEmbeds.Wedged(report, LinkTo);
+
+        Assert.That(embed.Length, Is.LessThanOrEqualTo(EmbedBuilder.MaxEmbedLength));
+        Assert.That(embed.Fields, Has.Length.LessThanOrEqualTo(EmbedBuilder.MaxFieldCount));
     }
 }

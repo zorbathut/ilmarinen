@@ -338,7 +338,7 @@ public class JobRepository
     public const int DiskHistorySize = 5;
 
     /// <summary>
-    /// For each of these scripts, its latest <see cref="DiskHistorySize"/> finished runs whose worker reported what they worked in, newest first; a script with none is left out. Runs that ended before their script said what it works in (WorkspaceKind.Unknown) are left out too: a broken commit says nothing about the next run's workspace or disk. One query however many scripts.
+    /// For each of these scripts, its latest <see cref="DiskHistorySize"/> finished runs whose worker reported what they worked in, and as many of its latest fresh runs besides (a persistent workspace's only fresh run is often its very first), newest first; a script with none is left out. Runs that ended before their script said what it works in (WorkspaceKind.Unknown) are left out: a broken commit says nothing about the next run's workspace or disk. Two queries however many scripts.
     /// </summary>
     public async Task<IReadOnlyDictionary<(string RepoUrl, string ScriptPath), IReadOnlyList<DiskRun>>> GetDiskHistoryAsync(IEnumerable<(string RepoUrl, string ScriptPath)> scripts)
     {
@@ -357,25 +357,36 @@ public class JobRepository
             && repoUrls.Contains(j.RepoUrl)
             && scriptPaths.Contains(j.ScriptPath));
 
-        var rows = await reported
-            .Select(j => new { j.RepoUrl, j.ScriptPath })
-            .Distinct()
-            .SelectMany(k => reported
-                .Where(j => j.RepoUrl == k.RepoUrl && j.ScriptPath == k.ScriptPath)
-                .OrderByDescending(j => j.CompletedAt)
-                .Take(DiskHistorySize))
-            .Select(j => new { j.RepoUrl, j.ScriptPath, j.CompletedAt, Kind = j.WorkspaceKind!.Value, j.WorkspaceName, j.WorkspaceFresh, j.DiskUsedBytes, j.StoppedForDisk })
-            .ToListAsync();
+        var fresh = reported.Where(j => j.WorkspaceFresh == true || j.WorkspaceKind == WorkspaceKind.Ephemeral);
+        var latest = await Latest(reported);
+        var latestFresh = await Latest(fresh);
 
-        return rows
+        return latest.Concat(latestFresh)
+            .DistinctBy(r => r.Id)
             .GroupBy(r => (r.RepoUrl, r.ScriptPath))
             .Where(g => wanted.Contains(g.Key))
             .ToDictionary(
                 g => g.Key,
                 g => (IReadOnlyList<DiskRun>)g.OrderByDescending(r => r.CompletedAt)
-                    .Select(r => new DiskRun(r.Kind, r.WorkspaceName, r.WorkspaceFresh ?? false, r.DiskUsedBytes, r.StoppedForDisk ?? false))
+                    .Select(r => new DiskRun(r.Kind, r.WorkspaceName, r.WorkspaceFresh ?? false, r.DiskUsedBytes, r.StoppedForDisk ?? false, r.Status == JobStatus.Success))
                     .ToList());
+
+        // Per script, the latest few of these, as a lateral join.
+        static async Task<List<DiskHistoryRow>> Latest(IQueryable<Job> runs)
+        {
+            return await runs
+                .Select(j => new { j.RepoUrl, j.ScriptPath })
+                .Distinct()
+                .SelectMany(k => runs
+                    .Where(j => j.RepoUrl == k.RepoUrl && j.ScriptPath == k.ScriptPath)
+                    .OrderByDescending(j => j.CompletedAt)
+                    .Take(DiskHistorySize))
+                .Select(j => new DiskHistoryRow(j.Id, j.RepoUrl, j.ScriptPath, j.CompletedAt, j.WorkspaceKind!.Value, j.WorkspaceName, j.WorkspaceFresh, j.DiskUsedBytes, j.StoppedForDisk, j.Status))
+                .ToListAsync();
+        }
     }
+
+    private sealed record DiskHistoryRow(Guid Id, string RepoUrl, string ScriptPath, DateTime? CompletedAt, WorkspaceKind Kind, string? WorkspaceName, bool? WorkspaceFresh, long? DiskUsedBytes, bool? StoppedForDisk, JobStatus Status);
 
     /// <summary>The jobs Running for a worker, with the assignment each is running under.</summary>
     public async Task<IReadOnlyList<RunningAssignment>> GetRunningAssignmentsAsync(Guid workerId)
