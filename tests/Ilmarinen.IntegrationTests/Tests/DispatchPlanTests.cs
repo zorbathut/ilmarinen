@@ -10,23 +10,64 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [TestFixture]
 public class DispatchPlanTests
 {
+    private static DispatchWorker Worker(int rank, params string[] workspaces)
+    {
+        return new DispatchWorker(Guid.NewGuid(), rank, workspaces.ToHashSet());
+    }
+
+    private static DispatchJob Job(int? minimum, string? workspace = null)
+    {
+        return new DispatchJob(minimum, workspace);
+    }
+
     [Test]
     public void Pick_HighestQualifyingWorker()
     {
-        var low = new DispatchWorker(Guid.NewGuid(), 0);
-        var high = new DispatchWorker(Guid.NewGuid(), 2);
+        var low = Worker(0);
+        var high = Worker(2);
 
-        Assert.That(DispatchPlan.Pick(null, [low, high]), Is.EqualTo(high));
-        Assert.That(DispatchPlan.Pick(1, [low]), Is.Null);
-        Assert.That(DispatchPlan.Pick(2, [low, high]), Is.EqualTo(high));
+        Assert.That(DispatchPlan.Pick(Job(null), [low, high]), Is.EqualTo(high));
+        Assert.That(DispatchPlan.Pick(Job(1), [low]), Is.Null);
+        Assert.That(DispatchPlan.Pick(Job(2), [low, high]), Is.EqualTo(high));
+    }
+
+    [Test]
+    public void Pick_AtEqualPriority_TheWorkerHoldingTheWorkspace()
+    {
+        var holders = Enumerable.Range(0, 5).Select(_ => Worker(1, "ws")).ToList();
+        var others = Enumerable.Range(0, 5).Select(_ => Worker(1, "other")).ToList();
+
+        // Whatever the worker IDs, which otherwise break ties.
+        foreach (var holder in holders)
+        {
+            Assert.That(DispatchPlan.Pick(Job(null, "ws"), [.. others, holder]), Is.EqualTo(holder));
+        }
+    }
+
+    [Test]
+    public void Pick_AHigherPriorityWorker_BeatsTheHolder()
+    {
+        var holder = Worker(0, "ws");
+        var higher = Worker(1);
+
+        Assert.That(DispatchPlan.Pick(Job(null, "ws"), [holder, higher]), Is.EqualTo(higher));
+    }
+
+    [Test]
+    public void Pick_TheHolderMustStillQualify()
+    {
+        var holder = Worker(0, "ws");
+        var qualified = Worker(2);
+
+        Assert.That(DispatchPlan.Pick(Job(1, "ws"), [holder, qualified]), Is.EqualTo(qualified));
     }
 
     [Test]
     public void Match_SkipsAJobNobodyQualifiesFor_AndGivesTheWorkerToALaterOne()
     {
-        var low = new DispatchWorker(Guid.NewGuid(), 0);
+        var low = Worker(0);
 
-        var matched = DispatchPlan.Match(new int?[] { 2, null }, m => m, [low]);
+        var matched = DispatchPlan.Match(new int?[] { 2, null }, m => Job(m), [low]);
 
         Assert.That(matched, Has.Count.EqualTo(1));
         Assert.That(matched[0].Job, Is.Null);
@@ -56,10 +97,10 @@ public class DispatchPlanTests
         var random = new Random(1234);
         for (var trial = 0; trial < 2000; trial++)
         {
-            var workers = Enumerable.Range(0, random.Next(0, 6)).Select(_ => new DispatchWorker(Guid.NewGuid(), random.Next(0, 4))).ToList();
+            var workers = Enumerable.Range(0, random.Next(0, 6)).Select(_ => Worker(random.Next(0, 4))).ToList();
             var minimums = Enumerable.Range(0, random.Next(0, 8)).Select(_ => random.Next(0, 5) is var r && r == 4 ? (int?)null : r).ToList();
 
-            var jobMajor = DispatchPlan.Match(Enumerable.Range(0, minimums.Count), j => minimums[j], workers)
+            var jobMajor = DispatchPlan.Match(Enumerable.Range(0, minimums.Count), j => Job(minimums[j]), workers)
                 .Select(m => (m.Job, m.Worker.WorkerId))
                 .OrderBy(m => m.Job)
                 .ToList();

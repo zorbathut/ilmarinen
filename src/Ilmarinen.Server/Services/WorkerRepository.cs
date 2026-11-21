@@ -147,14 +147,14 @@ public class WorkerRepository
     }
 
     /// <summary>
-    /// The ready workers and the ranks of their priorities, highest first. Ties are ordered arbitrarily. A snapshot: dispatch re-checks each candidate under its lock before assigning.
+    /// The ready workers, with the ranks of their priorities and the workspaces they hold, highest first. Ties are ordered arbitrarily. A snapshot: dispatch re-checks each candidate under its lock before assigning.
     /// </summary>
-    public async Task<IReadOnlyList<(Guid WorkerId, int Rank)>> GetReadyWorkersByPriorityAsync()
+    public async Task<IReadOnlyList<DispatchWorker>> GetReadyWorkersByPriorityAsync()
     {
         return (await GetConnectedWorkersAsync())
             .Where(IsReady)
             .OrderByDescending(w => w.Rank)
-            .Select(w => (w.Session.WorkerId, w.Rank))
+            .Select(w => new DispatchWorker(w.Session.WorkerId, w.Rank, w.Session.Workspaces.Select(ws => ws.Name).ToHashSet()))
             .ToList();
     }
 

@@ -5,6 +5,7 @@ using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Ilmarinen.Worker;
 using Microsoft.Extensions.DependencyInjection;
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using System;
@@ -66,13 +67,14 @@ public sealed class DirectedWorker
     }
 
     /// <summary>Handshakes on a new connection, the next in this process's count.</summary>
-    public Task<SessionAnswer> ConnectAsync(string connectionId, string? bundleHash = null)
+    /// <param name="workspaces">The persistent workspaces the worker says it holds.</param>
+    public Task<SessionAnswer> ConnectAsync(string connectionId, string? bundleHash = null, IReadOnlyList<WorkspaceInfo>? workspaces = null)
     {
-        return ConnectAsCounterAsync(connectionId, ++_counter, bundleHash);
+        return ConnectAsCounterAsync(connectionId, ++_counter, bundleHash, workspaces);
     }
 
     /// <summary>Handshakes on a connection with a chosen counter: a late handshake from an earlier connection, say.</summary>
-    public async Task<SessionAnswer> ConnectAsCounterAsync(string connectionId, long counter, string? bundleHash = null)
+    public async Task<SessionAnswer> ConnectAsCounterAsync(string connectionId, long counter, string? bundleHash = null, IReadOnlyList<WorkspaceInfo>? workspaces = null)
     {
         ConnectionId = connectionId;
         Hub = _fixture.CreateHub(connectionId);
@@ -90,7 +92,7 @@ public sealed class DirectedWorker
 
         using var key = new WorkerConfig { WorkerKey = _key, ServerUrl = "unused" }.GetWorkerPrivateKey();
         var signature = key.SignData(HandshakeChallenge.Build(WorkerId, InstanceId, counter, nonce, challenge.Nonce), HashAlgorithmName.SHA256);
-        return await Hub.Authenticate(new WorkerAuthenticate { Signature = signature });
+        return await Hub.Authenticate(new WorkerAuthenticate { Signature = signature, Workspaces = workspaces });
     }
 
     public Task<ResumeResponse> ResumeAsync(WorkerState state, params JobOutcome[] outcomes)

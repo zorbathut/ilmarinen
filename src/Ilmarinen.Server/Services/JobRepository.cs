@@ -327,12 +327,54 @@ public class JobRepository
     }
 
     /// <summary>The queued jobs, in dispatch order, with the rank of each one's minimum worker priority (null for none) and when it was submitted. Ranks are read here, so a reorder of the priorities counts from the next dispatch on.</summary>
-    public async Task<IReadOnlyList<(Guid Id, int? MinWorkerRank, DateTime CreatedAt)>> GetQueuedJobsAsync()
+    public async Task<IReadOnlyList<QueuedJobRow>> GetQueuedJobsAsync()
     {
-        var queued = await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued))
-            .Select(j => new { j.Id, MinWorkerRank = j.MinWorkerPriority != null ? (int?)j.MinWorkerPriority.Rank : null, j.CreatedAt })
+        return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued))
+            .Select(j => new QueuedJobRow(j.Id, j.MinWorkerPriority != null ? j.MinWorkerPriority.Rank : null, j.CreatedAt, j.RepoUrl, j.ScriptPath))
             .ToListAsync();
-        return queued.Select(j => (j.Id, j.MinWorkerRank, j.CreatedAt)).ToList();
+    }
+
+    /// <summary>How many of a script's latest runs disk estimates look at.</summary>
+    public const int DiskHistorySize = 5;
+
+    /// <summary>
+    /// For each of these scripts, its latest <see cref="DiskHistorySize"/> finished runs whose worker reported what they worked in, newest first; a script with none is left out. Runs that ended before their script said what it works in (WorkspaceKind.Unknown) are left out too: a broken commit says nothing about the next run's workspace or disk. One query however many scripts.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<(string RepoUrl, string ScriptPath), IReadOnlyList<DiskRun>>> GetDiskHistoryAsync(IEnumerable<(string RepoUrl, string ScriptPath)> scripts)
+    {
+        var wanted = scripts.ToHashSet();
+        if (wanted.Count == 0)
+        {
+            return new Dictionary<(string, string), IReadOnlyList<DiskRun>>();
+        }
+
+        // Narrowed by repositories and script paths separately (EF can't match pairs); a pair nobody asked for is dropped below.
+        var repoUrls = wanted.Select(w => w.RepoUrl).Distinct().ToList();
+        var scriptPaths = wanted.Select(w => w.ScriptPath).Distinct().ToList();
+        var reported = _db.Jobs.Where(j => j.WorkspaceKind != null
+            && j.WorkspaceKind != WorkspaceKind.Unknown
+            && j.CompletedAt != null
+            && repoUrls.Contains(j.RepoUrl)
+            && scriptPaths.Contains(j.ScriptPath));
+
+        var rows = await reported
+            .Select(j => new { j.RepoUrl, j.ScriptPath })
+            .Distinct()
+            .SelectMany(k => reported
+                .Where(j => j.RepoUrl == k.RepoUrl && j.ScriptPath == k.ScriptPath)
+                .OrderByDescending(j => j.CompletedAt)
+                .Take(DiskHistorySize))
+            .Select(j => new { j.RepoUrl, j.ScriptPath, j.CompletedAt, Kind = j.WorkspaceKind!.Value, j.WorkspaceName, j.WorkspaceFresh, j.DiskUsedBytes, j.StoppedForDisk })
+            .ToListAsync();
+
+        return rows
+            .GroupBy(r => (r.RepoUrl, r.ScriptPath))
+            .Where(g => wanted.Contains(g.Key))
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<DiskRun>)g.OrderByDescending(r => r.CompletedAt)
+                    .Select(r => new DiskRun(r.Kind, r.WorkspaceName, r.WorkspaceFresh ?? false, r.DiskUsedBytes, r.StoppedForDisk ?? false))
+                    .ToList());
     }
 
     /// <summary>The jobs Running for a worker, with the assignment each is running under.</summary>
@@ -666,6 +708,9 @@ public class JobRepository
 }
 
 public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInstanceId);
+
+/// <summary>A Queued job as dispatch and waking read it; MinWorkerRank is the rank of its minimum worker priority, null for none.</summary>
+public record QueuedJobRow(Guid Id, int? MinWorkerRank, DateTime CreatedAt, string RepoUrl, string ScriptPath);
 
 public record ScriptEstimates(IReadOnlyDictionary<(Guid WorkerId, string RepoUrl, string ScriptPath), TimeSpan> PerWorker, IReadOnlyDictionary<(string RepoUrl, string ScriptPath), TimeSpan> AcrossWorkers);
 

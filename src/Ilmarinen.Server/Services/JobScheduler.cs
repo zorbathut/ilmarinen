@@ -62,7 +62,7 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Hands queued jobs to ready workers: each queued job in dispatch order (highest job priority, then oldest) goes to the highest-priority ready worker that qualifies for it (<see cref="DispatchPlan"/>). Nothing running is ever displaced for a higher-priority job. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
+    /// Hands queued jobs to ready workers: each queued job in dispatch order (highest job priority, then oldest) goes to the highest-priority ready worker that qualifies for it, preferring one that holds its workspace (<see cref="DispatchPlan"/>). Nothing running is ever displaced for a higher-priority job. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
     ///
     /// The matching is greedy: a job offered first takes its best worker even when a later job could only have run there, and then waits.
     /// </summary>
@@ -76,20 +76,24 @@ public class JobScheduler
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
             // One pass is enough: each worker takes at most one job, and after that it is busy. A worker that frees up meanwhile, or a job submitted meanwhile, raises its own DispatchAsync, which is waiting on this lock.
-            var free = (await workers.GetReadyWorkersByPriorityAsync()).Select(w => new DispatchWorker(w.WorkerId, w.Rank)).ToList();
+            var free = (await workers.GetReadyWorkersByPriorityAsync()).ToList();
             if (free.Count == 0)
             {
                 return;
             }
 
-            foreach (var job in await jobs.GetQueuedJobsAsync())
+            var queued = await jobs.GetQueuedJobsAsync();
+            var history = await jobs.GetDiskHistoryAsync(queued.Select(j => (j.RepoUrl, j.ScriptPath)));
+            foreach (var job in queued)
             {
                 if (free.Count == 0)
                 {
                     return;
                 }
 
-                while (DispatchPlan.Pick(job.MinWorkerRank, free) is { } worker)
+                var runs = history.GetValueOrDefault((job.RepoUrl, job.ScriptPath)) ?? [];
+                var wanted = new DispatchJob(job.MinWorkerRank, DiskEstimate.PredictedWorkspace(runs));
+                while (DispatchPlan.Pick(wanted, free) is { } worker)
                 {
                     // The list was a snapshot; under the worker's lock nothing about it can change while it is checked and handed a job. One no longer ready is out of this pass, and the job goes to the next best.
                     using (await _sessions.LockAsync(worker.WorkerId))
