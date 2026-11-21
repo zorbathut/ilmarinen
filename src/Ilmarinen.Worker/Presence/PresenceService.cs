@@ -26,15 +26,17 @@ public sealed class PresenceService : BackgroundService
     private readonly TimeProvider _time;
     private readonly ILogger<PresenceService> _logger;
     private readonly InputActivity _input;
+    private readonly PresenceReport _report;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private bool _inUse;
     private bool _logindReported;
 
-    public PresenceService(WorkerConfig config, WorkerService worker, Logind logind, TimeProvider time, ILogger<PresenceService> logger)
+    public PresenceService(WorkerConfig config, WorkerService worker, Logind logind, PresenceReport report, TimeProvider time, ILogger<PresenceService> logger)
     {
         _config = config;
         _worker = worker;
         _logind = logind;
+        _report = report;
         _time = time;
         _logger = logger;
         _input = new InputActivity("/dev/input", InputDevices.ListPath, time, logger);
@@ -45,6 +47,7 @@ public sealed class PresenceService : BackgroundService
         _input.Rescan();
         if (_input.Reading.Count == 0)
         {
+            _report.Record([], null);
             _logger.LogInformation("No keyboard or mouse is readable, so the worker won't hold back while someone uses this machine (see the in-use compose overlay)");
             return;
         }
@@ -108,7 +111,9 @@ public sealed class PresenceService : BackgroundService
         try
         {
             var last = _input.Last;
-            await SetInUseAsync(PresenceRule.Judge(last?.At, last?.Device, _config.InUseIdleTime, _time.GetUtcNow(), locked, inhibitors));
+            var verdict = PresenceRule.Judge(last?.At, last?.Device, _config.InUseIdleTime, _time.GetUtcNow(), locked, inhibitors);
+            _report.Record(_input.Reading.ToList(), verdict);
+            await SetInUseAsync(verdict);
         }
         finally
         {

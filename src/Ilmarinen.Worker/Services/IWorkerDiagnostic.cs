@@ -1,6 +1,7 @@
 using Ilmarinen.Docker;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
+using Ilmarinen.Worker.Presence;
 using Microsoft.Extensions.Logging;
 using System.Threading.Tasks;
 using System.Threading;
@@ -20,11 +21,13 @@ public interface IWorkerDiagnostic
 public class DockerWorkerDiagnostic : IWorkerDiagnostic
 {
     private readonly SleepInhibitor _sleepInhibitor;
+    private readonly PresenceReport _presence;
     private readonly ILogger<DockerWorkerDiagnostic> _logger;
 
-    public DockerWorkerDiagnostic(SleepInhibitor sleepInhibitor, ILogger<DockerWorkerDiagnostic> logger)
+    public DockerWorkerDiagnostic(SleepInhibitor sleepInhibitor, PresenceReport presence, ILogger<DockerWorkerDiagnostic> logger)
     {
         _sleepInhibitor = sleepInhibitor;
+        _presence = presence;
         _logger = logger;
     }
 
@@ -34,6 +37,7 @@ public class DockerWorkerDiagnostic : IWorkerDiagnostic
         DockerDiagnostic.DiagnosticStep[] extraSteps =
         [
             new DockerDiagnostic.DiagnosticStep("host_sleep_inhibit", DiagnosticStepKind.Advisory, _sleepInhibitor.ProbeAsync),
+            new DockerDiagnostic.DiagnosticStep("presence", DiagnosticStepKind.Advisory, _presence.ProbeAsync),
         ];
 
         await using var diag = new DockerDiagnostic(workerContainerId, extraSteps);

@@ -1,3 +1,5 @@
+using Ilmarinen.Worker.Host;
+using Ilmarinen.Worker.Presence;
 using Ilmarinen.Worker.Services;
 using Ilmarinen.Worker;
 using Microsoft.Extensions.DependencyInjection;
@@ -76,6 +78,9 @@ public class TestWorkerBuilder
             sp.GetRequiredService<ILogger<SleepInhibitor>>(),
             busAddress: "unix:path=/nonexistent/ilmarinen-test-no-bus"));
         builder.Services.AddSingleton<UpdateSignal>();
+        // For the real diagnostic's presence step; no presence watch runs, and logind is the same dead bus as above.
+        builder.Services.AddSingleton(new Logind(busAddress: "unix:path=/nonexistent/ilmarinen-test-no-bus"));
+        builder.Services.AddSingleton<PresenceReport>();
         builder.Services.AddHostedService<WorkerService>();
 
         return builder.Build();

@@ -63,6 +63,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<Logind>(_ => new Logind());
 builder.Services.AddSingleton<WorkerService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkerService>());
+builder.Services.AddSingleton<PresenceReport>();
 builder.Services.AddSingleton<PresenceService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PresenceService>());
 builder.Services.AddHostedService<SleepWatcher>();

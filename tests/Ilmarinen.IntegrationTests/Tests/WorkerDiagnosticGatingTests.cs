@@ -116,6 +116,11 @@ public class WorkerDiagnosticGatingTests
         Assert.That(step.Success, Is.False);
         Assert.That(step.Suggestion, Is.Not.Null.And.Not.Empty, "an absent capability should say how to get it");
 
+        var presence = view.Diagnostic.Steps.SingleOrDefault(s => s.Name == "presence");
+        Assert.That(presence, Is.Not.Null, "whether the in-use watch works should be reported too");
+        Assert.That(presence!.Kind, Is.EqualTo(DiagnosticStepKind.Advisory));
+        Assert.That(presence.Message, Is.Not.Empty);
+
         // Cleanup tears down the scratch container, network and agent API that the other steps build, so it has to stay last — an injected step that ran after it would be looking at a torn-down harness.
         Assert.That(view.Diagnostic.Steps.Last().Name, Is.EqualTo("cleanup"));
     }
