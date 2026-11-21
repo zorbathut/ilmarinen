@@ -19,7 +19,7 @@
 # USB devices that come back under new names after the host sleeps) appear too. The cgroup rule
 # lets the container open input devices (character major 13), read-only.
 services:
-  worker:
+  launcher:
     volumes:
       - /dev/input:/dev/input:ro
     device_cgroup_rules:
