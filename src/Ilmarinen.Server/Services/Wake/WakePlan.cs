@@ -5,12 +5,12 @@ using System;
 
 namespace Ilmarinen.Server.Services.Wake;
 
-/// <summary>A queued job, as waking sees it, with the rank of its minimum worker priority; null for no minimum.</summary>
-public sealed record WakeJob(Guid Id, int? MinWorkerRank, DateTimeOffset QueuedSince)
+/// <summary>A queued job, as waking sees it, with the rank of its minimum worker priority (null for no minimum), and the workers known, from their disks as last heard, not to have room for it: waking one of those would only have it sleep again with the job still waiting.</summary>
+public sealed record WakeJob(Guid Id, int? MinWorkerRank, DateTimeOffset QueuedSince, IReadOnlySet<Guid> NoRoomOn)
 {
     public bool Fits(WakeWorker worker)
     {
-        return MinWorkerRank == null || worker.Rank >= MinWorkerRank;
+        return (MinWorkerRank == null || worker.Rank >= MinWorkerRank) && !NoRoomOn.Contains(worker.Id);
     }
 }
 

@@ -16,9 +16,9 @@ public class WakePlanTests
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-11-19T12:00:00Z");
     private static readonly WakeSettings Settings = new(Timeout: TimeSpan.FromMinutes(5), Backoff: TimeSpan.FromHours(1), QueuedDelay: TimeSpan.FromSeconds(30), DisconnectedDelay: TimeSpan.FromSeconds(90));
 
-    private static WakeJob Job(int? min = null, TimeSpan? waited = null)
+    private static WakeJob Job(int? min = null, TimeSpan? waited = null, params Guid[] noRoomOn)
     {
-        return new WakeJob(Guid.NewGuid(), min, Now - (waited ?? TimeSpan.FromMinutes(1)));
+        return new WakeJob(Guid.NewGuid(), min, Now - (waited ?? TimeSpan.FromMinutes(1)), noRoomOn.ToHashSet());
     }
 
     private static WakeWorker Sleeper(string name, int priority = StandardRank.Medium, string? mac = "aa:bb:cc:dd:ee:ff", bool paused = false, TimeSpan? asleepFor = null, bool hasRunningJob = false)
@@ -55,6 +55,19 @@ public class WakePlanTests
 
         var next = Plan([job], [a, b], round.State, Now.AddSeconds(15));
         Assert.That(next.Send, Is.EqualTo(round.Send), "the same one again, its packet resent; not a second sleeper");
+    }
+
+    [Test]
+    public void ASleeperWithoutRoom_IsNotWokenForTheJob_AnotherIs()
+    {
+        var full = Sleeper("full", asleepFor: TimeSpan.FromMinutes(5));
+        var roomy = Sleeper("roomy", asleepFor: TimeSpan.FromHours(3));
+        var job = Job(null, null, full.Id);
+
+        var round = Plan([job], [full, roomy]);
+
+        Assert.That(round.Send, Is.EqualTo(new[] { roomy.Id }), "although the full one was seen more recently, which would otherwise make it first");
+        Assert.That(Plan([job], [full]).Send, Is.Empty);
     }
 
     [Test]

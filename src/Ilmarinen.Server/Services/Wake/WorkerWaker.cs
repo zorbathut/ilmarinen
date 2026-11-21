@@ -72,10 +72,22 @@ public sealed class WorkerWaker
         try
         {
             using var scope = _scopeFactory.CreateScope();
-            var queued = (await scope.ServiceProvider.GetRequiredService<JobRepository>().GetQueuedJobsAsync())
-                .Select(j => new WakeJob(j.Id, j.MinWorkerRank, new DateTimeOffset(DateTime.SpecifyKind(j.CreatedAt, DateTimeKind.Utc))))
-                .ToList();
+            var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+            var queuedRows = await jobs.GetQueuedJobsAsync();
+            var history = await jobs.GetDiskHistoryAsync(queuedRows.Select(j => (j.RepoUrl, j.ScriptPath)));
+            var fleet = _workers.GetFleetDisks();
             workers = await _workers.GetWakeWorkersAsync();
+            var disks = workers.Select(w => _workers.DiskOf(w.Id)).ToList();
+            var queued = queuedRows
+                .Select(j =>
+                {
+                    var runs = history.GetValueOrDefault((j.RepoUrl, j.ScriptPath)) ?? [];
+                    var workspace = DiskEstimate.PredictedWorkspace(runs);
+                    var need = DiskEstimate.NeedOnFleet(runs, fleet);
+                    var noRoom = disks.Where(d => DiskEstimate.Fit(workspace, need, d) == null).Select(d => d.WorkerId).ToHashSet();
+                    return new WakeJob(j.Id, j.MinWorkerRank, new DateTimeOffset(DateTime.SpecifyKind(j.CreatedAt, DateTimeKind.Utc)), noRoom);
+                })
+                .ToList();
             before = _status.State;
             waitingBefore = _status.WaitingForAll;
             round = WakePlan.Plan(queued, workers, before, _settings, _time.GetUtcNow());
