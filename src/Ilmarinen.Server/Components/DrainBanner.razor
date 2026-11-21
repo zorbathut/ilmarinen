@@ -1,0 +1,67 @@
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.Logging
+@implements IDisposable
+@inject JobScheduler Scheduler
+@inject DispatchHold Hold
+@inject UIEventService UIEvents
+@inject ILogger<DrainBanner> Logger
+
+@* Shown on every page while the fleet drains, so nobody mistakes a held queue for a stuck one. *@
+@if (status is { Draining: true })
+{
+    <div class="drain-banner" style="padding: 0.5rem 1rem; margin-bottom: 1rem; border-left: 4px solid var(--warning, orange); background: var(--bg-secondary);">
+        <strong>Draining:</strong> no new jobs start until the drain is released (<code>ilmarinen drain --server &lt;url&gt; --off</code>) or the server restarts.
+        @if (status.Running.Count == 0)
+        {
+            <span>Nothing is running: ready to deploy.</span>
+        }
+        else
+        {
+            <span>Still running: </span>
+            @foreach (var job in status.Running)
+            {
+                <span style="margin-right: 0.75rem;"><JobLink JobId="job.JobId" /> on @(job.WorkerName ?? "a revoked worker")</span>
+            }
+        }
+    </div>
+}
+
+@code {
+    private DrainStatus? status;
+
+    protected override async Task OnInitializedAsync()
+    {
+        UIEvents.OnJobsChanged += OnChanged;
+        UIEvents.OnWorkersChanged += OnChanged;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        // Only a drain has anything to show, and the query runs on every change while one is on.
+        status = Hold.Held ? await Scheduler.GetDrainStatusAsync() : null;
+    }
+
+    private async void OnChanged()
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                await RefreshAsync();
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to refresh the drain banner");
+        }
+    }
+
+    public void Dispose()
+    {
+        UIEvents.OnJobsChanged -= OnChanged;
+        UIEvents.OnWorkersChanged -= OnChanged;
+    }
+}

@@ -11,7 +11,7 @@ public class ProtocolVersionTests
     // The hash is a wire contract: a server whose hash differs from a worker's rejects it outright, and a launcher-run
     // worker can't learn the new bundle across a protocol break. Changing it is a deliberate act — update this constant
     // in the same commit that changes the protocol, so the break shows up in review rather than in the fleet.
-    private const string CurrentHash = "BF2088CE031C";
+    private const string CurrentHash = "299A8E32EA4B";
 
     [Test]
     public void Hash_MatchesTheRecordedContract()

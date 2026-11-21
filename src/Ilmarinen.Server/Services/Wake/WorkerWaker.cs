@@ -36,10 +36,11 @@ public sealed class WorkerWaker
     private readonly UIEventService _uiEvents;
     private readonly TimeProvider _time;
     private readonly WakeSettings _settings;
+    private readonly DispatchHold _hold;
     private readonly ILogger<WorkerWaker> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public WorkerWaker(IServiceScopeFactory scopeFactory, WorkerRepository workers, IWakeSender sender, WakeStatus status, UIEventService uiEvents, TimeProvider time, ServerConfig config, ILogger<WorkerWaker> logger)
+    public WorkerWaker(IServiceScopeFactory scopeFactory, WorkerRepository workers, IWakeSender sender, WakeStatus status, UIEventService uiEvents, TimeProvider time, ServerConfig config, DispatchHold hold, ILogger<WorkerWaker> logger)
     {
         _scopeFactory = scopeFactory;
         _workers = workers;
@@ -48,6 +49,7 @@ public sealed class WorkerWaker
         _uiEvents = uiEvents;
         _time = time;
         _settings = new WakeSettings(config.WakeTimeout, config.WakeBackoff, QueuedDelay, DisconnectedDelay);
+        _hold = hold;
         _logger = logger;
     }
 
@@ -73,7 +75,8 @@ public sealed class WorkerWaker
         {
             using var scope = _scopeFactory.CreateScope();
             var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
-            var queuedRows = await jobs.GetQueuedJobsAsync();
+            // Nothing is dispatched while the fleet drains, so no job needs a worker woken for it.
+            var queuedRows = _hold.Held ? [] : await jobs.GetQueuedJobsAsync();
             var history = await jobs.GetDiskHistoryAsync(queuedRows.Select(j => (j.RepoUrl, j.ScriptPath)));
             var fleet = _workers.GetFleetDisks();
             workers = await _workers.GetWakeWorkersAsync();

@@ -21,6 +21,7 @@ public class JobScheduler
     private readonly UIEventService _uiEvents;
     private readonly LogStreamService _logStream;
     private readonly WorkerWaker _waker;
+    private readonly DispatchHold _hold;
     private readonly ILogger<JobScheduler> _logger;
 
     // Serializes dispatch: which job goes next, and to which worker. Taken before a worker's session lock (WorkerSessions), never inside one, so a hub handler holding a worker's lock dispatches only after releasing it.
@@ -36,6 +37,7 @@ public class JobScheduler
         UIEventService uiEvents,
         LogStreamService logStream,
         WorkerWaker waker,
+        DispatchHold hold,
         ILogger<JobScheduler> logger)
     {
         _scopeFactory = scopeFactory;
@@ -44,6 +46,7 @@ public class JobScheduler
         _uiEvents = uiEvents;
         _logStream = logStream;
         _waker = waker;
+        _hold = hold;
         _logger = logger;
     }
 
@@ -65,12 +68,19 @@ public class JobScheduler
     /// Hands queued jobs to ready workers: each queued job in dispatch order (highest job priority, then oldest) goes to the highest-priority ready worker that qualifies for it, preferring one that holds its workspace (<see cref="DispatchPlan"/>). Nothing running is ever displaced for a higher-priority job. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
     ///
     /// The matching is greedy: a job offered first takes its best worker even when a later job could only have run there, and then waits.
+    ///
+    /// While the fleet is draining (<see cref="DispatchHold"/>) nothing is handed out, and clearing the drain dispatches.
     /// </summary>
     public async Task DispatchAsync()
     {
         await _assignLock.WaitAsync();
         try
         {
+            if (_hold.Held)
+            {
+                return;
+            }
+
             using var scope = _scopeFactory.CreateScope();
             var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
             var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
@@ -205,6 +215,40 @@ public class JobScheduler
         {
             _assignLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Holds or releases dispatch for the whole fleet (<see cref="DispatchHold"/>); releasing it dispatches.
+    /// </summary>
+    public async Task SetDrainingAsync(bool draining)
+    {
+        // Under the dispatch lock, so once a drain begins no dispatch already under way can still hand out a job.
+        await UnderDispatchLockAsync(() =>
+        {
+            _hold.Set(draining);
+            return Task.FromResult(true);
+        });
+        if (draining)
+        {
+            _logger.LogInformation("Draining: dispatch held until released or the server restarts");
+        }
+        else
+        {
+            _logger.LogInformation("Drain released: dispatching again");
+        }
+
+        _uiEvents.NotifyWorkersChanged();
+        if (!draining)
+        {
+            await DispatchAsync();
+        }
+    }
+
+    public async Task<DrainStatus> GetDrainStatusAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        return new DrainStatus { Draining = _hold.Held, Running = await jobs.GetRunningWithWorkersAsync() };
     }
 
     /// <summary>

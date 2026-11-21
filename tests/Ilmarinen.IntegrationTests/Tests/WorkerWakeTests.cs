@@ -92,6 +92,21 @@ public class WorkerWakeTests
     }
 
     [Test]
+    public async Task NoSleeper_IsWokenForAJobQueuedWhileTheFleetDrains()
+    {
+        await SleeperAsync("wake-drain", "aa:bb:cc:dd:ee:0d");
+        await Get<JobScheduler>().SetDrainingAsync(true);
+        await QueueWhileAsleepAsync();
+
+        await TickAsync();
+        Assert.That(Get<RecordingWakeSender>().Sent, Is.Empty, "nothing is dispatched while draining, so nothing needs waking");
+
+        await Get<JobScheduler>().SetDrainingAsync(false);
+        await TickAsync();
+        Assert.That(Get<RecordingWakeSender>().Sent, Is.EqualTo(new[] { "aa:bb:cc:dd:ee:0d" }));
+    }
+
+    [Test]
     public async Task ASleeper_IsWokenForAQueuedJob_AndTakesItOnceBack()
     {
         var worker = await SleeperAsync("wake-one", "aa:bb:cc:dd:ee:01");

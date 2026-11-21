@@ -388,6 +388,16 @@ public class JobRepository
 
     private sealed record DiskHistoryRow(Guid Id, string RepoUrl, string ScriptPath, DateTime? CompletedAt, WorkspaceKind Kind, string? WorkspaceName, bool? WorkspaceFresh, long? DiskUsedBytes, bool? StoppedForDisk, JobStatus Status);
 
+    /// <summary>Every job Running, oldest first, with the name of the worker running it.</summary>
+    public async Task<IReadOnlyList<DrainRunningJob>> GetRunningWithWorkersAsync()
+    {
+        return await _db.Jobs
+            .Where(j => j.Status == JobStatus.Running)
+            .OrderBy(j => j.CreatedAt)
+            .Select(j => new DrainRunningJob(j.Id, _db.Workers.Where(w => w.Id == j.WorkerId).Select(w => w.Name).FirstOrDefault()))
+            .ToListAsync();
+    }
+
     /// <summary>The jobs Running for a worker, with the assignment each is running under.</summary>
     public async Task<IReadOnlyList<RunningAssignment>> GetRunningAssignmentsAsync(Guid workerId)
     {

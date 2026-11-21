@@ -415,6 +415,88 @@ internal class Commands
         }
     }
 
+    /// <summary>How often --wait asks what is still running. A drain waits on jobs that run for minutes; nothing gains from asking faster.</summary>
+    private static readonly TimeSpan DrainPollInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>Hold dispatch for the whole fleet before a deploy, so no new job starts and what is running can finish; the server's restart ends the hold. Exit 0 once held (with --wait, once nothing is running), 1 on error, 130 if interrupted while waiting (the drain stays on)</summary>
+    [Command("drain")]
+    public async Task<int> Drain(
+        [FromService] ICoconaAppContextAccessor contextAccessor,
+        [Option('s', Description = "Server URL")] string server,
+        [Option("wait", Description = "Wait until no job is running")] bool wait = false,
+        [Option("off", Description = "Release the drain instead, dispatching again")] bool off = false)
+    {
+        var serverUrl = NormalizeServerUrl(server);
+        if (serverUrl == null)
+        {
+            return 1;
+        }
+        if (off && wait)
+        {
+            Console.Error.WriteLine("--wait waits for a drain to empty; there is nothing to wait for with --off.");
+            return 1;
+        }
+
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var interrupted = contextAccessor.Current!.CancellationToken;
+        using var http = new HttpClient();
+        try
+        {
+            var response = await http.PutAsJsonAsync($"{serverUrl}/api/drain", new DrainUpdate { Draining = !off }, interrupted);
+            if (!response.IsSuccessStatusCode)
+            {
+                await WriteErrorAsync(response);
+                return 1;
+            }
+            var status = (await response.Content.ReadFromJsonAsync<DrainStatus>(jsonOptions, interrupted))!;
+
+            if (off)
+            {
+                Console.Error.WriteLine("Drain released: dispatching again.");
+                return 0;
+            }
+
+            Console.Error.WriteLine("Draining: no new jobs start until the drain is released or the server restarts.");
+            string? last = null;
+            while (status.Running.Count > 0)
+            {
+                // Which jobs, and on which workers, so a job left Running by a worker that has gone away shows up as the thing holding the wait.
+                var running = string.Join(", ", status.Running.Select(j => $"{j.JobId} on {j.WorkerName ?? "a revoked worker"}"));
+                if (running != last)
+                {
+                    Console.Error.WriteLine($"{(wait ? "Waiting on" : "Still")} {status.Running.Count} running: {running}");
+                    last = running;
+                }
+                if (!wait)
+                {
+                    return 0;
+                }
+
+                await Task.Delay(DrainPollInterval, interrupted);
+                status = (await http.GetFromJsonAsync<DrainStatus>($"{serverUrl}/api/drain", jsonOptions, interrupted))!;
+                if (!status.Draining)
+                {
+                    Console.Error.WriteLine("The drain was released (or the server restarted) while waiting.");
+                    return 1;
+                }
+            }
+
+            Console.Error.WriteLine("Nothing running: ready to deploy.");
+            return 0;
+        }
+        catch (OperationCanceledException) when (interrupted.IsCancellationRequested)
+        {
+            Console.Error.WriteLine(off ? "Interrupted." : "Stopped; the drain is still on unless the server never got the request.");
+            return 130;
+        }
+        catch (HttpRequestException ex)
+        {
+            // A server restarting mid-wait (someone deployed already) ends the drain too, so the wait can't be resumed as it was.
+            Console.Error.WriteLine($"Error talking to the server: {ex.Message}");
+            return 1;
+        }
+    }
+
     /// <summary>Get job status</summary>
     [Command("status")]
     public async Task<int> Status(

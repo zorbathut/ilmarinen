@@ -35,6 +35,7 @@ public static class IlmarinenServerExtensions
         services.AddScoped<NotificationRepository>();
         services.AddSingleton<IWorkerClients, HubWorkerClients>();
         services.AddSingleton<WorkerMessenger>();
+        services.AddSingleton<DispatchHold>();
         services.AddSingleton<JobScheduler>();
         services.AddSingleton<UIEventService>();
         services.AddSingleton<LogSubscriptionService>();
