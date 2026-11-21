@@ -28,4 +28,7 @@ public record JobInfo
     public required PriorityRef Priority { get; init; }
     public bool CanRetry { get; init; }
     public string? RetryBlockedReason { get; init; }
+
+    /// <summary>What the run worked in and the disk it took; null until its worker reports it finished.</summary>
+    public JobDiskUse? DiskUse { get; init; }
 }

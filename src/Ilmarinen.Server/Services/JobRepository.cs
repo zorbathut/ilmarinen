@@ -269,7 +269,7 @@ public class JobRepository
     /// <summary>
     /// Records a worker's report of how its run of an assignment went: only for that assignment, and with the same finality rules as <see cref="UpdateStatusAsync"/> (so a real outcome still overrides a cancel). A Failed that takes effect also marks the worker as owing a diagnostic, in the same transaction, so a crash between the two can't skip the re-check. Returns whether the status changed.
     /// </summary>
-    public async Task<bool> CompleteReportedAsync(Guid id, Guid workerId, Guid assignmentId, JobStatus status)
+    public async Task<bool> CompleteReportedAsync(Guid id, Guid workerId, Guid assignmentId, JobStatus status, JobDiskUse? diskUse)
     {
         if (status is not (JobStatus.Success or JobStatus.Failed or JobStatus.Cancelled))
         {
@@ -285,9 +285,15 @@ public class JobRepository
             .ExecuteUpdateAsync(s => s
                 .SetProperty(j => j.Status, status)
                 .SetProperty(j => j.CompletedAt, now)
-                .SetProperty(j => j.EncryptedGitToken, (string?)null));
+                .SetProperty(j => j.EncryptedGitToken, (string?)null)
+                .SetProperty(j => j.WorkspaceKind, diskUse != null ? diskUse.WorkspaceKind : null)
+                .SetProperty(j => j.WorkspaceName, diskUse != null ? diskUse.WorkspaceName : null)
+                .SetProperty(j => j.WorkspaceFresh, diskUse != null ? diskUse.WorkspaceFresh : null)
+                .SetProperty(j => j.DiskUsedBytes, diskUse != null ? diskUse.UsedBytes : null)
+                .SetProperty(j => j.StoppedForDisk, diskUse != null ? diskUse.StoppedForDisk : null));
 
-        if (rows > 0 && status == JobStatus.Failed)
+        // A job stopped for disk failed for want of space, which a host re-check wouldn't find wrong.
+        if (rows > 0 && status == JobStatus.Failed && diskUse?.StoppedForDisk != true)
         {
             await _db.Workers
                 .Where(w => w.Id == workerId)
@@ -651,7 +657,10 @@ public class JobRepository
             MinWorkerPriority = job.MinWorkerPriority is { } minimum ? PriorityRepository.ToRef(minimum) : null,
             Priority = PriorityRepository.ToRef(job.Priority ?? throw new InvalidOperationException("Job loaded without its priority")),
             CanRetry = canRetry,
-            RetryBlockedReason = retryBlockedReason
+            RetryBlockedReason = retryBlockedReason,
+            DiskUse = job.WorkspaceKind is { } kind
+                ? new JobDiskUse { WorkspaceKind = kind, WorkspaceName = job.WorkspaceName, WorkspaceFresh = job.WorkspaceFresh ?? false, UsedBytes = job.DiskUsedBytes, StoppedForDisk = job.StoppedForDisk ?? false }
+                : null
         };
     }
 }

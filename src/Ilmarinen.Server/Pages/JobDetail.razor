@@ -54,6 +54,21 @@
                 <span class="detail-label">Job Priority</span>
                 <span class="detail-value">@job.Priority.Name</span>
 
+                @if (job.DiskUse is { } disk)
+                {
+                    <span class="detail-label">Workspace</span>
+                    <span class="detail-value">@DisplayFormat.Workspace(disk)</span>
+
+                    <span class="detail-label">Disk Used</span>
+                    <span class="detail-value" style="@(disk.StoppedForDisk ? "color: var(--warning, orange);" : "")">
+                        @(disk.UsedBytes is { } used ? DisplayFormat.Size(used) : "unmeasured")
+                        @if (disk.StoppedForDisk)
+                        {
+                            <span> · stopped: free space fell below the worker's floor</span>
+                        }
+                    </span>
+                }
+
                 <span class="detail-label">Created</span>
                 <span class="detail-value">@job.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
 

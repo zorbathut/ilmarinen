@@ -288,7 +288,7 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Applies a worker's outcome for one of its assignments, idempotently: a completion only for that assignment, a hand-back only while the job is still Running under it. Returns true when the outcome newly failed the job, so the worker now owes a host re-check (already recorded in the database). Caller holds the worker's session lock.
+    /// Applies a worker's outcome for one of its assignments, idempotently: a completion only for that assignment, a hand-back only while the job is still Running under it. Returns true when the outcome newly failed the job, so the worker now owes a host re-check (already recorded in the database); not for a job its worker stopped for disk, which says nothing about the host's health. Caller holds the worker's session lock.
     /// </summary>
     public async Task<bool> ApplyOutcomeAsync(WorkerSession session, JobOutcome outcome)
     {
@@ -313,7 +313,7 @@ public class JobScheduler
 
         // Persist the buffered tail before the status turns terminal, as CompleteJobAsync does.
         await _logStream.FlushJobAsync(outcome.JobId);
-        if (!await jobs.CompleteReportedAsync(outcome.JobId, session.WorkerId, outcome.AssignmentId, status))
+        if (!await jobs.CompleteReportedAsync(outcome.JobId, session.WorkerId, outcome.AssignmentId, status, outcome.DiskUse))
         {
             _logger.LogInformation("Outcome {Status} of job {JobId} from worker {WorkerId} changed nothing: already applied, or not this assignment", status, outcome.JobId, session.WorkerId);
             await _logStream.FlushAsync(outcome.JobId);
@@ -322,7 +322,7 @@ public class JobScheduler
 
         _logger.LogInformation("Job completed: {JobId} - {Status}", outcome.JobId, status);
         await EmitCompletionAsync(scope, outcome.JobId, status);
-        return status == JobStatus.Failed;
+        return status == JobStatus.Failed && outcome.DiskUse?.StoppedForDisk != true;
     }
 
     /// <summary>

@@ -11,6 +11,8 @@ namespace Ilmarinen.Core.Tests;
 [TestFixture]
 public class WorkerProtocolStateTests
 {
+    private static readonly JobDiskUse Unknown = new() { WorkspaceKind = WorkspaceKind.Unknown };
+
     [Test]
     public void Assign_WhenIdle_TakesTheJobAndReportsIt()
     {
@@ -66,11 +68,12 @@ public class WorkerProtocolStateTests
         state.Assign(job);
         var seq = state.Snapshot().Seq;
 
-        var outcome = state.FinishJob(JobStatus.Success, TimeSpan.FromSeconds(3), []);
+        var outcome = state.FinishJob(JobStatus.Success, TimeSpan.FromSeconds(3), [], Unknown);
 
         Assert.That(outcome.Kind, Is.EqualTo(JobOutcomeKind.Completed));
         Assert.That(outcome.Status, Is.EqualTo(JobStatus.Success));
         Assert.That(outcome.AssignmentId, Is.EqualTo(job.AssignmentId));
+        Assert.That(outcome.DiskUse, Is.EqualTo(Unknown));
         Assert.That(state.PendingOutcomes, Is.EqualTo(new[] { outcome }));
         var after = state.Snapshot();
         Assert.That(after.Activity, Is.EqualTo(WorkerActivity.Idle));
@@ -83,7 +86,7 @@ public class WorkerProtocolStateTests
     {
         var state = new WorkerProtocolState();
 
-        Assert.Throws<InvalidOperationException>(() => state.FinishJob(JobStatus.Success, TimeSpan.Zero, []));
+        Assert.Throws<InvalidOperationException>(() => state.FinishJob(JobStatus.Success, TimeSpan.Zero, [], Unknown));
     }
 
     [Test]
@@ -92,7 +95,7 @@ public class WorkerProtocolStateTests
         var state = new WorkerProtocolState();
         state.Assign(Assignment());
         var handBack = state.Assign(Assignment())!;
-        var completed = state.FinishJob(JobStatus.Failed, TimeSpan.Zero, []);
+        var completed = state.FinishJob(JobStatus.Failed, TimeSpan.Zero, [], Unknown);
 
         state.Acknowledge([handBack]);
 
@@ -132,7 +135,7 @@ public class WorkerProtocolStateTests
 
         Assert.That(state.RequestDiagnostic(), Is.False);
         Assert.That(state.TryStartDiagnostic(unprompted: false), Is.False, "not while the job runs");
-        state.FinishJob(JobStatus.Failed, TimeSpan.Zero, []);
+        state.FinishJob(JobStatus.Failed, TimeSpan.Zero, [], Unknown);
 
         Assert.That(state.TryStartDiagnostic(unprompted: false), Is.True);
     }
@@ -183,7 +186,7 @@ public class WorkerProtocolStateTests
             Step(() => state.TryStartDiagnostic(unprompted: true)),
             Step(() => state.FinishDiagnostic(DiagnosticStatus.Healthy)),
             Step(() => state.Assign(Assignment())),
-            Step(() => state.FinishJob(JobStatus.Success, TimeSpan.Zero, []))
+            Step(() => state.FinishJob(JobStatus.Success, TimeSpan.Zero, [], Unknown))
         };
 
         Assert.That(seqs, Is.Ordered.Ascending);

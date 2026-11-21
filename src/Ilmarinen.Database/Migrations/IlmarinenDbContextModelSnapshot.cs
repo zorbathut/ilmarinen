@@ -41,6 +41,9 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<long?>("DiskUsedBytes")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("EncryptedGitToken")
                         .HasColumnType("text");
 
@@ -74,11 +77,23 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 
+                    b.Property<bool?>("StoppedForDisk")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid?>("WorkerId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid?>("WorkerInstanceId")
                         .HasColumnType("uuid");
+
+                    b.Property<bool?>("WorkspaceFresh")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("WorkspaceKind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("WorkspaceName")
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 

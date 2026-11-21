@@ -660,31 +660,38 @@ public class WorkerService : BackgroundService
         var logCollector = new LogCollector(job.Id, _sender, _logger);
         var jobLogger = new LoggerTee(_logger, logCollector);
         var metrics = StartMetrics(job.Id);
+        await using var diskWatch = new DiskWatch(_diskSpace, _config.WorkspacePath, _config.MinFreeBytes, jobLogger);
+        diskWatch.Start();
+        JobRunner? runner = null;
 
         try
         {
             jobLogger.LogInformation("Received job {JobId}: {RepoUrl} @ {Ref}", job.Id, job.RepoUrl, job.Ref);
 
-            // Two tokens. CancelJob trips the first; the job runs on the second, which the host's shutdown trips as well — otherwise a SIGTERM mid-job leaves the step container running with nothing left to tear it down.
-            using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token, _stoppingToken);
+            // Two tokens. CancelJob trips the first; the job runs on the second, which the host's shutdown and the disk watch trip as well — otherwise a SIGTERM mid-job leaves the step container running with nothing left to tear it down.
+            using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token, _stoppingToken, diskWatch.Stopping);
             try
             {
                 // Keep the host from auto-suspending out from under us for as long as the job runs.
                 using var inhibitor = await _sleepInhibitor.AcquireAsync($"Ilmarinen job {job.Id}");
 
-                var runner = new JobRunner(_config, _workspaceManager, job, _sender, jobLogger, logCollector, metrics);
+                runner = new JobRunner(_config, _workspaceManager, job, _sender, jobLogger, logCollector, metrics);
                 var ran = await runner.ExecuteAsync(jobCts.Token);
 
-                // A pipeline that ran to the end reports what it actually did, even if the worker is on its way out by now.
-                status = cancel.IsCancellationRequested ? JobStatus.Cancelled : ran;
+                // A pipeline that ran to the end reports what it actually did, even if the worker is on its way out by now. One the disk watch stopped failed, whatever a step made of being stopped.
+                status = cancel.IsCancellationRequested ? JobStatus.Cancelled : diskWatch.StoppedForDisk ? JobStatus.Failed : ran;
                 jobLogger.LogInformation("Job {JobId} completed with status {Status}", job.Id, status);
                 await logCollector.FlushAsync();
             }
             catch (OperationCanceledException) when (jobCts.IsCancellationRequested)
             {
-                // Cancelled means a person asked for it. A job the worker dropped because its host is going down is a failure, and reporting it as one now is what keeps it from sitting Running until a reconnect that may never come.
+                // Cancelled means a person asked for it. A job the worker dropped because its host is going down, or its disk is filling, is a failure, and reporting it as one now is what keeps it from sitting Running until a reconnect that may never come. The watch has already said why it stopped the job.
                 var abandoned = !cancel.IsCancellationRequested;
-                if (abandoned)
+                if (diskWatch.StoppedForDisk)
+                {
+                    jobLogger.LogInformation("Job {JobId} stopped: the disk was nearly full", job.Id);
+                }
+                else if (abandoned)
                 {
                     jobLogger.LogWarning("Job {JobId} abandoned: the worker is shutting down", job.Id);
                 }
@@ -716,7 +723,15 @@ public class WorkerService : BackgroundService
             {
                 await metrics.StopAsync();
             }
-            await FinishJobAsync(job, status, DateTime.UtcNow - startTime);
+            var diskUse = new JobDiskUse
+            {
+                WorkspaceKind = runner?.WorkspaceKind ?? WorkspaceKind.Unknown,
+                WorkspaceName = runner?.WorkspaceName,
+                WorkspaceFresh = runner?.WorkspaceFresh ?? false,
+                UsedBytes = diskWatch.UsedBytes,
+                StoppedForDisk = diskWatch.StoppedForDisk
+            };
+            await FinishJobAsync(job, status, DateTime.UtcNow - startTime, diskUse);
         }
     }
 
@@ -744,14 +759,14 @@ public class WorkerService : BackgroundService
     }
 
     /// <summary>Records the job's outcome and goes idle in one step under the state lock, reports both, and runs any diagnostic asked for while the job ran.</summary>
-    private async Task FinishJobAsync(JobAssignment job, JobStatus status, TimeSpan duration)
+    private async Task FinishJobAsync(JobAssignment job, JobStatus status, TimeSpan duration, JobDiskUse diskUse)
     {
         var workspaces = SafeDiscoverWorkspaces();
         await _stateLock.WaitAsync();
         try
         {
             HoldIfStopping();
-            var outcome = _state.FinishJob(status, duration, workspaces);
+            var outcome = _state.FinishJob(status, duration, workspaces, diskUse);
             _logger.LogInformation("Job {JobId} finished: {Status}", job.Id, status);
             // Ahead of the outcome, which frees the worker for its next job: the server should judge that job by the space this one left.
             ReportDiskSpace();

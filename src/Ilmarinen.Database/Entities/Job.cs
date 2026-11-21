@@ -27,4 +27,11 @@ public class Job
     public Priority? MinWorkerPriority { get; set; }
     public required Guid PriorityId { get; set; }
     public Priority? Priority { get; set; }
+
+    // What the run worked in and the disk it took, as its worker reported (JobDiskUse): what the server learns the script's disk needs from. Null until a worker reports the run finished.
+    public WorkspaceKind? WorkspaceKind { get; set; }
+    public string? WorkspaceName { get; set; }
+    public bool? WorkspaceFresh { get; set; }
+    public long? DiskUsedBytes { get; set; }
+    public bool? StoppedForDisk { get; set; }
 }

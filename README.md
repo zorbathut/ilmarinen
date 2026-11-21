@@ -226,6 +226,12 @@ The Priorities page manages both lists: add, rename, move up and down, choose th
 
 The Pause button on the Workers page (or a worker's own page) stops the server sending that worker new jobs; a job it is already running carries on. It works whether or not the worker is connected, lasts across reconnects and server restarts, and holds until Unpause. The worker itself is never told. A paused worker doesn't count as available, so jobs only it could take are reported as stuck.
 
+### Disk Space
+
+Each worker reports the free space on the filesystem holding its workspaces: when it connects, as each job ends, and every half minute. The Workers page shows it, and a worker's page also shows how much of the space in use is neither workspaces nor git mirrors ("other use"). For a containerized worker whose workspaces are a Docker volume, that includes Docker's images and build cache, which nothing here deletes.
+
+A worker keeps a floor of free space, 5 GB unless `ILMARINEN_MIN_FREE_GB` says otherwise. If a running job takes free space below it, the worker stops the job, which fails with "stopped: free space fell below the worker's floor" on its page, before it can fill the disk. Each job's page shows what it worked in (its persistent workspace, and whether that run made it, or an ephemeral checkout) and how far free space fell while it ran. Anything else writing to the same disk meanwhile counts too.
+
 ## Notifications
 
 Ilmarinen includes a notification framework that pushes job completion events to external subscribers. The first built-in subscriber is a Discord bot.

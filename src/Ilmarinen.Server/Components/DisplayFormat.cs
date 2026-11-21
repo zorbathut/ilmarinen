@@ -1,4 +1,5 @@
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using System.Globalization;
 using System;
 
@@ -21,6 +22,17 @@ public static class DisplayFormat
             return string.Format(CultureInfo.InvariantCulture, "{0:F1} KB", bytes / 1024.0);
         }
         return $"{bytes} B";
+    }
+
+    /// <summary>What a run worked in, as the job page shows it.</summary>
+    public static string Workspace(JobDiskUse disk)
+    {
+        return disk.WorkspaceKind switch
+        {
+            WorkspaceKind.Named => disk.WorkspaceFresh ? $"{disk.WorkspaceName} (made by this run)" : $"{disk.WorkspaceName} (reused)",
+            WorkspaceKind.Ephemeral => "ephemeral checkout",
+            _ => "unknown: the run ended before its script said"
+        };
     }
 
     public static string Duration(TimeSpan duration)

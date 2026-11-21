@@ -18,4 +18,7 @@ public record JobOutcome
 
     public TimeSpan Duration { get; init; }
     public IReadOnlyList<WorkspaceInfo>? Workspaces { get; init; }
+
+    /// <summary>What the run worked in and the disk it took; set for Completed.</summary>
+    public JobDiskUse? DiskUse { get; init; }
 }

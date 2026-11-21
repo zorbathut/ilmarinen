@@ -29,6 +29,14 @@ public class JobRunner
     private readonly JobMetricsSampler? _metrics;
     private bool _mirrorRebuilt;
 
+    /// <summary>What the run works in, once its script has said; Unknown until then, and for good if it never gets that far.</summary>
+    public WorkspaceKind WorkspaceKind { get; private set; } = WorkspaceKind.Unknown;
+
+    public string? WorkspaceName { get; private set; }
+
+    /// <summary>The named workspace didn't exist before this run.</summary>
+    public bool WorkspaceFresh { get; private set; }
+
     public JobRunner(
         WorkerConfig config,
         WorkspaceManager workspaceManager,
@@ -55,7 +63,7 @@ public class JobRunner
 
         try
         {
-            prepared = await PrepareAsync(buildDir);
+            prepared = await PrepareAsync(buildDir, cancellationToken);
             if (prepared == null)
             {
                 return JobStatus.Failed;
@@ -130,13 +138,16 @@ public class JobRunner
     /// <summary>
     /// Brings the mirror up to date, resolves the ref, compiles the script straight from the commit, and readies the working directory it asks for. Returns null, having logged why, when the job can't run.
     /// </summary>
-    private async Task<PreparedJob?> PrepareAsync(string buildDir)
+    /// <remarks>The git work here can't be interrupted; <paramref name="cancellationToken"/> is checked between its parts.</remarks>
+    private async Task<PreparedJob?> PrepareAsync(string buildDir, CancellationToken cancellationToken)
     {
         // 1. Fetch into the repository's mirror, pin the ref, and compile the script from that commit
         _logger.LogInformation("Fetching {RepoUrl}...", _job.RepoUrl);
         var mirrorPath = GitMirror.Sync(_config.WorkspacePath, _job.RepoUrl, _job.GitToken, _logger);
+        cancellationToken.ThrowIfCancellationRequested();
         var pipeline = await ReadingMirrorAsync(() => LoadPipelineAsync(mirrorPath));
         var commitSha = pipeline.CommitSha;
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Report resolved commit to server. An unreachable server delays the report; it must not fail the job.
         await _sender.SendOrBufferAsync("ReportCommit", _job.Id, commitSha);
@@ -156,6 +167,7 @@ public class JobRunner
         // 2. Ready the working directory
         if (workspaceConfig == null)
         {
+            WorkspaceKind = WorkspaceKind.Ephemeral;
             _logger.LogInformation("Using ephemeral workspace at {WorkDir}", buildDir);
             var description = await ReadingMirrorAsync(() => Task.FromResult(CloneFromMirror(mirrorPath, buildDir, commitSha)));
             return new PreparedJob(buildDir, true, commitSha, pipeline.Script.Steps, description);
@@ -186,6 +198,9 @@ public class JobRunner
 
         _logger.LogInformation("Using persistent workspace: {WorkspaceName}", wsName);
         _workspaceManager.SetActiveWorkspace(wsName);
+        WorkspaceKind = WorkspaceKind.Named;
+        WorkspaceName = wsName;
+        WorkspaceFresh = !Directory.Exists(workDir);
 
         if (Directory.Exists(workDir))
         {

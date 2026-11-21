@@ -98,7 +98,7 @@ internal sealed class WorkerProtocolState
     }
 
     /// <summary>Records how the running job went and goes idle, as one step: there is never a moment when the worker is idle with the job's outcome unrecorded.</summary>
-    public JobOutcome FinishJob(JobStatus status, TimeSpan duration, IReadOnlyList<WorkspaceInfo> workspaces)
+    public JobOutcome FinishJob(JobStatus status, TimeSpan duration, IReadOnlyList<WorkspaceInfo> workspaces, JobDiskUse diskUse)
     {
         if (Activity != WorkerActivity.RunningJob || Job == null)
         {
@@ -112,7 +112,8 @@ internal sealed class WorkerProtocolState
             Kind = JobOutcomeKind.Completed,
             Status = status,
             Duration = duration,
-            Workspaces = workspaces
+            Workspaces = workspaces,
+            DiskUse = diskUse
         };
         _outcomes.Add(outcome);
         Activity = WorkerActivity.Idle;
