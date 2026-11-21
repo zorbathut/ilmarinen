@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using Ilmarinen.Server.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;

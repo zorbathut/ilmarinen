@@ -1,4 +1,5 @@
 using Ilmarinen.Protocol.Requests;
+using Ilmarinen.Protocol;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -168,7 +169,7 @@ public class LogCollector
 
     private async Task SendChunkAsync(int sequence, string content)
     {
-        await _sender.SendOrBufferAsync("StreamLogs", new LogChunk
+        await _sender.SendOrBufferAsync(nameof(IWorkerHub.StreamLogs), new LogChunk
         {
             JobId = _jobId,
             SequenceNumber = sequence,

@@ -150,7 +150,7 @@ public class JobRunner
         cancellationToken.ThrowIfCancellationRequested();
 
         // Report resolved commit to server. An unreachable server delays the report; it must not fail the job.
-        await _sender.SendOrBufferAsync("ReportCommit", _job.Id, commitSha);
+        await _sender.SendOrBufferAsync(nameof(IWorkerHub.ReportCommit), _job.Id, commitSha);
 
         if (pipeline.Script == null)
         {

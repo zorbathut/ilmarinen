@@ -1,4 +1,5 @@
 using Ilmarinen.Protocol.Responses;
+using Ilmarinen.Protocol;
 using Ilmarinen.Server.Hubs;
 using Ilmarinen.Server.Services;
 using Microsoft.AspNetCore.SignalR;

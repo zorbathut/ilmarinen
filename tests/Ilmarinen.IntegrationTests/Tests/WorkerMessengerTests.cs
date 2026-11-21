@@ -1,5 +1,5 @@
 using Ilmarinen.Protocol.Responses;
-using Ilmarinen.Server.Hubs;
+using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;

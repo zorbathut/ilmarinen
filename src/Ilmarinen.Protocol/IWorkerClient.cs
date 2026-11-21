@@ -1,8 +1,9 @@
 using Ilmarinen.Protocol.Responses;
 using System.Threading.Tasks;
 
-namespace Ilmarinen.Server.Hubs;
+namespace Ilmarinen.Protocol;
 
+/// <summary>What the server calls on a worker's connection: the server→worker half of the worker protocol.</summary>
 public interface IWorkerClient
 {
     Task AssignJob(JobAssignment assignment);

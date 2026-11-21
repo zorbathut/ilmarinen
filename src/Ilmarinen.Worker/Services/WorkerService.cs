@@ -219,11 +219,11 @@ public class WorkerService : BackgroundService
             var session = new HubSession(connection, Interlocked.Increment(ref _connectionCounter));
 
             // Registered on this connection only, so an invocation is always from the session it arrived on. Posted rather than handled here: the handlers wait for the state lock, and the connection's receive loop must keep running meanwhile to deliver the answer to a Resume in progress.
-            connection.On<JobAssignment>("AssignJob", assignment => Post(session, "AssignJob", () => OnJobAssignedAsync(session, assignment)));
-            connection.On<string>("CancelJob", jobId => Post(session, "CancelJob", () => OnCancelJob(jobId)));
-            connection.On<string>("DeleteWorkspace", name => Post(session, "DeleteWorkspace", () => OnDeleteWorkspace(session, name)));
-            connection.On("RunDiagnostic", () => Post(session, "RunDiagnostic", () => OnDiagnosticRequestedAsync(session, DiagnosticTrigger.Operator)));
-            connection.On("RecheckHost", () => Post(session, "RecheckHost", () => OnDiagnosticRequestedAsync(session, DiagnosticTrigger.Automatic)));
+            connection.On<JobAssignment>(nameof(IWorkerClient.AssignJob), assignment => Post(session, "AssignJob", () => OnJobAssignedAsync(session, assignment)));
+            connection.On<string>(nameof(IWorkerClient.CancelJob), jobId => Post(session, "CancelJob", () => OnCancelJob(jobId)));
+            connection.On<string>(nameof(IWorkerClient.DeleteWorkspace), name => Post(session, "DeleteWorkspace", () => OnDeleteWorkspace(session, name)));
+            connection.On(nameof(IWorkerClient.RunDiagnostic), () => Post(session, "RunDiagnostic", () => OnDiagnosticRequestedAsync(session, DiagnosticTrigger.Operator)));
+            connection.On(nameof(IWorkerClient.RecheckHost), () => Post(session, "RecheckHost", () => OnDiagnosticRequestedAsync(session, DiagnosticTrigger.Automatic)));
             connection.Closed += _ =>
             {
                 EndSession(session, "the connection closed");
@@ -278,7 +278,7 @@ public class WorkerService : BackgroundService
         // Mutual ECDSA challenge-response, bound to this session's instance and counter.
         var workerNonce = RandomNumberGenerator.GetBytes(32);
         call.CancelAfter(HandshakeCallTimeout);
-        var challenge = await session.Connection.InvokeAsync<AuthChallenge>("Connect", new WorkerConnect
+        var challenge = await session.Connection.InvokeAsync<AuthChallenge>(nameof(IWorkerHub.Connect), new WorkerConnect
         {
             WorkerId = _workerId,
             ProtocolHash = ProtocolVersion.Hash,
@@ -321,7 +321,7 @@ public class WorkerService : BackgroundService
         }
 
         call.CancelAfter(HandshakeCallTimeout);
-        var answer = await session.Connection.InvokeAsync<SessionAnswer>("Authenticate", new WorkerAuthenticate
+        var answer = await session.Connection.InvokeAsync<SessionAnswer>(nameof(IWorkerHub.Authenticate), new WorkerAuthenticate
         {
             Signature = signature,
             Workspaces = SafeDiscoverWorkspaces()
@@ -358,7 +358,7 @@ public class WorkerService : BackgroundService
             if (_lastDiagnostic is { } cached)
             {
                 call.CancelAfter(HandshakeCallTimeout);
-                var reported = await session.Connection.InvokeAsync<SessionAnswer>("ReportDiagnostic", cached, call.Token);
+                var reported = await session.Connection.InvokeAsync<SessionAnswer>(nameof(IWorkerHub.ReportDiagnostic), cached, call.Token);
                 if (reported != SessionAnswer.Ok)
                 {
                     _logger.LogWarning("Server answered {Answer} to ReportDiagnostic on connection {Counter}", reported, session.Counter);
@@ -368,7 +368,7 @@ public class WorkerService : BackgroundService
 
             var outcomes = _state.PendingOutcomes;
             call.CancelAfter(HandshakeCallTimeout);
-            var response = await session.Connection.InvokeAsync<ResumeResponse>("Resume", new WorkerResume
+            var response = await session.Connection.InvokeAsync<ResumeResponse>(nameof(IWorkerHub.Resume), new WorkerResume
             {
                 State = _state.Snapshot(),
                 Outcomes = outcomes,
@@ -417,7 +417,7 @@ public class WorkerService : BackgroundService
             timeout.CancelAfter(HeartbeatTimeout);
             try
             {
-                var answer = await session.Connection.InvokeAsync<SessionAnswer>("Heartbeat", timeout.Token);
+                var answer = await session.Connection.InvokeAsync<SessionAnswer>(nameof(IWorkerHub.Heartbeat), timeout.Token);
                 if (answer != SessionAnswer.Ok)
                 {
                     EndSession(session, $"the server answered {answer} to a heartbeat");
@@ -506,14 +506,14 @@ public class WorkerService : BackgroundService
     private void ReportState()
     {
         var state = _state.Snapshot();
-        Report(session => SendAsync(session, "ReportState", state));
+        Report(session => SendAsync(session, nameof(IWorkerHub.ReportState), state));
     }
 
     private void ReportOutcome(JobOutcome outcome)
     {
         Report(async session =>
         {
-            if (!await SendAsync(session, "ReportOutcome", outcome))
+            if (!await SendAsync(session, nameof(IWorkerHub.ReportOutcome), outcome))
             {
                 return;
             }
@@ -621,7 +621,7 @@ public class WorkerService : BackgroundService
         var result = _workspaceManager.TryDelete(name);
         if (session == _session)
         {
-            Report(s => SendAsync(s, "WorkspaceDeleted", name, result));
+            Report(s => SendAsync(s, nameof(IWorkerHub.WorkspaceDeleted), name, result));
         }
 
         // Deleting one of two workspaces that share files leaves the other as their only holder
@@ -678,7 +678,7 @@ public class WorkerService : BackgroundService
 
                 foreach (var (name, result) in _roomMaker.MakeRoom(job, jobLogger))
                 {
-                    Report(s => SendAsync(s, "WorkspaceDeleted", name, result));
+                    Report(s => SendAsync(s, nameof(IWorkerHub.WorkspaceDeleted), name, result));
                 }
                 // Only once there is room: a worker below its floor when the job arrived would otherwise stop it before making any, and what making room freed isn't the job's to have used.
                 diskWatch.Start();
@@ -755,7 +755,7 @@ public class WorkerService : BackgroundService
 
         try
         {
-            var sampler = new JobMetricsSampler(jobId, _config.MetricsInterval, new ProcHostSource("/proc"), new DockerContainerSource(_metricsDocker.Value, _config.WorkerContainerId), _config.WorkerContainerId, chunk => _sender.SendOrBufferAsync("StreamMetrics", chunk), _logger, TimeProvider.System);
+            var sampler = new JobMetricsSampler(jobId, _config.MetricsInterval, new ProcHostSource("/proc"), new DockerContainerSource(_metricsDocker.Value, _config.WorkerContainerId), _config.WorkerContainerId, chunk => _sender.SendOrBufferAsync(nameof(IWorkerHub.StreamMetrics), chunk), _logger, TimeProvider.System);
             sampler.Start();
             return sampler;
         }
@@ -854,7 +854,7 @@ public class WorkerService : BackgroundService
                 Steps = [],
                 CheckedAt = DateTime.UtcNow
             };
-            Report(s => SendAsync(s, "ReportDiagnostic", placeholder));
+            Report(s => SendAsync(s, nameof(IWorkerHub.ReportDiagnostic), placeholder));
         }
 
         TrackInFlight(RunDiagnosticAsync());
@@ -907,7 +907,7 @@ public class WorkerService : BackgroundService
             // The report first, for the same reason as in SyncAsync: the state is what makes the worker ready.
             if (report != null)
             {
-                Report(s => SendAsync(s, "ReportDiagnostic", report));
+                Report(s => SendAsync(s, nameof(IWorkerHub.ReportDiagnostic), report));
             }
             _state.FinishDiagnostic(report?.Status);
             if (!_stoppingToken.IsCancellationRequested)
@@ -1083,7 +1083,7 @@ public class WorkerService : BackgroundService
     {
         if (ReadDiskSpace() is { } report)
         {
-            Report(s => SendAsync(s, "ReportDiskSpace", report));
+            Report(s => SendAsync(s, nameof(IWorkerHub.ReportDiskSpace), report));
         }
     }
 
@@ -1119,7 +1119,7 @@ public class WorkerService : BackgroundService
                     var stopwatch = Stopwatch.StartNew();
                     var report = await _workspaceManager.MeasureUsageAsync(stoppingToken);
                     _logger.LogInformation("Measured disk usage of {Count} workspaces and the mirrors in {ElapsedMs} ms", report.WorkspaceSizes.Count, stopwatch.ElapsedMilliseconds);
-                    Report(s => SendAsync(s, "ReportWorkspaceUsage", report));
+                    Report(s => SendAsync(s, nameof(IWorkerHub.ReportWorkspaceUsage), report));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

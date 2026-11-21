@@ -17,7 +17,7 @@ namespace Ilmarinen.Server.Hubs;
 /// <summary>
 /// The server's end of the worker protocol (spec/README.md). A connection becomes the worker's current session by authenticating with an epoch its current one doesn't outrank; it then sends Resume, and only after that does anything it reports about jobs count. Calls on a connection that isn't current are answered Fenced.
 /// </summary>
-public class WorkerHub : Hub<IWorkerClient>
+public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ServerKeyService _serverKey;
