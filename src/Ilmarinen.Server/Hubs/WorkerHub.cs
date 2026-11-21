@@ -154,7 +154,7 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
             {
                 _logger.LogWarning("Worker {WorkerId} authenticated but no peer address was available", pending.WorkerId);
             }
-            _sessions.SetDiagnosticOwed(pending.WorkerId, await workers.RecordConnectionAsync(pending.WorkerId, AddressFormat(remoteAddress)));
+            _sessions.SetDiagnosticOwed(pending.WorkerId, await workers.RecordConnectionAsync(pending.WorkerId, AddressFormat(remoteAddress), pending.ProtocolVersion));
         }
 
         _uiEvents.NotifyWorkersChanged();

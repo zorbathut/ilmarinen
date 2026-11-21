@@ -1,0 +1,20 @@
+@using Ilmarinen.Server.Services
+
+@* The worker protocol version a worker last connected with, flagged when it is behind the server's: raising the server's minimum past it would lock the worker out. *@
+@if (Worker.ProtocolVersion == null)
+{
+    <span>-</span>
+}
+else
+{
+    <span>v@(Worker.ProtocolVersion)</span>
+    @if (Worker.ProtocolBehind)
+    {
+        <span style="color: var(--warning, orange);" title="Behind this server's v@(WorkerProtocol.Version): it would be locked out if the server's minimum were raised past v@(Worker.ProtocolVersion)"> (behind)</span>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public WorkerView Worker { get; set; } = null!;
+}

@@ -15,6 +15,9 @@ public class Worker
     // Null until the worker's first successful authentication
     public string? LastIpAddress { get; set; }
 
+    // The worker protocol version it last connected with; null until it has connected with one. Persisted so a worker that is asleep or away still counts when deciding whether the fleet has moved past a version.
+    public int? ProtocolVersion { get; set; }
+
     public required Guid PriorityId { get; set; }
     public Priority? Priority { get; set; }
 

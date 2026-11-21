@@ -92,6 +92,40 @@ public class WorkerConnectionTests
         Assert.That(view.LastIpAddress, Is.EqualTo(connectedIp), "last IP must survive the worker going away — that's exactly when an operator needs it");
     }
 
+    // Kept while the worker is away: a worker that is asleep still has to be counted before the fleet can be said to have moved past a version.
+    [Test]
+    public async Task Worker_RecordsItsProtocolVersion_AndKeepsItWhileAway()
+    {
+        var workerId = await _fixture.StartWorkerAsync(diagnostic: null, waitForReady: false);
+
+        var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
+        var connected = await workers.GetByIdAsync(workerId);
+        Assert.That(connected!.ProtocolVersion, Is.EqualTo(WorkerProtocol.Version));
+        Assert.That(connected.ProtocolBehind, Is.False);
+
+        await _fixture.StopWorkerAsync();
+
+        var away = await workers.GetByIdAsync(workerId);
+        Assert.That(away!.IsConnected, Is.False);
+        Assert.That(away.ProtocolVersion, Is.EqualTo(WorkerProtocol.Version));
+    }
+
+    [Test]
+    public void ProtocolBehind_IsAVersionBelowTheServersOwn()
+    {
+        WorkerView View(int? version)
+        {
+            return new WorkerView { Id = Guid.NewGuid(), Name = "w", Priority = new PriorityRef(Guid.NewGuid(), "p"), ProtocolVersion = version };
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(View(WorkerProtocol.Version - 1).ProtocolBehind, Is.True);
+            Assert.That(View(WorkerProtocol.Version).ProtocolBehind, Is.False);
+            Assert.That(View(null).ProtocolBehind, Is.False, "never connected with a version: nothing to say");
+        });
+    }
+
     [Test]
     public async Task Worker_WhenConnectionHasNoAddress_KeepsPreviousLastIpAddress()
     {
@@ -100,8 +134,8 @@ public class WorkerConnectionTests
         var result = await registration.RegisterWorkerAsync($"addressless-{Guid.NewGuid():N}");
 
         var workers = _fixture.Services.GetRequiredService<WorkerRepository>();
-        await workers.RecordConnectionAsync(result.WorkerId, "10.0.0.5");
-        await workers.RecordConnectionAsync(result.WorkerId, ipAddress: null);
+        await workers.RecordConnectionAsync(result.WorkerId, "10.0.0.5", WorkerProtocol.Version);
+        await workers.RecordConnectionAsync(result.WorkerId, ipAddress: null, WorkerProtocol.Version);
 
         var view = await workers.GetByIdAsync(result.WorkerId);
         Assert.That(view!.LastIpAddress, Is.EqualTo("10.0.0.5"), "an address-less connection must not blank out a known address");

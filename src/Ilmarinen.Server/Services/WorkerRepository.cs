@@ -38,7 +38,7 @@ public class WorkerRepository
     }
 
     /// <summary>Records an authenticated handshake in the database, and returns whether the worker owes a diagnostic.</summary>
-    public async Task<bool> RecordConnectionAsync(Guid workerId, string? ipAddress)
+    public async Task<bool> RecordConnectionAsync(Guid workerId, string? ipAddress, int protocolVersion)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
@@ -47,6 +47,7 @@ public class WorkerRepository
             ?? throw new InvalidOperationException($"Worker {workerId} not found in database.");
 
         worker.LastSeen = DateTime.UtcNow;
+        worker.ProtocolVersion = protocolVersion;
 
         // Keep the previously recorded address if this connection has none — blanking the field for a worker that is connected right now is worse than showing a slightly older address.
         if (ipAddress != null)
@@ -385,6 +386,7 @@ public class WorkerRepository
             RegisteredAt = w.RegisteredAt,
             LastSeen = w.LastSeen,
             LastIpAddress = w.LastIpAddress,
+            ProtocolVersion = w.ProtocolVersion,
             Priority = PriorityRepository.ToRef(w.Priority!),
             IsPaused = w.Paused,
             Hold = session?.State?.Hold,
@@ -438,6 +440,7 @@ public class WorkerRepository
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 LastIpAddress = w.LastIpAddress,
+                ProtocolVersion = w.ProtocolVersion,
                 Priority = PriorityRepository.ToRef(w.Priority!),
                 IsPaused = w.Paused,
                 Hold = session?.State?.Hold,
@@ -473,6 +476,15 @@ public class WorkerView
     public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
     public string? LastIpAddress { get; init; }
+
+    /// <summary>The worker protocol version the worker last connected with; null if it hasn't connected since versions were recorded.</summary>
+    public int? ProtocolVersion { get; init; }
+
+    /// <summary>Behind the server's own protocol version: raising the minimum the server supports past it would lock the worker out.</summary>
+    public bool ProtocolBehind
+    {
+        get { return ProtocolVersion < WorkerProtocol.Version; }
+    }
     public required PriorityRef Priority { get; init; }
     public bool IsPaused { get; init; }
 

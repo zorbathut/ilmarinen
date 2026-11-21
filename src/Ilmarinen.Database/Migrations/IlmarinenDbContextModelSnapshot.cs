@@ -458,6 +458,9 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<Guid>("PriorityId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("ProtocolVersion")
+                        .HasColumnType("integer");
+
                     b.Property<byte[]>("PublicKey")
                         .IsRequired()
                         .HasColumnType("bytea");

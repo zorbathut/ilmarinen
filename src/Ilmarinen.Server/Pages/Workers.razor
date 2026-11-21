@@ -56,6 +56,7 @@
                     <th>Current Job</th>
                     <th>Disk Free</th>
                     <th class="hide-mobile">Bundle</th>
+                    <th class="hide-mobile">Protocol</th>
                     <th class="hide-mobile">Registered</th>
                     <th class="hide-mobile">Last Seen</th>
                     <th></th>
@@ -102,6 +103,7 @@
                                     }
                                 }
                             </td>
+                            <td class="hide-mobile"><WorkerProtocolVersion Worker="worker" /></td>
                             <td class="hide-mobile">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm")</td>
                             <td class="hide-mobile">@worker.LastSeen.ToString("HH:mm:ss")</td>
                             <td>
