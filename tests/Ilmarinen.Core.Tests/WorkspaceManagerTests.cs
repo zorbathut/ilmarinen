@@ -132,6 +132,18 @@ public class WorkspaceManagerTests
     }
 
     [Test]
+    public void TryDelete_RefusesAJobsBuildDirectory()
+    {
+        var buildDir = Path.Combine(_tempDir, Guid.NewGuid().ToString());
+        Directory.CreateDirectory(buildDir);
+
+        var result = _manager.TryDelete(Path.GetFileName(buildDir));
+
+        Assert.That(result.Status, Is.EqualTo(DeleteWorkspaceStatus.Error));
+        Assert.That(Directory.Exists(buildDir), Is.True, "a running ephemeral job uses it without marking it active");
+    }
+
+    [Test]
     public void TryDelete_NonExistentWorkspace_ReturnsError()
     {
         var result = _manager.TryDelete("no-such-ws");

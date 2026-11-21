@@ -156,6 +156,12 @@ public class WorkspaceManager
             return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Error, Error = validationError };
         }
 
+        // A GUID names a job's own build directory, which a running ephemeral job uses without marking it active; listings leave those out, and so must deletes.
+        if (Guid.TryParse(name, out _))
+        {
+            return new DeleteWorkspaceResult { Status = DeleteWorkspaceStatus.Error, Error = $"'{name}' is a job's build directory, not a workspace." };
+        }
+
         // Check if in use
         lock (_lock)
         {
