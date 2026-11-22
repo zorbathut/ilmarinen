@@ -220,6 +220,8 @@ A job has a job priority (the default unless it or its pipeline names one). When
 
 A job may also have a minimum worker priority: only a worker of at least that priority runs it. With none, any worker may run it, which is what a job gets unless it or its pipeline names one. `--min-worker-priority any` (or `"any"` over the API) asks for no minimum, overriding a pipeline's.
 
+While a job is queued, both of its priorities can be changed on its page, or with `PUT /api/jobs/{id}` (`{"priority": …, "minWorkerPriority": …}`, either or both); the change takes effect on the dispatch it triggers. Once it is no longer queued they are fixed, and the request answers 409.
+
 The Priorities page manages both lists: add, rename, move up and down, choose the default, and delete. Deleting asks for another priority of the same kind and moves every worker, pipeline and job using the deleted one onto it, finished jobs included; the last one of a kind can't be deleted. Changes take effect on the next dispatch. Each entry shows what uses it, linking to the workers, pipelines and jobs narrowed to it. Over the API the same is `/api/priorities/{worker|job}` (list, `POST` to add, `PUT …/order` to reorder), `PUT`, `DELETE ?replacement=` and `POST …/default` on `/api/priorities/{id}`, and `?priority=` (and `?minWorkerPriority=` for pipelines and jobs) on the list endpoints.
 
 ### Pausing a Worker

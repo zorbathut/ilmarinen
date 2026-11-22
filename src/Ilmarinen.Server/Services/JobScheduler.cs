@@ -203,6 +203,25 @@ public class JobScheduler
         return result;
     }
 
+    /// <summary>
+    /// Changes a queued job's priorities, then dispatches: a lowered minimum may let an idle worker take it, and a raised priority moves it up the queue. Refused for a job no longer queued.
+    /// </summary>
+    public async Task<JobUpdateResult> UpdateQueuedJobAsync(Guid jobId, JobUpdate update)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        // Under the dispatch lock, so a raised minimum can't land between a dispatch reading the queue and handing this job to a worker only the old minimum allowed.
+        var result = await UnderDispatchLockAsync(() => jobs.UpdateQueuedAsync(jobId, update));
+
+        if (result.Status == JobUpdateStatus.Updated)
+        {
+            _uiEvents.NotifyJobsChanged();
+            await DispatchAsync();
+        }
+        return result;
+    }
+
     /// <summary>Runs a change to what dispatch decides from, so that no dispatch is part-way through deciding from the old values when it lands.</summary>
     private async Task<T> UnderDispatchLockAsync<T>(Func<Task<T>> change)
     {

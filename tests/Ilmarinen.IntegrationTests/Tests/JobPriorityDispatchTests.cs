@@ -191,6 +191,83 @@ public class JobPriorityDispatchTests
         Assert.That(sent.Select(a => a.Id), Is.EqualTo(new[] { high, high }), "requeued, it is still the first job in line");
     }
 
+    private async Task UpdateAsync(Guid jobId, JobUpdate update)
+    {
+        var result = await Scheduler.UpdateQueuedJobAsync(jobId, update);
+        Assert.That(result.Status, Is.EqualTo(JobUpdateStatus.Updated));
+    }
+
+    [Test]
+    public async Task LoweringAJobsMinimum_HandsItToAWorkerAlreadyWaiting()
+    {
+        var worker = await ReadyWorkerAsync("conn-jp-lower-min", StandardPriority.Low);
+        var job = await QueueQuietlyAsync(StandardPriority.Medium, StandardPriority.High);
+        await Scheduler.DispatchAsync();
+        Assert.That((await JobAsync(job)).Status, Is.EqualTo(JobStatus.Queued), "the Low worker doesn't qualify yet");
+
+        await UpdateAsync(job, new JobUpdate { MinWorkerPriority = StandardPriority.Low });
+
+        Assert.That(await JobAsync(job), Is.EqualTo((JobStatus.Running, (Guid?)worker.WorkerId)), "the edit dispatches by itself");
+    }
+
+    [Test]
+    public async Task RaisingAJobsMinimum_KeepsItFromAWorkerThatNoLongerQualifies()
+    {
+        var job = await QueueQuietlyAsync(StandardPriority.Medium, StandardPriority.Low);
+
+        await UpdateAsync(job, new JobUpdate { MinWorkerPriority = StandardPriority.High });
+        var worker = await ReadyWorkerAsync("conn-jp-raise-min", StandardPriority.Low);
+
+        Assert.That((await JobAsync(job)).Status, Is.EqualTo(JobStatus.Queued));
+        Assert.That((await worker.SentAsync()).Assignments, Is.Empty);
+    }
+
+    [Test]
+    public async Task RaisingAJobsPriority_MovesItAheadOfAnOlderOne()
+    {
+        await QueueQuietlyAsync(StandardPriority.Medium);
+        var newer = await QueueQuietlyAsync(StandardPriority.Low);
+
+        // Edited before any worker is ready: readying one dispatches, and it would take the older job before the edit landed.
+        await UpdateAsync(newer, new JobUpdate { Priority = StandardPriority.High });
+        var worker = await ReadyWorkerAsync("conn-jp-raise-priority");
+
+        Assert.That((await worker.SentAsync()).Assignments.First().Id, Is.EqualTo(newer));
+    }
+
+    [Test]
+    public async Task AHandedBackJob_CanBeEdited()
+    {
+        var worker = await ReadyWorkerAsync("conn-jp-edit-hand-back", StandardPriority.Medium);
+        var job = await QueueQuietlyAsync(StandardPriority.Medium);
+        await Scheduler.DispatchAsync();
+        var assignment = (await worker.SentAsync()).Assignments.Single();
+        // Held, or the handed-back job would go straight back to the same worker before the edit.
+        await Scheduler.SetDrainingAsync(true);
+        await worker.ReportAsync(DirectedWorker.HandBack(assignment.Id, assignment.AssignmentId));
+
+        await UpdateAsync(job, new JobUpdate { MinWorkerPriority = StandardPriority.High });
+        await worker.ReportAsync(worker.Idle());
+        await Scheduler.SetDrainingAsync(false);
+
+        Assert.That((await JobAsync(job)).Status, Is.EqualTo(JobStatus.Queued), "requeued, it took the new minimum, which its old worker no longer meets");
+        Assert.That((await worker.SentAsync()).Assignments, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public async Task AnEditWhileTheFleetDrains_Lands_ButHandsOutNothingUntilTheDrainEnds()
+    {
+        var worker = await ReadyWorkerAsync("conn-jp-edit-drain", StandardPriority.Low);
+        var job = await QueueQuietlyAsync(StandardPriority.Medium, StandardPriority.High);
+        await Scheduler.SetDrainingAsync(true);
+
+        await UpdateAsync(job, new JobUpdate { MinWorkerPriority = StandardPriority.Low });
+        Assert.That((await JobAsync(job)).Status, Is.EqualTo(JobStatus.Queued));
+
+        await Scheduler.SetDrainingAsync(false);
+        Assert.That(await JobAsync(job), Is.EqualTo((JobStatus.Running, (Guid?)worker.WorkerId)));
+    }
+
     // The queue forecast simulates dispatch over the queue as this lists it, so it must list it in dispatch order.
     [Test]
     public async Task TheUnfinishedJobs_AreListedInDispatchOrder()

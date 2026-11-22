@@ -251,6 +251,43 @@ public class JobRepository
         return rows > 0;
     }
 
+    /// <summary>
+    /// Changes a job's priorities if it is still Queued: once assigned they have done their work. Unknown names throw <see cref="InvalidSubmissionException"/>. Must run under the dispatch lock (<see cref="JobScheduler.UpdateQueuedJobAsync"/>), or a dispatch that read the old values could assign the job to a worker the new minimum excludes.
+    /// </summary>
+    public async Task<JobUpdateResult> UpdateQueuedAsync(Guid id, JobUpdate update)
+    {
+        var priorityId = update.Priority != null ? (await _priorities.ResolveAsync(PriorityKind.Job, update.Priority)).Id : (Guid?)null;
+        var setMinimum = update.MinWorkerPriority != null;
+        var minimumId = setMinimum ? (await _priorities.ResolveMinimumAsync(update.MinWorkerPriority!))?.Id : null;
+
+        while (true)
+        {
+            // Both setters every time, each keeping the current value when its field wasn't given: the setters are an expression tree, so they can't be chosen with an if, and ExecuteUpdate needs at least one.
+            var rows = await PriorityRepository.WritingReferencesAsync(() => _db.Jobs
+                .Where(j => j.Id == id && j.Status == JobStatus.Queued)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(j => j.PriorityId, j => priorityId ?? j.PriorityId)
+                    .SetProperty(j => j.MinWorkerPriorityId, j => setMinimum ? minimumId : j.MinWorkerPriorityId)));
+
+            if (rows > 0)
+            {
+                return new JobUpdateResult(JobUpdateStatus.Updated, null);
+            }
+
+            var status = await _db.Jobs.Where(j => j.Id == id).Select(j => (JobStatus?)j.Status).FirstOrDefaultAsync();
+            if (status == null)
+            {
+                return new JobUpdateResult(JobUpdateStatus.NotFound, null);
+            }
+
+            // A hand-back or a Pending job's queueing doesn't take the dispatch lock, and can make the job Queued between the two reads: try again rather than refuse a job that is queued.
+            if (status != JobStatus.Queued)
+            {
+                return new JobUpdateResult(JobUpdateStatus.NotQueued, status);
+            }
+        }
+    }
+
     /// <summary>Puts a job back in the queue, unrun, if it is still Running under this assignment.</summary>
     public async Task<bool> RequeueAsync(Guid id, Guid workerId, Guid assignmentId)
     {

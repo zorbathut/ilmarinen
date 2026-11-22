@@ -117,6 +117,29 @@ public class JobsController : ControllerBase
         return job != null ? Ok(job) : NotFound();
     }
 
+    /// <summary>Changes a queued job's priorities: 409 once it is no longer queued, 400 for a name that isn't a priority.</summary>
+    [HttpPut("{id}")]
+    public async Task<ActionResult<JobInfo>> UpdateJob(Guid id, [FromBody] JobUpdate update)
+    {
+        if (update.Priority == null && update.MinWorkerPriority == null)
+        {
+            return BadRequest(new { error = "Nothing to change: give priority, minWorkerPriority, or both." });
+        }
+
+        var result = await _scheduler.UpdateQueuedJobAsync(id, update);
+        switch (result.Status)
+        {
+            case JobUpdateStatus.NotFound:
+                return NotFound();
+            case JobUpdateStatus.NotQueued:
+                return Conflict(new { error = $"The job is {result.Current}, not queued; only a queued job's priorities can be changed." });
+        }
+
+        // Read after the dispatch the change triggered, so this may already show the job Running.
+        var job = await _jobs.GetAsync(id);
+        return job != null ? Ok(job) : NotFound();
+    }
+
     /// <param name="priority">Only jobs of the job priority with this name.</param>
     /// <param name="minWorkerPriority">Only jobs needing the worker priority with this name.</param>
     [HttpGet]
