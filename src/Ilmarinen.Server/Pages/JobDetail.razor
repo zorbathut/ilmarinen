@@ -1,5 +1,6 @@
 @page "/jobs/{Id}"
 @using Ilmarinen.Protocol
+@using Ilmarinen.Protocol.Requests
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
@@ -48,11 +49,44 @@
                 <span class="detail-label">Worker</span>
                 <span class="detail-value"><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></span>
 
-                <span class="detail-label">Min Worker Priority</span>
-                <span class="detail-value">@(job.MinWorkerPriority?.Name ?? "Any worker")</span>
+                @if (job.Status == JobStatus.Queued)
+                {
+                    @* Keyed on the save counter as well as the value: a refused save leaves the stored value unchanged, and without the counter the dropdown would keep showing the value picked instead of the one stored. *@
+                    <span class="detail-label">Min Worker Priority</span>
+                    <span class="detail-value">
+                        <select @key="(job.MinWorkerPriority, prioritySaves)" disabled="@savingPriority"
+                                @onchange="e => UpdatePriorities(new JobUpdate { MinWorkerPriority = (string)e.Value! })">
+                            <option value="@PriorityNames.AnyWorker" selected="@(job.MinWorkerPriority == null)">Any worker</option>
+                            @foreach (var priority in workerPriorities)
+                            {
+                                <option value="@priority.Name" selected="@(priority.Id == job.MinWorkerPriority?.Id)">@priority.Name</option>
+                            }
+                        </select>
+                    </span>
 
-                <span class="detail-label">Job Priority</span>
-                <span class="detail-value">@job.Priority.Name</span>
+                    <span class="detail-label">Job Priority</span>
+                    <span class="detail-value">
+                        <select @key="(job.Priority, prioritySaves)" disabled="@savingPriority"
+                                @onchange="e => UpdatePriorities(new JobUpdate { Priority = (string)e.Value! })">
+                            @foreach (var priority in jobPriorities)
+                            {
+                                <option value="@priority.Name" selected="@(priority.Id == job.Priority.Id)">@priority.Name</option>
+                            }
+                        </select>
+                        @if (priorityError != null)
+                        {
+                            <span style="margin-left: 1rem; color: var(--error, red);">@priorityError</span>
+                        }
+                    </span>
+                }
+                else
+                {
+                    <span class="detail-label">Min Worker Priority</span>
+                    <span class="detail-value">@(job.MinWorkerPriority?.Name ?? "Any worker")</span>
+
+                    <span class="detail-label">Job Priority</span>
+                    <span class="detail-value">@job.Priority.Name</span>
+                }
 
                 @if (job.DiskUse is { } disk)
                 {
@@ -183,9 +217,16 @@ else
     private string? loadedId;
     private bool loading = true;
 
+    private IReadOnlyList<PriorityRef> workerPriorities = [];
+    private IReadOnlyList<PriorityRef> jobPriorities = [];
+    private bool savingPriority;
+    private int prioritySaves;
+    private string? priorityError;
+
     protected override void OnInitialized()
     {
         UIEvents.OnJobsChanged += OnJobsChanged;
+        UIEvents.OnPrioritiesChanged += OnPrioritiesChanged;
     }
 
     // The router reuses this component across /jobs/{a} → /jobs/{b} — which is exactly what Retry does — so the lookup belongs here rather than in OnInitializedAsync, which would keep showing the first job under the second job's URL.
@@ -199,15 +240,66 @@ else
         loadedId = Id;
         job = null;
         estimate = null;
+        priorityError = null;
         loading = true;
         jobGuid = Guid.TryParse(Id, out var parsed) ? parsed : default;
 
         if (jobGuid != default)
         {
             (job, estimate) = await FetchJobAsync(jobGuid);
+            await LoadPrioritiesAsync();
         }
 
         loading = false;
+    }
+
+    private async void OnPrioritiesChanged()
+    {
+        try
+        {
+            await LoadPrioritiesAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Reloading the priorities for job {JobId} after a priority change failed", jobGuid);
+        }
+    }
+
+    private async Task LoadPrioritiesAsync()
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var priorities = scope.ServiceProvider.GetRequiredService<PriorityRepository>();
+        workerPriorities = (await priorities.GetAllAsync(PriorityKind.Worker)).Select(PriorityRepository.ToRef).ToList();
+        jobPriorities = (await priorities.GetAllAsync(PriorityKind.Job)).Select(PriorityRepository.ToRef).ToList();
+    }
+
+    private async Task UpdatePriorities(JobUpdate update)
+    {
+        savingPriority = true;
+        priorityError = null;
+        StateHasChanged();
+
+        try
+        {
+            // A job no longer queued needs no message here: the refetch below shows its new status, and the selects give way to plain text.
+            await Scheduler.UpdateQueuedJobAsync(jobGuid, update);
+            (job, estimate) = await FetchJobAsync(jobGuid);
+        }
+        catch (InvalidSubmissionException ex)
+        {
+            priorityError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Changing the priorities of job {JobId} failed", jobGuid);
+            priorityError = $"Changing the priorities failed: {ex.Message}";
+        }
+        finally
+        {
+            savingPriority = false;
+            prioritySaves++;
+        }
     }
 
     private async void OnJobsChanged()
@@ -229,6 +321,11 @@ else
             }
 
             (job, estimate) = fetched;
+            // It is shown only beside the selects, so once they are gone it is stale; a job handed back to the queue mustn't bring an old one back.
+            if (job?.Status != JobStatus.Queued)
+            {
+                priorityError = null;
+            }
             await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)
@@ -277,5 +374,6 @@ else
     public void Dispose()
     {
         UIEvents.OnJobsChanged -= OnJobsChanged;
+        UIEvents.OnPrioritiesChanged -= OnPrioritiesChanged;
     }
 }
