@@ -103,54 +103,14 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Workspaces</h2>
-        @if (worker.Workspaces.Count > 0)
+        @if (worker.Workspaces.Count > 0 || worker.ShowsMirrors)
         {
-            <div class="table-scroll">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Path</th>
-                            <th>Size</th>
-                            <th>Last Used</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var ws in worker.Workspaces)
-                        {
-                            <tr>
-                                <td>
-                                    @ws.Name
-                                    <WorkspaceInUse Workspace="ws" />
-                                </td>
-                                <td><code>@ws.Path</code></td>
-                                <td>@DisplayFormat.MeasuredSize(ws.Measured, ws.SizeBytes)</td>
-                                <td>
-                                    <TimeAgo When="ws.LastUsed" />
-                                </td>
-                                <td>
-                                    @if (worker.IsConnected)
-                                    {
-                                        <button class="btn btn-danger"
-                                                disabled="@(ws.InUse || IsDeleting(ws.Name))"
-                                                title="@(ws.InUse ? WorkspaceInUse.Reason : null)"
-                                                @onclick="() => DeleteWorkspace(ws.Name)">Delete</button>
-                                    }
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
+            <WorkspaceTable Workers="[worker]" StorageKey="worker-workspaces" Defaults="WorkspaceColumns" Exclude="WorkerOwnColumns"
+                            Delete="target => DeleteWorkspace(target.Workspace)" IsDeleting="(_, workspace) => IsDeleting(workspace)" />
         }
         else
         {
             <p style="color: var(--text-secondary);">No workspaces</p>
-        }
-        @if (worker.ShowsMirrors)
-        {
-            <p style="color: var(--text-secondary);">Git mirrors: @DisplayFormat.MeasuredSize(true, worker.MirrorsSizeBytes)</p>
         }
         <p style="color: var(--text-secondary);">
             Disk: <DiskFree Worker="worker" />
@@ -272,6 +232,7 @@ else
     private IReadOnlyDictionary<Guid, TimeSpan> estimates = new Dictionary<Guid, TimeSpan>();
     private static readonly IReadOnlyList<string> JobColumns = ["id", "status", "repository", "ref", "script", "duration"];
     private static readonly IReadOnlyCollection<string> WorkerOwnColumns = ["worker"];
+    private static readonly IReadOnlyList<string> WorkspaceColumns = ["workspace", "path", "size", "last-used", "delete"];
     private bool loading = true;
     private HashSet<string> deletingWorkspaces = new();
     private string? deleteError;

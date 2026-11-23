@@ -54,55 +54,7 @@
 {
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Workspaces</h2>
-        <div class="table-scroll">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Worker</th>
-                        <th>Workspace</th>
-                        <th>Size</th>
-                        <th>Last Used</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var worker in workers)
-                    {
-                        @foreach (var ws in worker.Workspaces.OrderByDescending(ws => ws.LastUsed))
-                        {
-                            <tr @key="(worker.Id, ws.Name)">
-                                <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
-                                <td>
-                                    @ws.Name
-                                    <WorkspaceInUse Workspace="ws" />
-                                </td>
-                                <td>@DisplayFormat.MeasuredSize(ws.Measured, ws.SizeBytes)</td>
-                                <td><TimeAgo When="ws.LastUsed" /></td>
-                                <td>
-                                    @if (worker.IsConnected)
-                                    {
-                                        <button class="btn btn-danger"
-                                                disabled="@(ws.InUse || IsDeleting(worker.Id, ws.Name))"
-                                                title="@(ws.InUse ? WorkspaceInUse.Reason : null)"
-                                                @onclick="() => DeleteWorkspace(worker.Id, ws.Name)">Delete</button>
-                                    }
-                                </td>
-                            </tr>
-                        }
-                        @if (worker.ShowsMirrors)
-                        {
-                            <tr @key="(worker.Id, MirrorsRowKey)">
-                                <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
-                                <td><em>git mirrors</em></td>
-                                <td>@DisplayFormat.MeasuredSize(true, worker.MirrorsSizeBytes)</td>
-                                <td>-</td>
-                                <td></td>
-                            </tr>
-                        }
-                    }
-                </tbody>
-            </table>
-        </div>
+        <WorkspaceTable Workers="workers" StorageKey="workspaces" Defaults="WorkspaceColumns" Delete="target => DeleteWorkspace(target.WorkerId, target.Workspace)" IsDeleting="IsDeleting" />
     </div>
 }
 
@@ -139,6 +91,7 @@
     }
 
     private IReadOnlyList<TableColumn<WorkerView>> workerColumns = [];
+    private static readonly IReadOnlyList<string> WorkspaceColumns = ["worker", "workspace", "size", "last-used", "delete"];
 
     protected override void OnInitialized()
     {
@@ -195,9 +148,6 @@
         UIEvents.OnPrioritiesChanged -= OnChanged;
         UIEvents.OnJobsChanged -= OnChanged;
     }
-
-    // Workspace names can't start with a dot, so this never collides with one
-    private const string MirrorsRowKey = ".mirrors";
 
     private RenderFragment PriorityCell(WorkerView worker)
     {

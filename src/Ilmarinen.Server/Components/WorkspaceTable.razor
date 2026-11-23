@@ -1,0 +1,98 @@
+@using Ilmarinen.Server.Services
+
+<DataTable Items="rows" Columns="columns" StorageKey="@StorageKey" RowKey="row => (row.Worker.Id, row.Workspace?.Name ?? MirrorsRowKey)" Exclude="Exclude" />
+
+@code {
+    /// <summary>The workers whose workspaces to list; each worker's git mirrors list as a row of their own.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<WorkerView> Workers { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public string StorageKey { get; set; } = "";
+
+    /// <summary>The columns shown until the viewer says otherwise, in order; the rest of the catalog follows them, hidden.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<string> Defaults { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyCollection<string>? Exclude { get; set; }
+
+    [Parameter, EditorRequired]
+    public EventCallback<(Guid WorkerId, string Workspace)> Delete { get; set; }
+
+    [Parameter, EditorRequired]
+    public Func<Guid, string, bool> IsDeleting { get; set; } = default!;
+
+    /// <summary>A row: one of a worker's workspaces, or with no workspace, its git mirrors.</summary>
+    private sealed record Row(WorkerView Worker, WorkspaceView? Workspace);
+
+    /// <summary>Workspace names never start with a dot, so this can't collide with one.</summary>
+    private const string MirrorsRowKey = ".mirrors";
+
+    private IReadOnlyList<TableColumn<Row>> columns = [];
+    private IReadOnlyList<Row> rows = [];
+
+    protected override void OnInitialized()
+    {
+        IReadOnlyList<TableColumn<Row>> catalog =
+        [
+            new("worker", "Worker", row => @<WorkerLink WorkerId="row.Worker.Id" WorkerName="@row.Worker.Name" />) { SortKey = row => row.Worker.Name },
+            new("workspace", "Workspace", WorkspaceCell) { SortKey = row => row.Workspace?.Name },
+            new("path", "Path", row => row.Workspace is { } ws ? @<code>@ws.Path</code> : @<text>-</text>) { SortKey = row => row.Workspace?.Path },
+            new("size", "Size", SizeCell) { SortKey = row => row.Workspace is { } ws ? ws.SizeBytes : row.Worker.MirrorsSizeBytes, FirstDescending = true },
+            new("last-used", "Last Used", LastUsedCell) { SortKey = row => row.Workspace?.LastUsed, FirstDescending = true },
+            new("delete", "Delete", DeleteCell),
+        ];
+        columns = TableColumns.ShownFirst(catalog, Defaults);
+    }
+
+    protected override void OnParametersSet()
+    {
+        rows = Workers
+            .SelectMany(worker => worker.Workspaces
+                .OrderByDescending(ws => ws.LastUsed)
+                .Select(ws => new Row(worker, ws))
+                .Concat(worker.ShowsMirrors ? [new Row(worker, null)] : []))
+            .ToList();
+    }
+
+    private RenderFragment WorkspaceCell(Row row)
+    {
+        if (row.Workspace is not { } ws)
+        {
+            return @<em>git mirrors</em>;
+        }
+        return @<text>@ws.Name <WorkspaceInUse Workspace="ws" /></text>;
+    }
+
+    private RenderFragment SizeCell(Row row)
+    {
+        if (row.Workspace is not { } ws)
+        {
+            return @<text>@DisplayFormat.MeasuredSize(true, row.Worker.MirrorsSizeBytes)</text>;
+        }
+        return @<text>@DisplayFormat.MeasuredSize(ws.Measured, ws.SizeBytes)</text>;
+    }
+
+    private RenderFragment LastUsedCell(Row row)
+    {
+        if (row.Workspace is not { } ws)
+        {
+            return @<text>-</text>;
+        }
+        return @<TimeAgo When="ws.LastUsed" />;
+    }
+
+    /// <summary>Only a connected worker can delete, and the mirrors aren't the viewer's to delete.</summary>
+    private RenderFragment DeleteCell(Row row)
+    {
+        if (row.Workspace is not { } ws || !row.Worker.IsConnected)
+        {
+            return @<text></text>;
+        }
+        return @<button class="btn btn-danger"
+                        disabled="@(ws.InUse || IsDeleting(row.Worker.Id, ws.Name))"
+                        title="@(ws.InUse ? WorkspaceInUse.Reason : null)"
+                        @onclick="() => Delete.InvokeAsync((row.Worker.Id, ws.Name))">Delete</button>;
+    }
+}
