@@ -5,6 +5,7 @@
 @using Microsoft.Extensions.DependencyInjection
 @inject IServiceScopeFactory ScopeFactory
 @inject NavigationManager Navigation
+@inject BrowserTimeZone TimeZone
 
 <h1 class="page-title">Repository</h1>
 
@@ -99,7 +100,7 @@
                                 <td><PipelineLink PipelineId="p.Id" PipelineName="@p.Name" /></td>
                                 <td>@p.DefaultRef</td>
                                 <td>@p.ScriptPath</td>
-                                <td>@(p.Schedule ?? "-")</td>
+                                <td>@(p.Schedule is { } schedule ? DisplayFormat.LocalCron(schedule, _browserTz) : "-")</td>
                             </tr>
                         }
                     }
@@ -132,11 +133,21 @@ else
     private string editRepoUrl = "";
     private string editGitToken = "";
     private bool removingToken;
+    private TimeZoneInfo? _browserTz;
 
     protected override async Task OnInitializedAsync()
     {
         await RefreshAsync();
         loading = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _browserTz = await TimeZone.GetAsync();
+            StateHasChanged();
+        }
     }
 
     private async Task RefreshAsync()
