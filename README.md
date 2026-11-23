@@ -226,7 +226,7 @@ The Priorities page manages both lists: add, rename, move up and down, choose th
 
 ### Pausing a Worker
 
-The Pause button on the Workers page (or a worker's own page) stops the server sending that worker new jobs; a job it is already running carries on. It works whether or not the worker is connected, lasts across reconnects and server restarts, and holds until Unpause. The worker itself is never told. A paused worker doesn't count as available, so jobs only it could take are reported as stuck.
+Each worker has a mode, set on the Workers page or its own page. *Paused* stops the server sending that worker new jobs; a job it is already running carries on. It works whether or not the worker is connected, lasts across reconnects and server restarts, and holds until the mode changes. The worker itself is never told. A paused worker doesn't count as available, so jobs only it could take are reported as stuck. *Normal* is the default. *Even in use* sends a worker on a machine people use (see "Machines people use" in `deploy/worker-docker/README.md`) jobs even while someone is at it: its "in use" is advisory, and each job tells it to take the job anyway. Going to sleep or shutting down still holds it. A worker older than protocol v2 can't take a job while in use, so the mode does nothing for it until it updates, and its status says so.
 
 ### Disk Space
 

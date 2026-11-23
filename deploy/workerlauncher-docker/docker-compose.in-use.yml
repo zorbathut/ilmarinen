@@ -5,7 +5,8 @@
 # Someone is using the machine if there has been keyboard or mouse input in the last 30 minutes
 # (ILMARINEN_IN_USE_IDLE_MINUTES), or another program holds a logind inhibitor keeping it awake
 # (whether a video or a call does depends on the desktop; check with systemd-inhibit --list), unless
-# the screen is locked. A job already running carries on; the worker just takes nothing new.
+# the screen is locked. A job already running carries on; the worker just takes nothing new, unless
+# its mode on the Workers page is "Even in use".
 #
 # Input comes from the host's /dev/input event devices, mounted read-only below. The screen lock and
 # other programs' inhibitors come from logind, over the D-Bus socket docker-compose.inhibit-sleep.yml

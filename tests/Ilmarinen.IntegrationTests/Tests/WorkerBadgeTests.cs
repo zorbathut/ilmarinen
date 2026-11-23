@@ -12,7 +12,7 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [TestFixture]
 public class WorkerBadgeTests
 {
-    private static WorkerView Worker(bool connected = true, bool ready = false, bool busy = false, bool paused = false, DiagnosticStatus? diagnostic = null, WorkerHold? hold = null, bool waking = false, DateTimeOffset? wakeFailedAt = null, bool noRoom = false)
+    private static WorkerView Worker(bool connected = true, bool ready = false, bool busy = false, bool paused = false, DiagnosticStatus? diagnostic = null, WorkerHold? hold = null, bool waking = false, DateTimeOffset? wakeFailedAt = null, bool noRoom = false, bool holdWaived = false, WorkerMode? mode = null)
     {
         return new WorkerView
         {
@@ -22,7 +22,8 @@ public class WorkerBadgeTests
             Priority = new PriorityRef(Guid.NewGuid(), "Default"),
             IsConnected = connected,
             IsReady = ready,
-            Mode = paused ? WorkerMode.Paused : WorkerMode.Normal,
+            Mode = mode ?? (paused ? WorkerMode.Paused : WorkerMode.Normal),
+            HoldWaived = holdWaived,
             Hold = hold,
             IsWaking = waking,
             WakeFailedAt = wakeFailedAt,
@@ -127,5 +128,32 @@ public class WorkerBadgeTests
         Assert.That(WorkerBadge.GetStatusLabel(blocked), Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(connected: false))));
         Assert.That(WorkerBadge.GetStatusDetail(blocked), Is.Not.Null.And.Not.Empty);
         Assert.That(WorkerBadge.GetBadgeClass(Worker(connected: false, waking: true, noRoom: true)), Is.EqualTo(WorkerBadge.GetBadgeClass(Worker(connected: false, waking: true))), "being woken still shows");
+    }
+
+    [Test]
+    public void AWaivedInUseHold_IsANote_NotABlocker()
+    {
+        Assert.Multiple(() =>
+        {
+            var ready = Worker(ready: true, hold: WorkerHold.InUse, holdWaived: true, mode: WorkerMode.EvenWhileInUse);
+            Assert.That(WorkerBadge.GetBadgeClass(ready), Is.EqualTo(WorkerBadge.GetBadgeClass(Worker(ready: true))), "ready: the light of any ready worker");
+            Assert.That(WorkerBadge.GetStatusLabel(ready), Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(ready: true))), "but it says it is in use");
+
+            var busy = Worker(busy: true, hold: WorkerHold.InUse, holdWaived: true, mode: WorkerMode.EvenWhileInUse);
+            Assert.That(WorkerBadge.GetBadgeClass(busy), Is.Not.EqualTo(WorkerBadge.GetBadgeClass(Worker(busy: true, hold: WorkerHold.InUse))), "busy: not held, it will take the next job");
+            Assert.That(WorkerBadge.GetStatusLabel(busy), Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(busy: true, hold: WorkerHold.InUse))));
+
+            var notReady = Worker(hold: WorkerHold.InUse, holdWaived: true, mode: WorkerMode.EvenWhileInUse);
+            Assert.That(WorkerBadge.GetStatusLabel(notReady), Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(hold: WorkerHold.InUse))), "not ready for some other reason, not for being in use");
+        });
+    }
+
+    [Test]
+    public void AWorkerTooOldToTakeJobsWhileInUse_SaysWhyTheOverrideDoesNothing()
+    {
+        var older = Worker(hold: WorkerHold.InUse, mode: WorkerMode.EvenWhileInUse) with { SpeaksTooOldAProtocolToTakeJobsWhileInUse = true };
+
+        Assert.That(WorkerBadge.GetBadgeClass(older), Is.EqualTo(WorkerBadge.GetBadgeClass(Worker(hold: WorkerHold.InUse))), "still held");
+        Assert.That(WorkerBadge.GetStatusLabel(older), Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(hold: WorkerHold.InUse))));
     }
 }

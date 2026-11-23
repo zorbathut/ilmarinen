@@ -65,7 +65,7 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Hands queued jobs to ready workers: each queued job in dispatch order (highest job priority, then oldest) goes to the highest-priority ready worker that qualifies for it, preferring one that holds its workspace (<see cref="DispatchPlan"/>). Nothing running is ever displaced for a higher-priority job. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or it is unpaused — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
+    /// Hands queued jobs to ready workers: each queued job in dispatch order (highest job priority, then oldest) goes to the highest-priority ready worker that qualifies for it, preferring one that holds its workspace (<see cref="DispatchPlan"/>). Nothing running is ever displaced for a higher-priority job. Called whenever readiness or the queue may have changed — a job is submitted or handed back, a worker resumes or reports a new state, a worker's priority changes or its mode stops holding it back — and keeps going until no ready worker will take another job, so a queued job never sits behind an idle worker that meets its minimum priority.
     ///
     /// The matching is greedy: a job offered first takes its best worker even when a later job could only have run there, and then waits.
     ///
@@ -106,13 +106,13 @@ public class JobScheduler
                     using (await _sessions.LockAsync(worker.WorkerId))
                     {
                         var session = _sessions.ByWorker(worker.WorkerId);
-                        if (session == null || !await workers.IsReadyAsync(session))
+                        if (session == null || await workers.CheckReadyAsync(session) is not { Ready: true } check)
                         {
                             free.Remove(worker);
                             continue;
                         }
 
-                        if (await TryAssignAsync(jobs, session, job.Id, wanted, fit))
+                        if (await TryAssignAsync(jobs, session, job.Id, wanted, fit, check.TakeWhileInUse))
                         {
                             free.Remove(worker);
                         }
@@ -130,13 +130,13 @@ public class JobScheduler
     /// <summary>
     /// Hands this queued job to the worker. Returns false, leaving the worker free, when the job can't be handed out after all: it was cancelled meanwhile, or its git token can no longer be decrypted (and it has been failed). Caller holds _assignLock and the worker's session lock, and has confirmed it is ready.
     /// </summary>
-    private async Task<bool> TryAssignAsync(JobRepository jobs, WorkerSession session, Guid jobId, DispatchJob wanted, DiskFit fit)
+    private async Task<bool> TryAssignAsync(JobRepository jobs, WorkerSession session, Guid jobId, DispatchJob wanted, DiskFit fit, bool takeWhileInUse)
     {
         var assignmentId = Guid.NewGuid();
         JobAssignment assignment;
         try
         {
-            assignment = await jobs.GetAssignmentAsync(jobId, assignmentId) with { PredictedWorkspace = wanted.Workspace, DiskNeededBytes = fit.NeededBytes, StartFresh = fit.StartFresh, DiskNeededToReuseBytes = wanted.Need.ReuseBytes };
+            assignment = await jobs.GetAssignmentAsync(jobId, assignmentId) with { PredictedWorkspace = wanted.Workspace, DiskNeededBytes = fit.NeededBytes, StartFresh = fit.StartFresh, DiskNeededToReuseBytes = wanted.Need.ReuseBytes, TakeWhileInUse = takeWhileInUse };
         }
         catch (CryptographicException ex)
         {
@@ -274,7 +274,7 @@ public class JobScheduler
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
-        // Under the dispatch lock, so once a pause returns no dispatch can still be acting on the worker as unpaused.
+        // Under the dispatch lock, so once the change returns no dispatch can still be acting on the old mode: none sends a paused worker a job, nor tells a worker set back to Normal to take one while in use.
         var updated = await UnderDispatchLockAsync(() => workers.SetModeAsync(workerId, mode));
 
         if (!updated)

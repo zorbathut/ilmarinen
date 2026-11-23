@@ -23,7 +23,7 @@ public static class WorkerBadge
         {
             return "paused";
         }
-        if (w.Hold != null)
+        if (w.Hold != null && !w.HoldWaived)
         {
             return "held";
         }
@@ -55,12 +55,21 @@ public static class WorkerBadge
         // A degraded worker still takes jobs, so Ready/Busy — the thing an operator actually scans this column
         // for — has to survive; degraded rides along rather than replacing it.
         // Not ready without being busy is an idle worker the server is holding back: a host re-check owed, a bundle update pending, or a reconnect not yet resumed.
+        // A hold the worker's mode waives (someone at the machine, and it is set to take jobs even so) is a note on the label, not a reason it isn't ready.
         var busy = w.CurrentJobs.Count > 0 || w.Diagnostic?.Status == DiagnosticStatus.Running;
-        var hold = w.Hold is { } h ? HoldLabel(h) : null;
+        var hold = w.Hold is { } h && !w.HoldWaived ? HoldLabel(h) : null;
         var label = w.IsReady ? (w.NoRoom != null ? Blocked : "Ready")
             : busy ? $"Busy{paused}{(hold != null ? $", {hold.ToLowerInvariant()}" : "")}"
             : w.IsPaused ? "Paused"
             : hold ?? "Not ready";
+        if (w.HoldWaived)
+        {
+            label += " (in use)";
+        }
+        else if (w.Hold == WorkerHold.InUse && w.Mode == WorkerMode.EvenWhileInUse && w.SpeaksTooOldAProtocolToTakeJobsWhileInUse)
+        {
+            label += " (needs a newer worker to take jobs anyway)";
+        }
         if (w.Diagnostic?.Status == DiagnosticStatus.Degraded)
         {
             return $"{label} (degraded)";

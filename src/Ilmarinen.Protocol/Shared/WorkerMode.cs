@@ -7,5 +7,8 @@ public enum WorkerMode
     Normal = 0,
 
     /// <summary>Takes no new jobs, connected or not.</summary>
-    Paused = 1
+    Paused = 1,
+
+    /// <summary>Takes new jobs even while it says someone is using its machine, which is advisory; any other hold still holds it.</summary>
+    EvenWhileInUse = 2
 }

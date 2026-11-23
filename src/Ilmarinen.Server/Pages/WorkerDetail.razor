@@ -35,13 +35,10 @@
             <span class="detail-value">
                 <span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span>
                 @WorkerBadge.GetStatusLabel(worker)
-                <button class="btn" style="margin-left: 1rem;" disabled="@savingPause" @onclick="TogglePause"
-                        title="@(worker.IsPaused ? "Let the server send this worker jobs again" : "Send this worker no new jobs; what it is running carries on")">
-                    @(worker.IsPaused ? "Unpause" : "Pause")
-                </button>
-                @if (pauseError != null)
+                <span style="margin-left: 1rem;"><WorkerModeSelect Mode="worker.Mode" Disabled="savingMode" OnChange="SetMode" /></span>
+                @if (modeError != null)
                 {
-                    <span style="margin-left: 1rem; color: var(--error);">@pauseError</span>
+                    <span style="margin-left: 1rem; color: var(--error);">@modeError</span>
                 }
             </span>
 
@@ -241,8 +238,8 @@ else
     private HashSet<string> deletingWorkspaces = new();
     private string? deleteError;
     private string? diagnosticError;
-    private bool savingPause;
-    private string? pauseError;
+    private bool savingMode;
+    private string? modeError;
     private string? macInput;
     private bool macLoaded;
     private bool savingMac;
@@ -289,30 +286,31 @@ else
         return $"{(int)d.TotalMinutes}m{d.Seconds:00}s";
     }
 
-    private async Task TogglePause()
+    private async Task SetMode(WorkerMode mode)
     {
         if (worker == null)
         {
             return;
         }
 
-        savingPause = true;
-        pauseError = null;
+        savingMode = true;
+        modeError = null;
         try
         {
-            if (!await Scheduler.SetWorkerModeAsync(worker.Id, worker.IsPaused ? WorkerMode.Normal : WorkerMode.Paused))
+            if (!await Scheduler.SetWorkerModeAsync(worker.Id, mode))
             {
-                pauseError = "Worker not found.";
+                modeError = "Worker not found.";
             }
             await RefreshAsync(worker.Id);
         }
         catch (Exception ex)
         {
-            pauseError = $"Failed to change pause: {ex.Message}";
+            Logger.LogError(ex, "Setting worker {WorkerId}'s mode failed", worker.Id);
+            modeError = $"Failed to change the mode: {ex.Message}";
         }
         finally
         {
-            savingPause = false;
+            savingMode = false;
         }
     }
 

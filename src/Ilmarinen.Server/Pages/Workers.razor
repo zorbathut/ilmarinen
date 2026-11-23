@@ -73,7 +73,7 @@
     private HashSet<string> deletingWorkspaces = new();
     private HashSet<string> revokingWorkers = new();
     private HashSet<Guid> savingPriority = new();
-    private HashSet<Guid> savingPause = new();
+    private HashSet<Guid> savingMode = new();
     private int prioritySaves;
     private string? actionError;
     private string newWorkerName = "";
@@ -189,10 +189,7 @@
     private RenderFragment ActionsCell(WorkerView worker)
     {
         return @<text>
-            <button class="btn"
-                    disabled="@IsSavingPause(worker.Id)"
-                    title="@(worker.IsPaused ? "Let the server send this worker jobs again" : "Send this worker no new jobs; what it is running carries on")"
-                    @onclick="() => TogglePause(worker)">@(worker.IsPaused ? "Unpause" : "Pause")</button>
+            <WorkerModeSelect Mode="worker.Mode" Disabled="@IsSavingMode(worker.Id)" OnChange="mode => SetMode(worker, mode)" />
             <button class="btn btn-danger"
                     disabled="@IsRevoking(worker.Id)"
                     @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
@@ -208,18 +205,20 @@
     private bool IsSavingPriority(Guid workerId) =>
         savingPriority.Contains(workerId);
 
-    private bool IsSavingPause(Guid workerId) =>
-        savingPause.Contains(workerId);
-
-    private async Task TogglePause(WorkerView worker)
+    private bool IsSavingMode(Guid workerId)
     {
-        savingPause.Add(worker.Id);
+        return savingMode.Contains(workerId);
+    }
+
+    private async Task SetMode(WorkerView worker, WorkerMode mode)
+    {
+        savingMode.Add(worker.Id);
         actionError = null;
         StateHasChanged();
 
         try
         {
-            if (!await Scheduler.SetWorkerModeAsync(worker.Id, worker.IsPaused ? WorkerMode.Normal : WorkerMode.Paused))
+            if (!await Scheduler.SetWorkerModeAsync(worker.Id, mode))
             {
                 actionError = "Worker not found.";
             }
@@ -228,11 +227,12 @@
         }
         catch (Exception ex)
         {
-            actionError = $"Failed to change pause: {ex.Message}";
+            Logger.LogError(ex, "Setting worker {WorkerId}'s mode failed", worker.Id);
+            actionError = $"Failed to change the mode: {ex.Message}";
         }
         finally
         {
-            savingPause.Remove(worker.Id);
+            savingMode.Remove(worker.Id);
             StateHasChanged();
         }
     }

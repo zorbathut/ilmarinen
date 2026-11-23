@@ -12,4 +12,11 @@ An entry names the code and says what it does for older workers:
 - `WorkerHub.ReportOutcome`: treats a missing `DiskUse` as unknown, for workers before v3. Test: `DiskUseTests.AnOutcomeWithoutDiskUse_IsStored`.
 ```
 
-There are no entries yet: v1 is the first version.
+## Until v2
+
+- `WorkerReadiness.EffectiveHold`: keeps a worker's in-use hold even in `WorkerMode.EvenWhileInUse` when it speaks v1, which hands back any assignment while it is held (it doesn't know `JobAssignment.TakeWhileInUse`). Going with it:
+  - the version check and `WorkerReadiness.TakesJobsWhileInUseFromVersion`;
+  - `WorkerView.SpeaksTooOldAProtocolToTakeJobsWhileInUse` and the label it gives (`WorkerBadge.GetStatusLabel`);
+  - the README sentence on workers older than protocol v2;
+  - the `protocolVersion` parameters of `DirectedWorker.ReadyAsync`, `ConnectAsync` and `ConnectAsCounterAsync`, and of `WorkerHoldTests.InUseAsync`, unless something else uses them by then.
+  - Tests: `WorkerHoldTests.AnOlderWorkerInUse_StaysHeld_EvenWhileInUse`, `WorkerBadgeTests.AWorkerTooOldToTakeJobsWhileInUse_SaysWhyTheOverrideDoesNothing`, and the `Older` rows of `WorkerReadinessTests.EffectiveHold_WaivesOnlyInUse_OnlyEvenWhileInUse_AndOnlyForAWorkerThatCanTakeTheJob`.

@@ -107,6 +107,8 @@ The machine is in use while there has been keyboard or mouse input in the last 3
 
 Whether a video or a call counts depends on the desktop passing the application's request on to logind, which not every desktop does: check by running `systemd-inhibit --list` while one plays. Block-mode `idle` or `sleep` entries count; delay-mode ones don't. If nothing shows up there, only input counts, and a long film with no input frees the machine after the idle time.
 
+To have a worker take jobs even while someone is at the machine, set its mode to *Even in use* on the Workers page; it still reports being in use, and the server sends it jobs anyway. Going to sleep or shutting down still holds it.
+
 The overlay mounts the host's `/dev/input`, which is every keystroke on the host. The worker keeps only when input happened and on which device, but the container could read more, as it could already do anything as root through the Docker socket. The screen lock and inhibitors come over the D-Bus socket the sleep overlay mounts; without it, only input counts. (That socket alone also has the worker tell the server just before the host sleeps and reconnect as soon as it wakes, so no job is sent to a machine on its way to sleep.)
 
 **File ownership.** Job containers run as the worker process's uid, which is root in this image (the NixOS worker runs as the unprivileged `ilmarinen` user). In a mixed fleet the same pipeline can leave differently-owned files in `/workspace` depending on which worker picked up the job.

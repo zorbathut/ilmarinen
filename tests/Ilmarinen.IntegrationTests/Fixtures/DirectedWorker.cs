@@ -45,10 +45,10 @@ public sealed class DirectedWorker
     }
 
     /// <summary>Registers a worker, connects it and resumes it idle and healthy: one the server can hand a job to.</summary>
-    public static async Task<DirectedWorker> ReadyAsync(IntegrationTestFixture fixture, string name, string connectionId)
+    public static async Task<DirectedWorker> ReadyAsync(IntegrationTestFixture fixture, string name, string connectionId, int protocolVersion = WorkerProtocol.Version)
     {
         var worker = await RegisterAsync(fixture, name);
-        await worker.ConnectAsync(connectionId);
+        await worker.ConnectAsync(connectionId, protocolVersion: protocolVersion);
         await worker.ResumeAsync(worker.Idle());
         return worker;
     }
@@ -68,13 +68,14 @@ public sealed class DirectedWorker
 
     /// <summary>Handshakes on a new connection, the next in this process's count.</summary>
     /// <param name="workspaces">The persistent workspaces the worker says it holds.</param>
-    public Task<SessionAnswer> ConnectAsync(string connectionId, string? bundleHash = null, IReadOnlyList<WorkspaceInfo>? workspaces = null)
+    /// <param name="protocolVersion">The worker protocol version it speaks: an older one, to see what the server does for older workers.</param>
+    public Task<SessionAnswer> ConnectAsync(string connectionId, string? bundleHash = null, IReadOnlyList<WorkspaceInfo>? workspaces = null, int protocolVersion = WorkerProtocol.Version)
     {
-        return ConnectAsCounterAsync(connectionId, ++_counter, bundleHash, workspaces);
+        return ConnectAsCounterAsync(connectionId, ++_counter, bundleHash, workspaces, protocolVersion);
     }
 
     /// <summary>Handshakes on a connection with a chosen counter: a late handshake from an earlier connection, say.</summary>
-    public async Task<SessionAnswer> ConnectAsCounterAsync(string connectionId, long counter, string? bundleHash = null, IReadOnlyList<WorkspaceInfo>? workspaces = null)
+    public async Task<SessionAnswer> ConnectAsCounterAsync(string connectionId, long counter, string? bundleHash = null, IReadOnlyList<WorkspaceInfo>? workspaces = null, int protocolVersion = WorkerProtocol.Version)
     {
         ConnectionId = connectionId;
         Hub = _fixture.CreateHub(connectionId);
@@ -83,7 +84,7 @@ public sealed class DirectedWorker
         var challenge = await Hub.Connect(new WorkerConnect
         {
             WorkerId = WorkerId,
-            ProtocolVersion = WorkerProtocol.Version,
+            ProtocolVersion = protocolVersion,
             Nonce = nonce,
             InstanceId = InstanceId,
             ConnectionCounter = counter,

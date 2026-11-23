@@ -88,16 +88,27 @@ public class WorkerRepository
             .ExecuteUpdateAsync(s => s.SetProperty(w => w.LastSeen, DateTime.UtcNow));
     }
 
-    /// <summary>Whether the worker's current session can be handed a job right now, reading the database for its pause and its running jobs. A worker with no row (revoked) is never ready.</summary>
-    public async Task<bool> IsReadyAsync(WorkerSession session)
+    /// <summary>Whether the worker's current session can be handed a job right now, and whether the job should say to take it while someone is using the machine, reading the database for its mode and its running jobs. A worker with no row (revoked) is never ready.</summary>
+    public async Task<WorkerReadyCheck> CheckReadyAsync(WorkerSession session)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
         var row = await db.Workers
             .Where(w => w.Id == session.WorkerId)
-            .Select(w => new { Paused = w.Mode == WorkerMode.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .Select(w => new { w.Mode, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .FirstOrDefaultAsync();
-        return row != null && IsReady(session, session.State?.Hold, row.Paused, row.Busy);
+        return new WorkerReadyCheck(row != null && IsReadyInMode(session, row.Mode, row.Busy), row?.Mode == WorkerMode.EvenWhileInUse);
+    }
+
+    /// <summary>Readiness from the worker's stored mode: its pause, and the hold it is judged by (<see cref="WorkerReadiness.EffectiveHold"/>).</summary>
+    private bool IsReadyInMode(WorkerSession session, WorkerMode mode, bool hasRunningJob)
+    {
+        return IsReady(session, EffectiveHold(session, mode), mode == WorkerMode.Paused, hasRunningJob);
+    }
+
+    private static WorkerHold? EffectiveHold(WorkerSession session, WorkerMode mode)
+    {
+        return WorkerReadiness.EffectiveHold(session.State?.Hold, mode, session.ProtocolVersion);
     }
 
     private bool IsReady(WorkerSession session, WorkerHold? hold, bool paused, bool hasRunningJob)
@@ -123,7 +134,7 @@ public class WorkerRepository
         var workerIds = sessions.Select(s => s.WorkerId).ToList();
         var rows = (await db.Workers
             .Where(w => workerIds.Contains(w.Id))
-            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, Paused = w.Mode == WorkerMode.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, w.Mode, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .ToListAsync()).ToDictionary(w => w.Id);
 
         return sessions
@@ -131,7 +142,7 @@ public class WorkerRepository
             .Select(s =>
             {
                 var row = rows[s.WorkerId];
-                return new ConnectedWorker(s, row.Name, row.Rank, row.Paused, row.Busy, s.State?.Hold);
+                return new ConnectedWorker(s, row.Name, row.Rank, row.Mode == WorkerMode.Paused, row.Busy, EffectiveHold(s, row.Mode));
             })
             .ToList();
     }
@@ -214,14 +225,14 @@ public class WorkerRepository
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
         var rows = await db.Workers
-            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, Paused = w.Mode == WorkerMode.Paused, w.WakeMacAddress, w.LastSeen, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, w.Mode, w.WakeMacAddress, w.LastSeen, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .ToListAsync();
 
         return rows.Select(w =>
         {
             var session = _sessions.ByWorker(w.Id);
             var lastSeen = new DateTimeOffset(DateTime.SpecifyKind(w.LastSeen, DateTimeKind.Utc));
-            return new Wake.WakeWorker(w.Id, w.Name, w.Rank, w.Paused, w.WakeMacAddress, lastSeen, session != null, session != null && IsReady(session, session.State?.Hold, w.Paused, w.Busy), w.Busy);
+            return new Wake.WakeWorker(w.Id, w.Name, w.Rank, w.Mode == WorkerMode.Paused, w.WakeMacAddress, lastSeen, session != null, session != null && IsReadyInMode(session, w.Mode, w.Busy), w.Busy);
         }).ToList();
     }
 
@@ -374,7 +385,7 @@ public class WorkerRepository
             .Select(j => j.Id)
             .ToListAsync();
 
-        var isReady = session != null && IsReady(session, session.State?.Hold, w.Mode == WorkerMode.Paused, currentJobIds.Count > 0);
+        var isReady = session != null && IsReadyInMode(session, w.Mode, currentJobIds.Count > 0);
 
         return new WorkerView
         {
@@ -390,6 +401,8 @@ public class WorkerRepository
             Priority = PriorityRepository.ToRef(w.Priority!),
             Mode = w.Mode,
             Hold = session?.State?.Hold,
+            HoldWaived = session?.State?.Hold != null && EffectiveHold(session, w.Mode) == null,
+            SpeaksTooOldAProtocolToTakeJobsWhileInUse = session != null && session.ProtocolVersion < WorkerReadiness.TakesJobsWhileInUseFromVersion,
             WakeMacAddress = w.WakeMacAddress,
             IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
             WakeFailedAt = session == null ? _wakeStatus.FailedAt(w.Id) : null,
@@ -426,7 +439,7 @@ public class WorkerRepository
         return workers.Select(w =>
         {
             var session = _sessions.ByWorker(w.Id);
-            var isReady = session != null && IsReady(session, session.State?.Hold, w.Mode == WorkerMode.Paused, workerToJobs[w.Id].Any());
+            var isReady = session != null && IsReadyInMode(session, w.Mode, workerToJobs[w.Id].Any());
             _workerDiagnostics.TryGetValue(w.Id, out var diagnostic);
             _workerUsage.TryGetValue(w.Id, out var usage);
 
@@ -444,6 +457,8 @@ public class WorkerRepository
                 Priority = PriorityRepository.ToRef(w.Priority!),
                 Mode = w.Mode,
                 Hold = session?.State?.Hold,
+                HoldWaived = session?.State?.Hold != null && EffectiveHold(session, w.Mode) == null,
+                SpeaksTooOldAProtocolToTakeJobsWhileInUse = session != null && session.ProtocolVersion < WorkerReadiness.TakesJobsWhileInUseFromVersion,
                 WakeMacAddress = w.WakeMacAddress,
                 IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
                 WakeFailedAt = session == null ? _wakeStatus.FailedAt(w.Id) : null,
@@ -457,6 +472,9 @@ public class WorkerRepository
         }).ToList();
     }
 }
+
+/// <summary>Whether a worker can be handed a job now, and whether the job should say to take it although someone may be using its machine (its mode says so).</summary>
+public record WorkerReadyCheck(bool Ready, bool TakeWhileInUse);
 
 /// <summary>An available worker, with the rank of its priority.</summary>
 public record AvailableWorker(Guid WorkerId, int Rank);
@@ -493,8 +511,14 @@ public record WorkerView
         get { return Mode == WorkerMode.Paused; }
     }
 
-    /// <summary>Why the worker says it is taking no new jobs, if it is.</summary>
+    /// <summary>Why the worker says it is taking no new jobs, if it is; the server may not hold it to that (<see cref="HoldWaived"/>).</summary>
     public WorkerHold? Hold { get; init; }
+
+    /// <summary>The worker's <see cref="Hold"/> doesn't hold it back: it is someone using its machine, and its mode says to take jobs even so (<see cref="WorkerReadiness.EffectiveHold"/>).</summary>
+    public bool HoldWaived { get; init; }
+
+    /// <summary>Its connection speaks a protocol older than the one that lets a worker take a job while someone is using its machine, so its mode can't waive that hold.</summary>
+    public bool SpeaksTooOldAProtocolToTakeJobsWhileInUse { get; init; }
 
     /// <summary>The MAC address the worker's host is woken by, if it can be.</summary>
     public string? WakeMacAddress { get; init; }

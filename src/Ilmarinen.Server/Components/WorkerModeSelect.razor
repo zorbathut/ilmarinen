@@ -1,0 +1,64 @@
+@using Ilmarinen.Protocol
+@using Microsoft.Extensions.Logging
+@inject ILogger<WorkerModeSelect> Logger
+
+@* Keyed on the save counter as well as the value: a failed save leaves the stored mode unchanged, so without it the diff is a no-op and the select would keep showing the mode picked instead of the one stored. *@
+<select @key="(Mode, saves)" value="@Mode" disabled="@Disabled" title="@Describe(Mode)" @onchange="Changed">
+    @foreach (var mode in Modes)
+    {
+        <option value="@mode" selected="@(mode == Mode)" title="@Describe(mode)">@Name(mode)</option>
+    }
+</select>
+
+@code {
+    private static readonly WorkerMode[] Modes = [WorkerMode.Paused, WorkerMode.Normal, WorkerMode.EvenWhileInUse];
+
+    [Parameter, EditorRequired]
+    public WorkerMode Mode { get; set; }
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    /// <summary>Saves the mode picked and refreshes what the page shows; awaited, so the select redraws from the stored mode afterwards.</summary>
+    [Parameter, EditorRequired]
+    public EventCallback<WorkerMode> OnChange { get; set; }
+
+    private int saves;
+
+    private async Task Changed(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (!Enum.TryParse<WorkerMode>(value, out var mode) || !Enum.IsDefined(mode))
+        {
+            Logger.LogError("The worker mode select sent {Value}, which is no mode", value);
+            return;
+        }
+        if (mode != Mode)
+        {
+            await OnChange.InvokeAsync(mode);
+        }
+        saves++;
+    }
+
+    private static string Name(WorkerMode mode)
+    {
+        return mode switch
+        {
+            WorkerMode.Paused => "Paused",
+            WorkerMode.Normal => "Normal",
+            WorkerMode.EvenWhileInUse => "Even in use",
+            _ => mode.ToString()
+        };
+    }
+
+    private static string Describe(WorkerMode mode)
+    {
+        return mode switch
+        {
+            WorkerMode.Paused => "Send this worker no new jobs; what it is running carries on",
+            WorkerMode.Normal => "Send this worker jobs, but not while someone is using its machine",
+            WorkerMode.EvenWhileInUse => "Send this worker jobs even while someone is using its machine (only a worker watching for people, with the in-use overlay, ever holds back for that)",
+            _ => mode.ToString()
+        };
+    }
+}

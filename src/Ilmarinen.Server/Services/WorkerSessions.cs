@@ -62,6 +62,15 @@ public static class SessionEpoch
 /// <summary>Whether a worker can be handed a job, derived from what it last reported and the server's own gates rather than from messages that say so.</summary>
 public static class WorkerReadiness
 {
+    /// <summary>The first worker protocol version whose workers take a job that says to take it while someone is using the machine (JobAssignment.TakeWhileInUse).</summary>
+    public const int TakesJobsWhileInUseFromVersion = 2;
+
+    /// <summary>The hold the server goes by: the one the worker reports, except that someone using its machine doesn't hold a worker its operator has set to take jobs even so, if it speaks a protocol that lets it. An older one would hand the job back.</summary>
+    public static WorkerHold? EffectiveHold(WorkerHold? hold, WorkerMode mode, int protocolVersion)
+    {
+        return hold == WorkerHold.InUse && mode == WorkerMode.EvenWhileInUse && protocolVersion >= TakesJobsWhileInUseFromVersion ? null : hold;
+    }
+
     /// <param name="hold">The hold to judge it by: normally the one in its state, but the stuck report asks whether it would be ready without it.</param>
     public static bool IsReady(WorkerSession session, WorkerHold? hold, bool diagnosticOwed, bool paused, bool hasRunningJob, string? serverBundleHash)
     {
