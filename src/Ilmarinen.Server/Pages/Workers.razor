@@ -3,8 +3,10 @@
 @using Ilmarinen.Server.Services
 @using Ilmarinen.Models
 @using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
+@inject ILogger<Workers> Logger
 @inject WorkerRegistrationService RegistrationService
 @inject WorkspaceDeletionService DeletionService
 @inject WorkerMessenger Messenger
@@ -225,7 +227,14 @@
             workers = await FetchWorkersAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch { }
+        catch (ObjectDisposedException ex)
+        {
+            Logger.LogDebug(ex, "Workers page went away mid-refresh");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Refreshing the workers page failed");
+        }
     }
 
     private async Task<IReadOnlyList<WorkerView>> FetchWorkersAsync()

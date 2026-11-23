@@ -4,8 +4,10 @@
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
+@inject ILogger<PipelineDetail> Logger
 @inject JobScheduler Scheduler
 @inject UIEventService UIEvents
 @inject NavigationManager Navigation
@@ -295,7 +297,14 @@ else
             await RefreshAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch { }
+        catch (ObjectDisposedException ex)
+        {
+            Logger.LogDebug(ex, "Pipeline page went away mid-refresh");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Refreshing the pipeline page failed");
+        }
     }
 
     private async Task RefreshAsync()

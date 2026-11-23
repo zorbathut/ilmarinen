@@ -1,8 +1,10 @@
 @page "/"
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
+@inject ILogger<Index> Logger
 @inject UIEventService UIEvents
 
 <h1 class="page-title">Dashboard</h1>
@@ -95,7 +97,14 @@
             await RefreshAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch { }
+        catch (ObjectDisposedException ex)
+        {
+            Logger.LogDebug(ex, "Dashboard page went away mid-refresh");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Refreshing the dashboard page failed");
+        }
     }
 
     private async Task RefreshAsync()
