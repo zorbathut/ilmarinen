@@ -166,36 +166,11 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Artifacts</h2>
-        <div class="table-scroll">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Size</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @if (job.Artifacts?.Count > 0)
-                    {
-                        @foreach (var artifact in job.Artifacts)
-                        {
-                            <tr>
-                                <td>@artifact.Name</td>
-                                <td>@DisplayFormat.Size(artifact.Size)</td>
-                                <td><a href="/api/jobs/@job.Id/artifacts/@artifact.Id/download" class="btn-download" download>Download</a></td>
-                            </tr>
-                        }
-                    }
-                    else
-                    {
-                        <tr>
-                            <td colspan="3" style="text-align: center; color: var(--text-secondary);">No artifacts</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
+        <DataTable Items="job.Artifacts ?? []" Columns="artifactColumns" StorageKey="job-artifacts" RowKey="artifact => artifact.Id">
+            <Empty>
+                <div style="text-align: center; color: var(--text-secondary);">No artifacts</div>
+            </Empty>
+        </DataTable>
     </div>
 }
 else if (loading)
@@ -222,9 +197,17 @@ else
     private bool savingPriority;
     private int prioritySaves;
     private string? priorityError;
+    private IReadOnlyList<TableColumn<ArtifactInfo>> artifactColumns = [];
 
     protected override void OnInitialized()
     {
+        artifactColumns =
+        [
+            new("name", "Name", artifact => @<text>@artifact.Name</text>) { SortKey = artifact => artifact.Name },
+            new("size", "Size", artifact => @<text>@DisplayFormat.Size(artifact.Size)</text>) { SortKey = artifact => artifact.Size, FirstDescending = true },
+            new("created", "Created", artifact => @<text>@artifact.CreatedAt.ToString("yyyy-MM-dd HH:mm")</text>) { SortKey = artifact => artifact.CreatedAt, FirstDescending = true, ShownByDefault = false },
+            new("download", "Download", artifact => @<a href="/api/jobs/@job!.Id/artifacts/@artifact.Id/download" class="btn-download" download>Download</a>),
+        ];
         UIEvents.OnJobsChanged += OnJobsChanged;
         UIEvents.OnPrioritiesChanged += OnPrioritiesChanged;
     }

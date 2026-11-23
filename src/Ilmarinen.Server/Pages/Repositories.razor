@@ -32,36 +32,18 @@
 </div>
 
 <div class="card">
-    <div class="table-scroll">
-        <table>
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>URL</th>
-                    <th>Token</th>
-                    <th>Created</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (repositories != null)
-                {
-                    @foreach (var repo in repositories)
-                    {
-                        <tr>
-                            <td><a href="/repositories/@repo.Id">@repo.Name</a></td>
-                            <td>@DisplayFormat.ShortRepoUrl(repo.RepoUrl)</td>
-                            <td>@(repo.HasGitToken ? "Configured" : "-")</td>
-                            <td>@repo.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                        </tr>
-                    }
-                }
-            </tbody>
-        </table>
-    </div>
+    <DataTable Items="repositories" Columns="columns" StorageKey="repositories" RowKey="repo => repo.Id" />
 </div>
 
 @code {
     private IReadOnlyList<RepositoryInfo>? repositories;
+    private IReadOnlyList<TableColumn<RepositoryInfo>> columns =
+    [
+        new("name", "Name", repo => @<a href="/repositories/@repo.Id">@repo.Name</a>) { SortKey = repo => repo.Name },
+        new("url", "URL", repo => @<text>@DisplayFormat.ShortRepoUrl(repo.RepoUrl)</text>) { SortKey = repo => DisplayFormat.ShortRepoUrl(repo.RepoUrl) },
+        new("token", "Token", repo => @<text>@(repo.HasGitToken ? "Configured" : "-")</text>) { SortKey = repo => repo.HasGitToken },
+        new("created", "Created", repo => @<text>@repo.CreatedAt.ToString("yyyy-MM-dd HH:mm")</text>) { SortKey = repo => repo.CreatedAt, FirstDescending = true },
+    ];
     private string newName = "";
     private string newRepoUrl = "";
     private string newGitToken = "";

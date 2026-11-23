@@ -1,0 +1,266 @@
+@typeparam TItem
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.Logging
+@inject TableLayoutStore Store
+@inject ILogger<DataTable<TItem>> Logger
+
+<div class="table-tools">
+    <details class="table-columns">
+        <summary>Columns</summary>
+        <div class="table-columns-panel">
+            @{ var arrangeable = layout.Order.Select(id => catalog.First(c => c.Id == id)).ToList(); }
+            @for (var i = 0; i < arrangeable.Count; i++)
+            {
+                var column = arrangeable[i];
+                var index = i;
+                var shown = !layout.Hidden.Contains(column.Id);
+                <div class="table-columns-row" @key="column.Id">
+                    <label>
+                        <input type="checkbox" checked="@shown" disabled="@(shown && !layout.CanHide(column.Id))"
+                               @onchange="e => ChangeAsync((bool)e.Value! ? layout.Show(column.Id) : layout.Hide(column.Id))" />
+                        @column.Title
+                    </label>
+                    <button type="button" class="btn-arrange" title="Move @column.Title earlier" disabled="@(index == 0)"
+                            @ref="earlierButtons[column.Id]" @onclick="() => MoveByAsync(column.Id, -1)">↑</button>
+                    <button type="button" class="btn-arrange" title="Move @column.Title later" disabled="@(index == arrangeable.Count - 1)"
+                            @ref="laterButtons[column.Id]" @onclick="() => MoveByAsync(column.Id, 1)">↓</button>
+                </div>
+            }
+            <button type="button" class="btn-arrange table-columns-reset" @onclick="ResetAsync">Reset</button>
+        </div>
+    </details>
+</div>
+<div class="table-scroll">
+    <table>
+        <thead>
+            <tr>
+                @foreach (var column in visible)
+                {
+                    @* The drop target is marked for the dragover handler in _Host.cshtml, which runs in the browser so dragging doesn't send a message per mouse move. *@
+                    <th @key="column.Id" class="@ColumnClass(column)" aria-sort="@AriaSort(column)" draggable="true" data-table-drop
+                        @ondragstart="() => dragging = column.Id" @ondragend="() => dragging = null"
+                        @ondrop="() => DropOnAsync(column.Id)" @ondrop:preventDefault="true">
+                        @if (column.Sortable)
+                        {
+                            <button type="button" class="th-sort" @onclick="() => ChangeAsync(layout.ToggleSort(column.Id, catalog))">
+                                @column.Title<span class="th-sort-mark" aria-hidden="true">@SortMark(column)</span>
+                            </button>
+                        }
+                        else
+                        {
+                            @column.Title
+                        }
+                    </th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @if (Items != null)
+            {
+                @if (Items.Count == 0 && Empty != null)
+                {
+                    <tr>
+                        <td colspan="@visible.Count">@Empty</td>
+                    </tr>
+                }
+                @foreach (var item in layout.Apply(Items, catalog))
+                {
+                    <tr @key="RowKey(item)">
+                        @foreach (var column in visible)
+                        {
+                            <td @key="column.Id" class="@ColumnClass(column)">@column.Cell(item)</td>
+                        }
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    /// <summary>The rows, in the order to show them when the viewer hasn't sorted; null while they load.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<TItem>? Items { get; set; }
+
+    /// <summary>Every column the table can show. Build it once per page: its cells may capture the page, and the table arranges it by id.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<TableColumn<TItem>> Columns { get; set; } = [];
+
+    /// <summary>Names the viewer's saved layout for this table, so it must be distinct per table and stable across releases.</summary>
+    [Parameter, EditorRequired]
+    public string StorageKey { get; set; } = "";
+
+    [Parameter, EditorRequired]
+    public Func<TItem, object> RowKey { get; set; } = default!;
+
+    /// <summary>Columns that mean nothing where this table is, such as a job's worker on that worker's own page.</summary>
+    [Parameter]
+    public IReadOnlyCollection<string>? Exclude { get; set; }
+
+    /// <summary>Shown in place of rows when there are none; with none given, the body is empty.</summary>
+    [Parameter]
+    public RenderFragment? Empty { get; set; }
+
+    private IReadOnlyList<TableColumn<TItem>> catalog = [];
+    private IReadOnlyList<TableColumn<TItem>> visible = [];
+    private TableLayout layout = null!;
+    private bool loadSaved;
+    private bool changedWhileLoading;
+    private string? dragging;
+    private (string Id, int Direction)? refocus;
+    private readonly Dictionary<string, ElementReference> earlierButtons = [];
+    private readonly Dictionary<string, ElementReference> laterButtons = [];
+
+    protected override void OnInitialized()
+    {
+        catalog = Catalog();
+        if (Store.TryGetKnown(StorageKey, out var json))
+        {
+            layout = Resolve(json);
+        }
+        else
+        {
+            layout = TableLayout.Defaults(catalog);
+            loadSaved = true;
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        catalog = Catalog();
+        visible = layout.Visible(catalog);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && loadSaved)
+        {
+            loadSaved = false;
+            // A change the viewer made while the saved layout was on its way is newer than it.
+            if (await Store.LoadAsync(StorageKey) is { } json && !changedWhileLoading)
+            {
+                SetLayout(Resolve(json));
+                StateHasChanged();
+            }
+        }
+
+        if (refocus is var (id, direction))
+        {
+            refocus = null;
+            // At either end the button that moved it is disabled now, so the keyboard goes to its other one.
+            var index = layout.Order.ToList().IndexOf(id);
+            var atEnd = direction < 0 ? index == 0 : index == layout.Order.Count - 1;
+            var buttons = (direction < 0) != atEnd ? earlierButtons : laterButtons;
+            if (buttons.TryGetValue(id, out var button))
+            {
+                await FocusAsync(button);
+            }
+        }
+    }
+
+    private IReadOnlyList<TableColumn<TItem>> Catalog()
+    {
+        return Exclude == null ? Columns : Columns.Where(c => !Exclude.Contains(c.Id)).ToList();
+    }
+
+    private TableLayout Resolve(string? json)
+    {
+        if (json == null)
+        {
+            return TableLayout.Defaults(catalog);
+        }
+        if (TableLayout.Parse(catalog, json) is { } saved)
+        {
+            return saved;
+        }
+        Logger.LogWarning("The saved layout of table {Table} isn't a layout; showing the defaults: {Json}", StorageKey, json);
+        return TableLayout.Defaults(catalog);
+    }
+
+    private void SetLayout(TableLayout next)
+    {
+        layout = next;
+        visible = layout.Visible(catalog);
+    }
+
+    private async Task ChangeAsync(TableLayout next)
+    {
+        changedWhileLoading = true;
+        SetLayout(next);
+        await Store.SaveAsync(StorageKey, layout.Serialize());
+    }
+
+    private async Task ResetAsync()
+    {
+        changedWhileLoading = true;
+        SetLayout(TableLayout.Defaults(catalog));
+        await Store.RemoveAsync(StorageKey);
+    }
+
+    /// <summary>Moves a column one place among the columns the panel lists, and keeps the keyboard on the button that moved it.</summary>
+    private async Task MoveByAsync(string id, int direction)
+    {
+        var to = layout.Order.ToList().IndexOf(id) + direction;
+        if (to < 0 || to >= layout.Order.Count)
+        {
+            return;
+        }
+        refocus = (id, direction);
+        await ChangeAsync(layout.Move(id, to));
+    }
+
+    /// <summary>A drop only counts when it carries one of this table's own headers: a header dragged from another table, or a link or file dragged in, is ignored.</summary>
+    private async Task DropOnAsync(string target)
+    {
+        var dragged = dragging;
+        dragging = null;
+        if (dragged == null || dragged == target)
+        {
+            return;
+        }
+        await ChangeAsync(layout.Move(dragged, layout.Order.ToList().IndexOf(target)));
+    }
+
+    private async Task FocusAsync(ElementReference button)
+    {
+        try
+        {
+            await button.FocusAsync();
+        }
+        catch (Exception ex) when (BrowserInterop.IsCircuitGone(ex))
+        {
+            Logger.LogDebug(ex, "The circuit went away while refocusing a column button of table {Table}", StorageKey);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Refocusing a column button of table {Table} failed", StorageKey);
+        }
+    }
+
+    private string? ColumnClass(TableColumn<TItem> column)
+    {
+        return layout.HidesOnMobile(column) ? "hide-mobile" : null;
+    }
+
+    private string? AriaSort(TableColumn<TItem> column)
+    {
+        if (!column.Sortable)
+        {
+            return null;
+        }
+        if (layout.Sort?.Column != column.Id)
+        {
+            return "none";
+        }
+        return layout.Sort.Descending ? "descending" : "ascending";
+    }
+
+    private string SortMark(TableColumn<TItem> column)
+    {
+        if (layout.Sort?.Column != column.Id)
+        {
+            return "";
+        }
+        return layout.Sort.Descending ? " ▼" : " ▲";
+    }
+}

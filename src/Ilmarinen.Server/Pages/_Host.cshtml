@@ -419,6 +419,43 @@
             background-color: var(--accent);
             text-decoration: none;
         }
+        .table-tools { display: flex; justify-content: flex-end; margin-bottom: 0.25rem; }
+        .table-columns { position: relative; font-size: 0.875rem; }
+        .table-columns > summary { cursor: pointer; color: var(--text-secondary); padding: 0.25rem 0.5rem; }
+        .table-columns-panel {
+            position: absolute;
+            right: 0;
+            z-index: 10;
+            min-width: 14rem;
+            padding: 0.5rem;
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--bg-tertiary);
+            border-radius: 0.25rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        .table-columns-row { display: flex; align-items: center; gap: 0.25rem; }
+        .table-columns-row label { flex: 1; display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0; }
+        .btn-arrange {
+            padding: 0.1rem 0.5rem;
+            background-color: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: none;
+            border-radius: 0.25rem;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        .btn-arrange:disabled { opacity: 0.4; cursor: not-allowed; }
+        .table-columns-reset { margin-top: 0.5rem; width: 100%; }
+        th[draggable="true"] { cursor: grab; }
+        .th-sort {
+            background: none;
+            border: none;
+            padding: 0;
+            color: inherit;
+            font: inherit;
+            cursor: pointer;
+            text-align: left;
+        }
         @@media (max-width: 768px) {
             .layout { flex-direction: column; }
             .sidebar {
@@ -450,6 +487,8 @@
                 padding: 0.6rem 1rem;
             }
             .btn-retry { padding: 0.5rem 0.75rem; font-size: 0.8rem; }
+            .btn-arrange, .table-columns > summary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; }
+            .table-columns-row label { min-height: 44px; }
             .log-option { padding: 0.5rem 0.25rem; }
             .sidebar nav a { padding: 0.85rem 1rem; }
             .logfull-header > a { display: inline-flex; align-items: center; min-height: 44px; }
@@ -462,6 +501,19 @@
     <script src="_framework/blazor.server.js"></script>
     <script>
         window.getBrowserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+        // Table headers rearrange by drag and drop. These run here rather than in C# so a drag doesn't send a message per mouse move; Firefox only starts a drag that carries data.
+        document.addEventListener('dragstart', e => {
+            if (e.target instanceof Element && e.target.matches('th[data-table-drop]')) {
+                e.dataTransfer.setData('text/plain', e.target.textContent.trim());
+                e.dataTransfer.effectAllowed = 'move';
+            }
+        });
+        document.addEventListener('dragover', e => {
+            if (e.target instanceof Element && e.target.closest('th[data-table-drop]')) {
+                e.preventDefault();
+            }
+        });
     </script>
 </body>
 </html>
