@@ -348,11 +348,11 @@ public class JobScheduler
                 continue;
             }
 
-            // What the cheapest way in would take: reusing the workspace where a worker holds it.
-            var needed = wanted.Workspace != null && qualified.Any(d => d.Workspaces.ContainsKey(wanted.Workspace)) ? wanted.Need.ReuseBytes : wanted.Need.FreshBytes;
+            // Both numbers from the worker nearest to fitting, on its nearer way in, so the room never seems to cover the need. Every one of them has reported its disk: one that hasn't would have fitted.
+            var nearest = qualified.Select(d => DiskEstimate.Gap(wanted.Workspace, wanted.Need, d)!).MinBy(g => g.ShortBytes)!;
             if (await jobs.GetAsync(job.Id) is { } info)
             {
-                noRoom.Add(new NoRoomJob { Job = info, NeededBytes = needed, MostRoomBytes = qualified.Max(d => d.BestRoomBytes) });
+                noRoom.Add(new NoRoomJob { Job = info, NeededBytes = nearest.NeededBytes, MostRoomBytes = Math.Max(0, nearest.RoomBytes) });
             }
         }
         return noRoom;

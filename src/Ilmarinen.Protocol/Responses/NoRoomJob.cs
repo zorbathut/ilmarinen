@@ -5,9 +5,9 @@ public record NoRoomJob
 {
     public required JobInfo Job { get; init; }
 
-    /// <summary>The disk it is expected to take, beyond the floor its worker keeps free.</summary>
+    /// <summary>The disk it is expected to take, beyond the floor its worker keeps free, on the worker nearest to having room for it and by that worker's nearer way in (reusing a workspace it holds, or making it afresh).</summary>
     public required long NeededBytes { get; init; }
 
-    /// <summary>The most any of those workers could give it, beyond its floor; null when none has reported its free space.</summary>
+    /// <summary>The room that same worker has for it that way, beyond its floor, deleting what it may, which isn't enough. Zero when even that leaves the worker below its floor.</summary>
     public long? MostRoomBytes { get; init; }
 }

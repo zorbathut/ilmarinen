@@ -196,6 +196,68 @@ public class DiskEstimateTests
     }
 
     [Test]
+    public void Gap_OfAHolder_IsOnTheCheaperWayIn_AndItsRoomLeavesOutItsOwnCopy()
+    {
+        // Reusing: 8 needed, 5 free less the floor of 5 = 0 to be had, 8 short. Afresh: 20 needed, 5 + 10 - 5 = 10 to be had, 10 short.
+        var gap = DiskEstimate.Gap("ws", new DiskNeed(8 * Gb, 20 * Gb), Worker(5, ("ws", 10)));
+
+        Assert.That(gap, Is.EqualTo(new DiskGap(NeededBytes: 8 * Gb, RoomBytes: 0)));
+        Assert.That(gap!.ShortBytes, Is.EqualTo(8 * Gb));
+    }
+
+    [Test]
+    public void Gap_OfAHolder_IsAfresh_WhenThatIsShorterOfRoom()
+    {
+        // Reusing: 30 needed, 10 - 5 = 5 to be had, 25 short. Afresh: 40 needed, 10 + 50 - 5 = 55 to be had: it would fit.
+        var gap = DiskEstimate.Gap("ws", new DiskNeed(30 * Gb, 40 * Gb), Worker(10, ("ws", 50)));
+
+        Assert.That(gap, Is.EqualTo(new DiskGap(NeededBytes: 40 * Gb, RoomBytes: 55 * Gb)));
+    }
+
+    [Test]
+    public void Gap_OfAWorkerWithoutTheWorkspace_IsAfresh_CountingWhatDeletingTheOthersFrees()
+    {
+        var gap = DiskEstimate.Gap("ws", new DiskNeed(8 * Gb, 50 * Gb), Worker(10, ("other", 20), ("unmeasured", null)));
+
+        Assert.That(gap, Is.EqualTo(new DiskGap(NeededBytes: 50 * Gb, RoomBytes: 25 * Gb)));
+    }
+
+    [Test]
+    public void Gap_BelowTheFloor_IsShortEvenOfNothing()
+    {
+        var gap = DiskEstimate.Gap(null, DiskNeed.None, Worker(3));
+
+        Assert.That(gap!.ShortBytes, Is.EqualTo(2 * Gb));
+    }
+
+    [Test]
+    public void Gap_AgreesWithFit()
+    {
+        var cases = new[]
+        {
+            ("ws", new DiskNeed(8 * Gb, 20 * Gb), Worker(5, ("ws", 10))),
+            ("ws", new DiskNeed(10 * Gb, 60 * Gb), Worker(20, ("ws", 50))),
+            ("ws", new DiskNeed(10 * Gb, 30 * Gb), Worker(6, ("ws", 50))),
+            ("ws", new DiskNeed(80 * Gb, 90 * Gb), Worker(10, ("ws", 50), ("other", 20))),
+            ((string?)null, new DiskNeed(0, 20 * Gb), Worker(10, ("other", null))),
+            ((string?)null, new DiskNeed(0, 20 * Gb), Worker(30, ("other", 10))),
+        };
+        Assert.Multiple(() =>
+        {
+            foreach (var (workspace, need, worker) in cases)
+            {
+                Assert.That(DiskEstimate.Gap(workspace, need, worker)!.ShortBytes <= 0, Is.EqualTo(DiskEstimate.Fit(workspace, need, worker) != null), $"{workspace} {need} {worker.Disk!.FreeBytes / Gb} GB free");
+            }
+        });
+    }
+
+    [Test]
+    public void Gap_OfAWorkerNotYetHeardFrom_IsUnknown()
+    {
+        Assert.That(DiskEstimate.Gap("ws", new DiskNeed(8 * Gb, 20 * Gb), Worker(null)), Is.Null);
+    }
+
+    [Test]
     public void Fit_AWorkerNotYetHeardFrom_FitsAnything()
     {
         var fit = DiskEstimate.Fit("ws", new DiskNeed(900 * Gb, 900 * Gb), Worker(null, ("ws", null)));

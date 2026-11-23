@@ -127,6 +127,27 @@ public class DiskRoomTests
         await roomy.Hub.ReportDiskSpace(Free(500));
     }
 
+    private static WorkspaceUsageReport Usage(params (string Name, long Gb)[] workspaces)
+    {
+        return new WorkspaceUsageReport { WorkspaceSizes = workspaces.ToDictionary(w => w.Name, w => (long?)(w.Gb * Gb)), MirrorsSizeBytes = 0 };
+    }
+
+    private static readonly WorkspaceUsageReport NoWorkspaces = Usage();
+
+    /// <summary>A ready worker whose disk, 1000 GB, has this much free and the rest in use by something other than Ilmarinen.</summary>
+    private async Task<DirectedWorker> FullWorkerAsync(string name, long freeGb)
+    {
+        var worker = await DirectedWorker.ReadyAsync(_fixture, name, $"conn-{name}");
+        await worker.Hub.ReportWorkspaceUsage(NoWorkspaces);
+        await worker.Hub.ReportDiskSpace(Free(freeGb));
+        return worker;
+    }
+
+    private Task<Guid> EnqueueAsync(string script, string? minWorkerPriority = null)
+    {
+        return Scheduler.EnqueueJobAsync(new JobSubmission { RepoUrl = _repo.Url, Ref = "master", ScriptPath = script, GitTokenMode = GitTokenMode.None, MinWorkerPriority = minWorkerPriority });
+    }
+
     [Test]
     public async Task AJobWithoutRoom_WaitsAndIsReported_UntilTheWorkerReportsRoom()
     {
@@ -176,6 +197,27 @@ public class DiskRoomTests
         var noRoom = (await Scheduler.GetUnsatisfiableJobsAsync()).NoRoomJobs.Single();
         Assert.That(noRoom.Job.Id, Is.EqualTo(jobId));
         Assert.That(noRoom.NeededBytes, Is.EqualTo(8 * Gb));
+        Assert.That(noRoom.MostRoomBytes, Is.EqualTo(4 * Gb), "what reusing has to go on, without the copy it reuses");
+    }
+
+    [Test]
+    public async Task AJobWithoutRoom_IsReported_WithTheNeedAndRoomOfTheWorkerNearestToHavingIt()
+    {
+        await RanAsync("ws.csx", "ws", fresh: true, usedBytes: 50 * Gb);
+        await RanAsync("ws.csx", "ws", fresh: false, usedBytes: 8 * Gb);
+        await RoomyButPausedAsync();
+        // Reusing its copy, the holder needs 8 and has 5 - 1 = 4: 4 short. Afresh, the other needs 50 and has 46 - 1 = 45: 5 short.
+        var holder = await DirectedWorker.RegisterAsync(_fixture, "holder");
+        await holder.ConnectAsync("conn-holder", workspaces: [new WorkspaceInfo { Name = "ws", Path = "/data/workspaces/ws", LastUsed = DateTimeOffset.UtcNow }]);
+        await holder.ResumeAsync(holder.Idle());
+        await holder.Hub.ReportWorkspaceUsage(Usage(("ws", 10)));
+        await holder.Hub.ReportDiskSpace(Free(5));
+        await FullWorkerAsync("other", freeGb: 46);
+
+        await EnqueueAsync("ws.csx");
+
+        var noRoom = (await Scheduler.GetUnsatisfiableJobsAsync()).NoRoomJobs.Single();
+        Assert.That((noRoom.NeededBytes, noRoom.MostRoomBytes), Is.EqualTo((8 * Gb, (long?)(4 * Gb))), "one worker's numbers, not one's need and another's room");
     }
 
     [Test]

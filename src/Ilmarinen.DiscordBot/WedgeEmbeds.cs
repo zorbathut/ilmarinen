@@ -55,7 +55,7 @@ public static class WedgeEmbeds
             .WithDescription(string.Join(" ", description));
 
         var listed = report.Jobs.Select(job => (Job: job, Details: $"needs {(job.MinWorkerPriority is { } minimum ? Truncate(Format.Sanitize(minimum.Name)) : "any worker")}"))
-            .Concat(report.NoRoomJobs.Select(n => (n.Job, Details: $"needs {Size(n.NeededBytes)} of disk{(n.MostRoomBytes is { } most ? $", at most {Size(most)} to be had" : "")}")))
+            .Concat(report.NoRoomJobs.Select(n => (n.Job, Details: $"needs {Size(n.NeededBytes)} of disk{(n.MostRoomBytes is { } most ? $"; the nearest worker has {Size(most)}" : "")}")))
             .ToList();
         foreach (var (job, needs) in listed.Take(MaxListedJobs))
         {

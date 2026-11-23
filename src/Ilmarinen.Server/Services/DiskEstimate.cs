@@ -37,6 +37,15 @@ public sealed record DiskFit(bool Reuses, bool StartFresh, long NeededBytes, lon
     }
 }
 
+/// <summary>How far a job is from fitting on a worker's disk, on one way in: what that way needs beyond the floor, and the room it has to go on, deleting what it may. <see cref="ShortBytes"/> is what would have to be freed besides; zero or less means it fits.</summary>
+public sealed record DiskGap(long NeededBytes, long RoomBytes)
+{
+    public long ShortBytes
+    {
+        get { return NeededBytes - RoomBytes; }
+    }
+}
+
 /// <summary>What a script's next run will want of a worker's disk, learned from its latest runs (<see cref="JobRepository.GetDiskHistoryAsync"/>), and whether a worker has it.</summary>
 public static class DiskEstimate
 {
@@ -89,6 +98,19 @@ public static class DiskEstimate
     }
 
     /// <summary>
+    /// How far a job needing <paramref name="need"/> is from fitting on this worker (<see cref="Fit"/>), on whichever way in is nearer: reusing its copy of <paramref name="workspace"/>, which has the free space and its other workspaces to go on, or making the workspace afresh, which may delete its own copy too. Null when the worker's free space isn't known.
+    /// </summary>
+    public static DiskGap? Gap(string? workspace, DiskNeed need, WorkerDisk worker)
+    {
+        if (worker.Disk is not { } disk)
+        {
+            return null;
+        }
+        var (reuse, afresh, _) = Gaps(workspace, need, worker, disk);
+        return reuse != null && reuse.ShortBytes <= afresh.ShortBytes ? reuse : afresh;
+    }
+
+    /// <summary>
     /// Whether a job needing <paramref name="need"/> fits on this worker, and how: reusing its copy of <paramref name="workspace"/> if it holds one and there is room for that, else making the workspace afresh, deleting its own copy first if it holds one. Either way the worker may delete its other workspaces to make room. Null when it doesn't fit even then.
     /// </summary>
     public static DiskFit? Fit(string? workspace, DiskNeed need, WorkerDisk worker)
@@ -99,15 +121,12 @@ public static class DiskEstimate
             return DiskFit.Unknown(holds, need);
         }
 
-        // Unmeasured workspaces can't be counted on to free anything.
-        var others = worker.Workspaces.Where(w => w.Key != workspace).Sum(w => w.Value ?? 0);
-        var own = holds ? worker.Workspaces[workspace!] ?? 0 : 0;
-
-        if (holds && disk.FreeBytes + others >= need.ReuseBytes + disk.MinFreeBytes)
+        var (reuse, afresh, own) = Gaps(workspace, need, worker, disk);
+        if (reuse is { ShortBytes: <= 0 })
         {
             return Fitting(reuses: true, startFresh: false, need.ReuseBytes);
         }
-        if (disk.FreeBytes + others + own >= need.FreshBytes + disk.MinFreeBytes)
+        if (afresh.ShortBytes <= 0)
         {
             return Fitting(reuses: false, startFresh: holds, need.FreshBytes);
         }
@@ -120,5 +139,15 @@ public static class DiskEstimate
             var shortfall = needed + disk.MinFreeBytes - room;
             return new DiskFit(reuses, startFresh, needed, Math.Max(0, shortfall), -shortfall);
         }
+    }
+
+    /// <summary>The two ways in: reusing the worker's copy of the workspace (null if it holds none), and making it afresh; and that copy's size. Unmeasured workspaces can't be counted on to free anything.</summary>
+    private static (DiskGap? Reuse, DiskGap Afresh, long Own) Gaps(string? workspace, DiskNeed need, WorkerDisk worker, DiskSpaceReport disk)
+    {
+        var holds = workspace != null && worker.Workspaces.ContainsKey(workspace);
+        var others = worker.Workspaces.Where(w => w.Key != workspace).Sum(w => w.Value ?? 0);
+        var own = holds ? worker.Workspaces[workspace!] ?? 0 : 0;
+        var reuse = holds ? new DiskGap(need.ReuseBytes, disk.FreeBytes + others - disk.MinFreeBytes) : null;
+        return (reuse, new DiskGap(need.FreshBytes, disk.FreeBytes + others + own - disk.MinFreeBytes), own);
     }
 }
