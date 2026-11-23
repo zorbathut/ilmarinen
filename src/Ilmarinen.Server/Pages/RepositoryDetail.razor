@@ -5,7 +5,6 @@
 @using Microsoft.Extensions.DependencyInjection
 @inject IServiceScopeFactory ScopeFactory
 @inject NavigationManager Navigation
-@inject BrowserTimeZone TimeZone
 
 <h1 class="page-title">Repository</h1>
 
@@ -81,32 +80,7 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Pipelines</h2>
-        <div class="table-scroll">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Default Ref</th>
-                        <th>Script</th>
-                        <th>Schedule</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @if (pipelines != null)
-                    {
-                        @foreach (var p in pipelines)
-                        {
-                            <tr>
-                                <td><PipelineLink PipelineId="p.Id" PipelineName="@p.Name" /></td>
-                                <td>@p.DefaultRef</td>
-                                <td>@p.ScriptPath</td>
-                                <td>@(p.Schedule is { } schedule ? DisplayFormat.LocalCron(schedule, _browserTz) : "-")</td>
-                            </tr>
-                        }
-                    }
-                </tbody>
-            </table>
-        </div>
+        <PipelineTable Items="pipelines" StorageKey="repository-pipelines" Defaults="PipelineColumns" Exclude="RepositoryOwnColumns" />
     </div>
 }
 else if (loading)
@@ -124,6 +98,8 @@ else
 
     private RepositoryInfo? repository;
     private IReadOnlyList<PipelineInfo>? pipelines;
+    private static readonly IReadOnlyList<string> PipelineColumns = ["name", "default-ref", "script", "schedule"];
+    private static readonly IReadOnlyCollection<string> RepositoryOwnColumns = ["repository", "repository-url"];
     private bool loading = true;
 
     private bool editing;
@@ -133,21 +109,11 @@ else
     private string editRepoUrl = "";
     private string editGitToken = "";
     private bool removingToken;
-    private TimeZoneInfo? _browserTz;
 
     protected override async Task OnInitializedAsync()
     {
         await RefreshAsync();
         loading = false;
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender)
-        {
-            _browserTz = await TimeZone.GetAsync();
-            StateHasChanged();
-        }
     }
 
     private async Task RefreshAsync()

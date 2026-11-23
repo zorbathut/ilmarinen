@@ -1,0 +1,67 @@
+@using Ilmarinen.Protocol
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@inject BrowserTimeZone TimeZone
+@inject PriorityRanks Ranks
+
+<DataTable Items="Items" Columns="columns" StorageKey="@StorageKey" RowKey="pipeline => pipeline.Id" Exclude="Exclude" />
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<PipelineInfo>? Items { get; set; }
+
+    [Parameter, EditorRequired]
+    public string StorageKey { get; set; } = "";
+
+    /// <summary>The columns shown until the viewer says otherwise, in order; the rest of the catalog follows them, hidden.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<string> Defaults { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyCollection<string>? Exclude { get; set; }
+
+    private IReadOnlyList<TableColumn<PipelineInfo>> columns = [];
+    private IReadOnlyDictionary<Guid, int> ranks = new Dictionary<Guid, int>();
+    private TimeZoneInfo? zone;
+
+    protected override void OnInitialized()
+    {
+        zone = TimeZone.Known;
+        IReadOnlyList<TableColumn<PipelineInfo>> catalog =
+        [
+            new("name", "Name", pipeline => @<PipelineLink PipelineId="pipeline.Id" PipelineName="@pipeline.Name" />) { SortKey = pipeline => pipeline.Name },
+            new("repository", "Repository", pipeline => @<text>@pipeline.RepositoryName</text>) { SortKey = pipeline => pipeline.RepositoryName },
+            new("default-ref", "Default Ref", pipeline => @<text>@pipeline.DefaultRef</text>) { SortKey = pipeline => pipeline.DefaultRef },
+            new("script", "Script", pipeline => @<text>@pipeline.ScriptPath</text>) { SortKey = pipeline => pipeline.ScriptPath },
+            // A cron expression has no order worth sorting by.
+            new("schedule", "Schedule", pipeline => @<text>@(pipeline.Schedule is { } schedule ? DisplayFormat.LocalCron(schedule, zone) : "-")</text>),
+            new("created", "Created", pipeline => @<text>@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm")</text>) { SortKey = pipeline => pipeline.CreatedAt, FirstDescending = true },
+            new("repository-url", "Repository URL", pipeline => @<text>@DisplayFormat.ShortRepoUrl(pipeline.RepoUrl)</text>) { SortKey = pipeline => DisplayFormat.ShortRepoUrl(pipeline.RepoUrl) },
+            new("last-triggered", "Last Triggered", pipeline => @<text>@(pipeline.LastTriggeredAt?.ToString("yyyy-MM-dd HH:mm") ?? "-")</text>) { SortKey = pipeline => pipeline.LastTriggeredAt, FirstDescending = true },
+            new("priority", "Job Priority", pipeline => @<text>@pipeline.Priority.Name</text>) { SortKey = pipeline => RankOf(pipeline.Priority), FirstDescending = true },
+            new("min-worker-priority", "Min Worker Priority", pipeline => @<text>@(pipeline.MinWorkerPriority?.Name ?? "Any worker")</text>) { SortKey = pipeline => RankOf(pipeline.MinWorkerPriority), FirstDescending = true },
+        ];
+        columns = TableColumns.ShownFirst(catalog, Defaults);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        ranks = await Ranks.GetAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && zone == null)
+        {
+            zone = await TimeZone.GetAsync();
+            StateHasChanged();
+        }
+    }
+
+    private IComparable? RankOf(PriorityRef? priority)
+    {
+        return priority != null && ranks.TryGetValue(priority.Id, out var rank) ? rank : null;
+    }
+
+
+}

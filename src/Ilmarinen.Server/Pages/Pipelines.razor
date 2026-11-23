@@ -85,41 +85,13 @@
 <FilteredByPriority PriorityId="MinWorkerPriorityFilter" What="pipelines needing worker priority" ClearHref="/pipelines" />
 
 <div class="card">
-    <div class="table-scroll">
-        <table>
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Repository</th>
-                    <th>Default Ref</th>
-                    <th>Script</th>
-                    <th>Schedule</th>
-                    <th>Created</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (pipelines != null)
-                {
-                    @foreach (var pipeline in pipelines)
-                    {
-                        <tr>
-                            <td><PipelineLink PipelineId="pipeline.Id" PipelineName="@pipeline.Name" /></td>
-                            <td>@pipeline.RepositoryName</td>
-                            <td>@pipeline.DefaultRef</td>
-                            <td>@pipeline.ScriptPath</td>
-                            <td>@(pipeline.Schedule is { } schedule ? DisplayFormat.LocalCron(schedule, _browserTz) : "-")</td>
-                            <td>@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                        </tr>
-                    }
-                }
-            </tbody>
-        </table>
-    </div>
+    <PipelineTable Items="pipelines" StorageKey="pipelines" Defaults="PipelineColumns" />
 </div>
 
 @code {
     private TimeZoneInfo? _browserTz;
     private IReadOnlyList<PipelineInfo>? pipelines;
+    private static readonly IReadOnlyList<string> PipelineColumns = ["name", "repository", "default-ref", "script", "schedule", "created"];
     private IReadOnlyList<RepositoryInfo>? repositories;
     private string newName = "";
     private string newRepositoryId = "";
