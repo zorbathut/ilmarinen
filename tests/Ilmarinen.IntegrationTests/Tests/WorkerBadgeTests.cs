@@ -12,7 +12,7 @@ namespace Ilmarinen.IntegrationTests.Tests;
 [TestFixture]
 public class WorkerBadgeTests
 {
-    private static WorkerView Worker(bool connected = true, bool ready = false, bool busy = false, bool paused = false, DiagnosticStatus? diagnostic = null, WorkerHold? hold = null, bool waking = false, DateTimeOffset? wakeFailedAt = null)
+    private static WorkerView Worker(bool connected = true, bool ready = false, bool busy = false, bool paused = false, DiagnosticStatus? diagnostic = null, WorkerHold? hold = null, bool waking = false, DateTimeOffset? wakeFailedAt = null, bool noRoom = false)
     {
         return new WorkerView
         {
@@ -26,7 +26,8 @@ public class WorkerBadgeTests
             Hold = hold,
             IsWaking = waking,
             WakeFailedAt = wakeFailedAt,
-            CurrentJobs = busy ? [Guid.NewGuid()] : []
+            CurrentJobs = busy ? [Guid.NewGuid()] : [],
+            NoRoom = noRoom ? new NoRoomWorker(2, new DiskGap(30L << 30, 14L << 30), 300L << 30) : null
         };
     }
 
@@ -95,5 +96,36 @@ public class WorkerBadgeTests
 
         Assert.That(new[] { offline, waking, unreachable }.Distinct().Count(), Is.EqualTo(3));
         Assert.That(WorkerBadge.GetBadgeClass(Worker(connected: false, waking: true)), Is.Not.EqualTo(WorkerBadge.GetBadgeClass(Worker(connected: false))));
+    }
+
+    [Test]
+    public void AReadyWorkerWithNoRoom_ReadsBlocked_WithItsOwnLight_AndSaysWhy()
+    {
+        var blocked = Worker(ready: true, noRoom: true);
+
+        Assert.That(WorkerBadge.GetBadgeClass(blocked), Is.Not.EqualTo(WorkerBadge.GetBadgeClass(Worker(ready: true))));
+        Assert.That(WorkerBadge.GetStatusLabel(blocked), Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(ready: true))));
+        Assert.That(WorkerBadge.GetStatusDetail(blocked), Is.Not.Null.And.Not.Empty);
+        Assert.That(WorkerBadge.GetStatusDetail(Worker(ready: true)), Is.Null, "nothing to fix");
+    }
+
+    [Test]
+    public void ADegradedBlockedWorker_ReadsBothWays()
+    {
+        var both = WorkerBadge.GetStatusLabel(Worker(ready: true, noRoom: true, diagnostic: DiagnosticStatus.Degraded));
+
+        Assert.That(both, Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(ready: true, noRoom: true))));
+        Assert.That(both, Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(ready: true, diagnostic: DiagnosticStatus.Degraded))));
+    }
+
+    [Test]
+    public void AnOfflineWorkerWithNoRoom_KeepsTheOfflineLight_ButSaysSo()
+    {
+        var blocked = Worker(connected: false, noRoom: true);
+
+        Assert.That(WorkerBadge.GetBadgeClass(blocked), Is.EqualTo(WorkerBadge.GetBadgeClass(Worker(connected: false))));
+        Assert.That(WorkerBadge.GetStatusLabel(blocked), Is.Not.EqualTo(WorkerBadge.GetStatusLabel(Worker(connected: false))));
+        Assert.That(WorkerBadge.GetStatusDetail(blocked), Is.Not.Null.And.Not.Empty);
+        Assert.That(WorkerBadge.GetBadgeClass(Worker(connected: false, waking: true, noRoom: true)), Is.EqualTo(WorkerBadge.GetBadgeClass(Worker(connected: false, waking: true))), "being woken still shows");
     }
 }

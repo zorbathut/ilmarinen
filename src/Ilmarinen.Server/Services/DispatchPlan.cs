@@ -16,6 +16,9 @@ public sealed record DispatchWorker(int Rank, WorkerDisk Disk)
 /// <summary>A queued job, as dispatch sees it: the rank of its minimum worker priority (null for none), and the persistent workspace it is expected to use and the disk it is expected to take, from its script's latest runs (<see cref="DiskEstimate"/>).</summary>
 public sealed record DispatchJob(int? MinWorkerRank, string? Workspace, DiskNeed Need);
 
+/// <summary>A worker that would take a job but for its disk: how many queued jobs it qualifies for, none of which it has room for (some may not fit however its host is cleared); how far it is from the nearest of them; and how much of its disk is neither free, workspaces nor git mirrors, which freeing would let that one in.</summary>
+public sealed record NoRoomWorker(int Jobs, DiskGap Gap, long OtherUseBytes);
+
 /// <summary>The worker a job goes to, and how it fits on that worker's disk.</summary>
 public sealed record DispatchPick(DispatchWorker Worker, DiskFit Fit);
 
@@ -50,6 +53,27 @@ public static class DispatchPlan
             .ThenBy(p => p.Fit.LeftoverBytes)
             .ThenBy(p => p.Worker.WorkerId)
             .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Whether a worker of this rank is kept from every queued job it qualifies for by its disk (<see cref="DiskEstimate.Fit"/>), when freeing what isn't Ilmarinen's on it would let it take one: something to fix on its host. Its other use is what its disk report doesn't put down to free space, its workspaces or its git mirrors (<paramref name="mirrorsBytes"/>). A disk merely too small for the jobs waiting isn't flagged, nor one whose free space, workspaces or mirrors aren't all measured. Null unless it is.
+    /// </summary>
+    public static NoRoomWorker? RoomShortfall(int rank, WorkerDisk disk, long? mirrorsBytes, IReadOnlyList<DispatchJob> queued)
+    {
+        if (disk.Disk is not { } report || mirrorsBytes is not { } mirrors || disk.Workspaces.Values.Any(size => size == null))
+        {
+            return null;
+        }
+        var other = report.TotalBytes - report.FreeBytes - disk.Workspaces.Values.Sum(size => size!.Value) - mirrors;
+
+        // Freeing the other use adds to the room on either way in alike, so the nearest job is the one it would let in first.
+        var qualifying = queued.Where(j => Qualifies(rank, j.MinWorkerRank)).ToList();
+        var nearest = qualifying.Select(j => DiskEstimate.Gap(j.Workspace, j.Need, disk)!).MinBy(g => g.ShortBytes);
+        if (nearest == null || nearest.ShortBytes <= 0 || nearest.ShortBytes > other)
+        {
+            return null;
+        }
+        return new NoRoomWorker(qualifying.Count, nearest, other);
     }
 
     /// <summary>The whole matching of these jobs, given in dispatch order, to these free workers: each worker takes at most one job, and a job no free worker qualifies for and has room for is left out.</summary>

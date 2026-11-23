@@ -41,7 +41,7 @@ public class WorkersController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<WorkerView>>> GetWorkers([FromQuery] string? priority)
     {
         var priorityId = priority != null ? (await _priorities.ResolveAsync(PriorityKind.Worker, priority)).Id : (Guid?)null;
-        return Ok(await _workers.GetAllAsync(priorityId));
+        return Ok(await _scheduler.WithNoRoomAsync(await _workers.GetAllAsync(priorityId)));
     }
 
     [HttpPost]

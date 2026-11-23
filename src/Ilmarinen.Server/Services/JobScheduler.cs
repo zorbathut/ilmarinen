@@ -327,6 +327,32 @@ public class JobScheduler
     }
 
     /// <summary>
+    /// These worker views, each on offer — ready, as dispatch sees it, or asleep and to be woken, as waking does — with <see cref="WorkerView.NoRoom"/> filled in where what else is on its disk keeps it from every queued job it could take (<see cref="DispatchPlan.RoomShortfall"/>). A read-only snapshot, taken without locks.
+    /// </summary>
+    public async Task<IReadOnlyList<WorkerView>> WithNoRoomAsync(IReadOnlyList<WorkerView> views)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        var ready = (await workers.GetReadyWorkersByPriorityAsync()).Select(w => (w.WorkerId, w.Rank));
+        var (wakeable, _) = await _waker.GetSleepersAsync();
+        var shown = views.ToDictionary(v => v.Id);
+        var onOffer = ready.Concat(wakeable.Select(w => (WorkerId: w.Id, w.Rank))).Where(w => shown.ContainsKey(w.WorkerId)).ToList();
+        if (onOffer.Count == 0)
+        {
+            return views;
+        }
+
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var queued = (await jobs.GetQueuedForDispatchAsync(workers.GetFleetDisks())).Select(q => q.Dispatch).ToList();
+        var noRoom = onOffer
+            .Select(w => (w.WorkerId, NoRoom: DispatchPlan.RoomShortfall(w.Rank, workers.DiskOf(w.WorkerId), shown[w.WorkerId].UsageMeasured ? shown[w.WorkerId].MirrorsSizeBytes : null, queued)))
+            .Where(w => w.NoRoom != null)
+            .ToDictionary(w => w.WorkerId, w => w.NoRoom);
+        return views.Select(v => noRoom.TryGetValue(v.Id, out var n) ? v with { NoRoom = n } : v).ToList();
+    }
+
+    /// <summary>
     /// Queued jobs, other than those no worker on offer qualifies for (<paramref name="priorityStuck"/>), that no worker on offer they qualify for has room for, by the same rule dispatch goes by (<see cref="DiskEstimate.Fit"/>). A busy worker is judged by its latest reading, taken while its job runs, so a job waiting only for it to finish may be listed for a while; a worker that hasn't reported its disk has room for anything.
     /// </summary>
     private static async Task<IReadOnlyList<NoRoomJob>> GetNoRoomJobsAsync(JobRepository jobs, WorkerRepository workers, IReadOnlyList<(Guid Id, int Rank)> onOffer, IReadOnlySet<Guid> priorityStuck)

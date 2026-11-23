@@ -31,6 +31,75 @@ public class DispatchPlanTests
         return new DispatchJob(minimum, workspace, new DiskNeed(reuseGb * Gb, freshGb * Gb));
     }
 
+    /// <summary>A worker's disk of this size with this much free, keeping 1 GB free, holding these workspaces; what isn't free, workspaces or <paramref name="mirrorsGb"/> of mirrors is the host's other use.</summary>
+    private static NoRoomWorker? RoomShortfall(long totalGb, long freeGb, long? mirrorsGb, (string Name, long? Gb)[] workspaces, params DispatchJob[] queued)
+    {
+        var disk = new DiskSpaceReport { FreeBytes = freeGb * Gb, TotalBytes = totalGb * Gb, MinFreeBytes = Gb };
+        return DispatchPlan.RoomShortfall(1, new WorkerDisk(Guid.NewGuid(), disk, workspaces.ToDictionary(w => w.Name, w => w.Gb * Gb)), mirrorsGb * Gb, queued);
+    }
+
+    /// <summary>A 1000 GB disk with 10 free, no workspaces and no mirrors: 990 GB of other use.</summary>
+    private static NoRoomWorker? FullOfOtherUse(params DispatchJob[] queued)
+    {
+        return RoomShortfall(1000, 10, 0, [], queued);
+    }
+
+    [Test]
+    public void RoomShortfall_None_WithNothingQueuedThatTheWorkerQualifiesFor()
+    {
+        Assert.That(FullOfOtherUse(), Is.Null, "nothing queued");
+        Assert.That(FullOfOtherUse(Job(2, freshGb: 50)), Is.Null, "only a job for a higher priority");
+    }
+
+    [Test]
+    public void RoomShortfall_None_WhenAnyJobItQualifiesForFits()
+    {
+        Assert.That(FullOfOtherUse(Job(null, freshGb: 50), Job(null, freshGb: 5)), Is.Null);
+    }
+
+    [Test]
+    public void RoomShortfall_None_WhenItsDiskIsntAllMeasured()
+    {
+        Assert.That(DispatchPlan.RoomShortfall(1, new WorkerDisk(Guid.NewGuid(), null, new Dictionary<string, long?>()), 0, [Job(null, freshGb: 50)]), Is.Null, "free space unknown, so it fits");
+        Assert.That(RoomShortfall(1000, 10, null, [], Job(null, freshGb: 50)), Is.Null, "mirrors unmeasured");
+        Assert.That(RoomShortfall(1000, 10, 0, [("ws", null)], Job(null, freshGb: 50)), Is.Null, "a workspace unmeasured");
+    }
+
+    [Test]
+    public void RoomShortfall_None_WhenTheDiskIsTooSmallEvenWithoutItsOtherUse()
+    {
+        // 30 GB, of which 10 free, 10 a workspace and 5 mirrors: clearing the 5 of other use leaves 24 to be had, short of 50.
+        Assert.That(RoomShortfall(30, 10, 5, [("ws", 10)], Job(null, freshGb: 50)), Is.Null);
+    }
+
+    [Test]
+    public void RoomShortfall_OfAWorkerFreeingItsOtherUseWouldLetIn_CountsTheJobsItQualifiesFor_AndIsTheNearestOneItCouldTake()
+    {
+        var shortfall = RoomShortfall(1000, 10, 2, [("other", 5)], Job(null, freshGb: 50), Job(null, freshGb: 30), Job(null, freshGb: 9000), Job(2, freshGb: 20));
+
+        Assert.That(shortfall, Is.Not.Null);
+        Assert.That(shortfall!.Jobs, Is.EqualTo(3), "not the one for a higher priority");
+        Assert.That(shortfall.Gap, Is.EqualTo(new DiskGap(NeededBytes: 30 * Gb, RoomBytes: 14 * Gb)), "10 free and 5 to delete, less the floor");
+        Assert.That(shortfall.OtherUseBytes, Is.EqualTo(983 * Gb), "1000, less 10 free, 5 of workspace and 2 of mirrors");
+    }
+
+    [Test]
+    public void RoomShortfall_OfAHolder_IsOnItsNearerWayIn()
+    {
+        // Reusing: 8 needed, 5 - 1 = 4 to go on. Afresh: 20 needed, 5 + 10 - 1 = 14.
+        var shortfall = RoomShortfall(1000, 5, 0, [("ws", 10)], Job(null, "ws", reuseGb: 8, freshGb: 20));
+
+        Assert.That(shortfall?.Gap, Is.EqualTo(new DiskGap(NeededBytes: 8 * Gb, RoomBytes: 4 * Gb)));
+    }
+
+    [Test]
+    public void RoomShortfall_OfAWorkerBelowItsFloor_IsShortEvenOfAJobNeedingNothing()
+    {
+        var shortfall = RoomShortfall(1000, 0, 0, [], Job(null));
+
+        Assert.That(shortfall?.Gap.ShortBytes, Is.EqualTo(Gb));
+    }
+
     [Test]
     public void Pick_HighestQualifyingWorker()
     {

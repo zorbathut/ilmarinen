@@ -27,6 +27,10 @@ public static class WorkerBadge
         {
             return "held";
         }
+        if (w.NoRoom != null)
+        {
+            return "blocked";
+        }
         if (w.Diagnostic?.Status == DiagnosticStatus.Degraded)
         {
             return "degraded";
@@ -41,7 +45,7 @@ public static class WorkerBadge
         if (!w.IsConnected)
         {
             var asleep = w.IsWaking ? "Waking…" : w.WakeFailedAt is { } at ? $"Offline, didn't wake at {at.UtcDateTime:HH:mm}" : "Offline";
-            return $"{asleep}{paused}";
+            return $"{asleep}{paused}{(w.NoRoom != null ? $", {Blocked.ToLowerInvariant()}" : "")}";
         }
         if (w.Diagnostic?.Status == DiagnosticStatus.Unhealthy)
         {
@@ -53,7 +57,7 @@ public static class WorkerBadge
         // Not ready without being busy is an idle worker the server is holding back: a host re-check owed, a bundle update pending, or a reconnect not yet resumed.
         var busy = w.CurrentJobs.Count > 0 || w.Diagnostic?.Status == DiagnosticStatus.Running;
         var hold = w.Hold is { } h ? HoldLabel(h) : null;
-        var label = w.IsReady ? "Ready"
+        var label = w.IsReady ? (w.NoRoom != null ? Blocked : "Ready")
             : busy ? $"Busy{paused}{(hold != null ? $", {hold.ToLowerInvariant()}" : "")}"
             : w.IsPaused ? "Paused"
             : hold ?? "Not ready";
@@ -63,6 +67,19 @@ public static class WorkerBadge
         }
         return label;
     }
+
+    /// <summary>Why a worker reads Blocked, and what to do about it; null for one that doesn't.</summary>
+    public static string? GetStatusDetail(WorkerView w)
+    {
+        if (w.NoRoom is not { } noRoom)
+        {
+            return null;
+        }
+        var jobs = noRoom.Jobs == 1 ? "the queued job" : $"any of the {noRoom.Jobs} queued jobs";
+        return $"No room for {jobs} it could take. Freeing {DisplayFormat.Size(noRoom.Gap.ShortBytes)} on it would let it take one (it needs {DisplayFormat.Size(noRoom.Gap.NeededBytes)} beyond the floor it keeps). Of its disk, {DisplayFormat.Size(noRoom.OtherUseBytes)} is neither free, workspaces nor git mirrors: the host's own files, space the filesystem reserves, and on a containerized worker usually Docker's images and build cache.";
+    }
+
+    private const string Blocked = "Blocked: no room";
 
     private static string HoldLabel(WorkerHold hold)
     {

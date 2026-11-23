@@ -466,7 +466,7 @@ public record HeldBackWorker(string Name, int Rank);
 
 public record WorkerAvailability(IReadOnlyList<AvailableWorker> Available, IReadOnlyList<HeldBackWorker> PausedButOtherwiseAvailable, IReadOnlyList<HeldBackWorker> InUseButOtherwiseAvailable, int Connected);
 
-public class WorkerView
+public record WorkerView
 {
     public required Guid Id { get; init; }
     public required string Name { get; init; }
@@ -543,6 +543,9 @@ public class WorkerView
     }
     public DiagnosticReport? Diagnostic { get; init; }
     public string? BundleHash { get; init; }
+
+    /// <summary>Kept from every queued job it could take by what else is on its disk (<see cref="DispatchPlan.RoomShortfall"/>), while it is ready or asleep and to be woken; null otherwise.</summary>
+    public NoRoomWorker? NoRoom { get; init; }
 }
 
 /// <summary>

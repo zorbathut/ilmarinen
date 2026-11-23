@@ -97,7 +97,7 @@
     {
         workerColumns =
         [
-            new("status", "Status", worker => @<text><span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span> @WorkerBadge.GetStatusLabel(worker)</text>) { SortKey = WorkerBadge.GetStatusLabel },
+            new("status", "Status", worker => @<span title="@WorkerBadge.GetStatusDetail(worker)"><span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span> @WorkerBadge.GetStatusLabel(worker)</span>) { SortKey = WorkerBadge.GetStatusLabel },
             new("name", "Name", worker => @<WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" />) { SortKey = worker => worker.Name },
             new("id", "ID", worker => @<text>@ShortId.From(worker.Id)</text>) { SortKey = worker => ShortId.From(worker.Id), HideMobile = true },
             new("priority", "Priority", PriorityCell) { SortKey = PriorityOrder },
@@ -139,7 +139,7 @@
         var repo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var priorities = scope.ServiceProvider.GetRequiredService<PriorityRepository>();
         priorityOptions = (await priorities.GetAllAsync(PriorityKind.Worker)).Select(PriorityRepository.ToRef).ToList();
-        return await repo.GetAllAsync(PriorityFilter);
+        return await Scheduler.WithNoRoomAsync(await repo.GetAllAsync(PriorityFilter));
     }
 
     public void Dispose()

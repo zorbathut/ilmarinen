@@ -127,6 +127,22 @@ public class DiskRoomTests
         await roomy.Hub.ReportDiskSpace(Free(500));
     }
 
+    /// <summary>The worker as its page shows it.</summary>
+    private async Task<WorkerView> ViewAsync(Guid workerId)
+    {
+        using var scope = _fixture.Services.CreateScope();
+        var view = (await scope.ServiceProvider.GetRequiredService<WorkerRepository>().GetByIdAsync(workerId))!;
+        return (await Scheduler.WithNoRoomAsync([view])).Single();
+    }
+
+    /// <summary>The worker as the workers list shows it.</summary>
+    private async Task<WorkerView> ListedAsync(Guid workerId)
+    {
+        using var scope = _fixture.Services.CreateScope();
+        var views = await scope.ServiceProvider.GetRequiredService<WorkerRepository>().GetAllAsync();
+        return (await Scheduler.WithNoRoomAsync(views)).Single(w => w.Id == workerId);
+    }
+
     private static WorkspaceUsageReport Usage(params (string Name, long Gb)[] workspaces)
     {
         return new WorkspaceUsageReport { WorkspaceSizes = workspaces.ToDictionary(w => w.Name, w => (long?)(w.Gb * Gb)), MirrorsSizeBytes = 0 };
@@ -146,6 +162,86 @@ public class DiskRoomTests
     private Task<Guid> EnqueueAsync(string script, string? minWorkerPriority = null)
     {
         return Scheduler.EnqueueJobAsync(new JobSubmission { RepoUrl = _repo.Url, Ref = "master", ScriptPath = script, GitTokenMode = GitTokenMode.None, MinWorkerPriority = minWorkerPriority });
+    }
+
+    [Test]
+    public async Task AReadyWorker_FullOfSomethingElse_IsBlocked_WhileAJobItCouldTakeWaits()
+    {
+        await RanAsync("big.csx", "big-ws", fresh: true, usedBytes: 50 * Gb);
+        await RoomyButPausedAsync();
+        var worker = await FullWorkerAsync("full", freeGb: 10);
+        Assert.That((await ViewAsync(worker.WorkerId)).NoRoom, Is.Null, "nothing is waiting");
+
+        await EnqueueAsync("big.csx");
+
+        var view = await ViewAsync(worker.WorkerId);
+        Assert.That(view.NoRoom, Is.EqualTo(new NoRoomWorker(1, new DiskGap(NeededBytes: 50 * Gb, RoomBytes: 9 * Gb), OtherUseBytes: 990 * Gb)));
+        Assert.That((await ListedAsync(worker.WorkerId)).NoRoom, Is.EqualTo(view.NoRoom), "the list and the worker's page agree");
+
+        await worker.Hub.ReportDiskSpace(Free(100));
+        Assert.That((await ViewAsync(worker.WorkerId)).NoRoom, Is.Null);
+    }
+
+    [Test]
+    public async Task NoWorker_IsBlocked_ThatIsPaused_TooSmall_OrBelowTheJobsMinimum()
+    {
+        await RanAsync("big.csx", "big-ws", fresh: true, usedBytes: 50 * Gb);
+        await RoomyButPausedAsync();
+        var paused = await FullWorkerAsync("paused-full", freeGb: 10);
+        await Scheduler.SetWorkerPausedAsync(paused.WorkerId, true);
+        var small = await DirectedWorker.ReadyAsync(_fixture, "small", "conn-small");
+        await small.Hub.ReportWorkspaceUsage(NoWorkspaces);
+        await small.Hub.ReportDiskSpace(new DiskSpaceReport { FreeBytes = 10 * Gb, TotalBytes = 30 * Gb, MinFreeBytes = Gb });
+
+        var anyWorker = await EnqueueAsync("big.csx");
+
+        Assert.That((await ViewAsync(paused.WorkerId)).NoRoom, Is.Null, "paused");
+        Assert.That((await ViewAsync(small.WorkerId)).NoRoom, Is.Null, "29 GB however it is cleared");
+
+        await Scheduler.CancelJobAsync(anyWorker);
+        var low = await FullWorkerAsync("low-full", freeGb: 10);
+        await EnqueueAsync("big.csx", StandardPriority.High);
+        Assert.That((await ViewAsync(low.WorkerId)).NoRoom, Is.Null, "the job wants a higher priority than it has");
+    }
+
+    [Test]
+    public async Task ASleeperThatWouldBeWoken_IsBlocked_ByItsDiskAsLastHeard()
+    {
+        await RanAsync("big.csx", "big-ws", fresh: true, usedBytes: 50 * Gb);
+        await RoomyButPausedAsync();
+        var repo = _fixture.Services.GetRequiredService<WorkerRepository>();
+        var sleeper = await DirectedWorker.RegisterAsync(_fixture, "sleeper");
+        var unwakeable = await DirectedWorker.RegisterAsync(_fixture, "unwakeable");
+        await repo.SetWakeMacAddressAsync(sleeper.WorkerId, "aa:bb:cc:dd:ee:01");
+        foreach (var id in new[] { sleeper.WorkerId, unwakeable.WorkerId })
+        {
+            repo.SetWorkspaceUsage(id, NoWorkspaces);
+            repo.SetDiskSpace(id, Free(10));
+        }
+
+        await EnqueueAsync("big.csx");
+
+        Assert.That((await ViewAsync(sleeper.WorkerId)).NoRoom, Is.Not.Null);
+        Assert.That((await ViewAsync(unwakeable.WorkerId)).NoRoom, Is.Null, "no address to wake it by");
+        _fixture.Services.GetRequiredService<RecordingWakeSender>().Enabled = false;
+        Assert.That((await ViewAsync(sleeper.WorkerId)).NoRoom, Is.Null, "waking is off");
+    }
+
+    [Test]
+    public async Task ASleeper_IsJudgedByTheWorkspacesItWasLastHeardToHold()
+    {
+        // 100 GB: 10 free, an 80 GB workspace, 10 of other use. The job's 100 can't fit however the host is cleared; counting the workspace as other use too would say it could.
+        await RanAsync("big.csx", "big-ws", fresh: true, usedBytes: 100 * Gb);
+        await RoomyButPausedAsync();
+        var repo = _fixture.Services.GetRequiredService<WorkerRepository>();
+        var sleeper = await DirectedWorker.RegisterAsync(_fixture, "small-sleeper");
+        await repo.SetWakeMacAddressAsync(sleeper.WorkerId, "aa:bb:cc:dd:ee:02");
+        repo.SetWorkspaceUsage(sleeper.WorkerId, Usage(("other-ws", 80)));
+        repo.SetDiskSpace(sleeper.WorkerId, new DiskSpaceReport { FreeBytes = 10 * Gb, TotalBytes = 100 * Gb, MinFreeBytes = Gb });
+
+        await EnqueueAsync("big.csx");
+
+        Assert.That((await ViewAsync(sleeper.WorkerId)).NoRoom, Is.Null);
     }
 
     [Test]

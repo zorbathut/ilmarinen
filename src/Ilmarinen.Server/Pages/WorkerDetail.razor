@@ -123,6 +123,10 @@
                 <span title="Space in use that isn't workspaces or git mirrors: the host's own files and, for a containerized worker, usually Docker's images and build cache. Deleting workspaces can't free it."> · other use @DisplayFormat.Size(other)</span>
             }
         </p>
+        @if (WorkerBadge.GetStatusDetail(worker) is { } blocked)
+        {
+            <p style="color: var(--warning);">@blocked</p>
+        }
     </div>
 
     @if (deleteError != null)
@@ -426,7 +430,7 @@ else
         using var scope = ScopeFactory.CreateScope();
         var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        worker = await workerRepo.GetByIdAsync(ulid);
+        worker = await workerRepo.GetByIdAsync(ulid) is { } view ? (await Scheduler.WithNoRoomAsync([view])).Single() : null;
         // Once: the page refreshes every second and on every change, and would otherwise overwrite what is being typed.
         if (worker != null && !macLoaded)
         {
