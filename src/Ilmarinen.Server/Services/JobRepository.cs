@@ -482,6 +482,26 @@ public class JobRepository
             retryablePipelines: retryablePipelines)).ToList();
     }
 
+    /// <summary>The newest <paramref name="count"/> jobs, newest first.</summary>
+    public async Task<IReadOnlyList<JobInfo>> GetRecentAsync(int count)
+    {
+        var jobs = await WithPriorities()
+            .OrderByDescending(j => j.CreatedAt)
+            .Take(count)
+            .ToListAsync();
+
+        var workerIds = jobs.Where(j => j.WorkerId != null).Select(j => j.WorkerId!.Value).Distinct().ToList();
+        var pipelineIds = jobs.Where(j => j.PipelineId != null).Select(j => j.PipelineId!.Value).Distinct().ToList();
+        var workerNames = await _db.Workers.Where(w => workerIds.Contains(w.Id)).ToDictionaryAsync(w => w.Id, w => w.Name);
+        var pipelineNames = await _db.Pipelines.Where(p => pipelineIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.Name);
+        var retryablePipelines = await GetRetryablePipelineIdsAsync();
+
+        return jobs.Select(j => ToJobInfo(j,
+            workerName: j.WorkerId != null && workerNames.TryGetValue(j.WorkerId.Value, out var wName) ? wName : null,
+            pipelineName: j.PipelineId != null && pipelineNames.TryGetValue(j.PipelineId.Value, out var pName) ? pName : null,
+            retryablePipelines: retryablePipelines)).ToList();
+    }
+
     public async Task<IReadOnlyList<JobInfo>> GetByPipelineAsync(Guid pipelineId)
     {
         var workerNames = await _db.Workers.ToDictionaryAsync(w => w.Id, w => w.Name);

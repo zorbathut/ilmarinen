@@ -1,4 +1,5 @@
 @page "/"
+@using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
 @using Microsoft.Extensions.Logging
@@ -81,7 +82,7 @@
 
 @code {
     private DashboardStats? stats;
-    private IReadOnlyList<RecentJob>? recentJobs;
+    private IReadOnlyList<JobInfo>? recentJobs;
 
     protected override async Task OnInitializedAsync()
     {
@@ -112,7 +113,7 @@
         using var scope = ScopeFactory.CreateScope();
         var dashboard = scope.ServiceProvider.GetRequiredService<DashboardService>();
         stats = await dashboard.GetStatsAsync();
-        recentJobs = await dashboard.GetRecentJobsAsync();
+        recentJobs = await scope.ServiceProvider.GetRequiredService<JobRepository>().GetRecentAsync(10);
     }
 
     public void Dispose()

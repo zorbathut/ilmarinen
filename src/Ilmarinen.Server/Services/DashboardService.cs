@@ -41,29 +41,6 @@ public class DashboardService
             TotalPipelines = pipelineCount
         };
     }
-
-    public async Task<IReadOnlyList<RecentJob>> GetRecentJobsAsync(int count = 10)
-    {
-        var jobs = await _db.Jobs
-            .OrderByDescending(j => j.CreatedAt)
-            .Take(count)
-            .Select(j => new RecentJob
-            {
-                Id = j.Id,
-                Status = j.Status,
-                RepoUrl = j.RepoUrl,
-                Ref = j.Ref,
-                ScriptPath = j.ScriptPath,
-                CreatedAt = j.CreatedAt,
-                WorkerId = j.WorkerId,
-                WorkerName = j.WorkerId != null
-                    ? _db.Workers.Where(w => w.Id == j.WorkerId).Select(w => w.Name).FirstOrDefault()
-                    : null
-            })
-            .ToListAsync();
-
-        return jobs;
-    }
 }
 
 public record DashboardStats
@@ -76,16 +53,4 @@ public record DashboardStats
     public int TotalWorkers { get; init; }
     public int ConnectedWorkers { get; init; }
     public int TotalPipelines { get; init; }
-}
-
-public record RecentJob
-{
-    public required Guid Id { get; init; }
-    public required JobStatus Status { get; init; }
-    public required string RepoUrl { get; init; }
-    public required string Ref { get; init; }
-    public required string ScriptPath { get; init; }
-    public required DateTime CreatedAt { get; init; }
-    public Guid? WorkerId { get; init; }
-    public string? WorkerName { get; init; }
 }
