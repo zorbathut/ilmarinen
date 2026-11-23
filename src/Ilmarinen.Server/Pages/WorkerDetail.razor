@@ -247,42 +247,11 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title">Job History</h2>
-        <div class="table-scroll">
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Status</th>
-                        <th>Repository</th>
-                        <th>Ref</th>
-                        <th class="hide-mobile">Script</th>
-                        <th>Duration</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @if (jobs != null && jobs.Count > 0)
-                    {
-                        @foreach (var job in jobs)
-                        {
-                            <tr>
-                                <td><JobLink JobId="job.Id" /></td>
-                                <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
-                                <td>@DisplayFormat.ShortRepoUrl(job.RepoUrl)</td>
-                                <td>@job.Ref</td>
-                                <td class="hide-mobile">@job.ScriptPath</td>
-                                <td>@DisplayFormat.JobProgress(job, EstimateFor(job), DateTime.UtcNow)</td>
-                            </tr>
-                        }
-                    }
-                    else
-                    {
-                        <tr>
-                            <td colspan="6" style="text-align: center; color: var(--text-secondary);">No jobs</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
+        <JobTable Items="jobs" Estimates="estimates" StorageKey="worker-jobs" Defaults="JobColumns" Exclude="WorkerOwnColumns">
+            <Empty>
+                <div style="text-align: center; color: var(--text-secondary);">No jobs</div>
+            </Empty>
+        </JobTable>
     </div>
 }
 else if (loading)
@@ -301,6 +270,8 @@ else
     private WorkerView? worker;
     private IReadOnlyList<JobInfo>? jobs;
     private IReadOnlyDictionary<Guid, TimeSpan> estimates = new Dictionary<Guid, TimeSpan>();
+    private static readonly IReadOnlyList<string> JobColumns = ["id", "status", "repository", "ref", "script", "duration"];
+    private static readonly IReadOnlyCollection<string> WorkerOwnColumns = ["worker"];
     private bool loading = true;
     private HashSet<string> deletingWorkspaces = new();
     private string? deleteError;
@@ -313,7 +284,6 @@ else
     private bool waking;
     private string? wakeMessage;
     private bool wakeMessageIsError;
-    private Timer? _timer;
 
     private bool IsDiagnosticRunning() =>
         worker?.Diagnostic?.Status == DiagnosticStatus.Running;
@@ -468,7 +438,6 @@ else
 
         UIEvents.OnWorkersChanged += OnChanged;
         UIEvents.OnJobsChanged += OnChanged;
-        _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     private async void OnChanged()
@@ -504,15 +473,10 @@ else
             macLoaded = true;
         }
 
-        // Assigned together: the page re-renders every second, and new jobs shown against old estimates would mislabel any that just finished
+        // Assigned together: the job list re-renders every second, and new jobs shown against old estimates would mislabel any that just finished
         var fetchedJobs = await jobRepo.GetByWorkerAsync(ulid);
         var fetchedEstimates = await jobRepo.GetDurationEstimatesAsync(fetchedJobs);
         (jobs, estimates) = (fetchedJobs, fetchedEstimates);
-    }
-
-    private TimeSpan? EstimateFor(JobInfo job)
-    {
-        return estimates.TryGetValue(job.Id, out var estimate) ? estimate : null;
     }
 
     private bool IsDeleting(string workspace) =>
@@ -567,11 +531,9 @@ else
         }
     }
 
-
     public void Dispose()
     {
         UIEvents.OnWorkersChanged -= OnChanged;
         UIEvents.OnJobsChanged -= OnChanged;
-        _timer?.Dispose();
     }
 }

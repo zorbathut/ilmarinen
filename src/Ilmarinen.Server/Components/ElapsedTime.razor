@@ -4,7 +4,7 @@
 @implements IDisposable
 @inject ILogger<ElapsedTime> Logger
 
-<span>@DisplayFormat.JobElapsed(Job, DateTime.UtcNow)</span>
+<span>@DisplayFormat.JobProgress(Job, Estimate, DateTime.UtcNow)</span>
 
 @code {
     // A running job's elapsed time counts in seconds, and nothing else on the page changes that often
@@ -12,6 +12,10 @@
 
     [Parameter, EditorRequired]
     public JobInfo Job { get; set; } = null!;
+
+    /// <summary>How long the job is expected to take, shown beside the elapsed time while it runs; null for none.</summary>
+    [Parameter]
+    public TimeSpan? Estimate { get; set; }
 
     protected override void OnInitialized()
     {
@@ -25,7 +29,11 @@
             // Ends when Dispose disposes the timer
             while (await tick.WaitForNextTickAsync())
             {
-                await InvokeAsync(StateHasChanged);
+                // Only a running job's time changes; a list of finished ones stays still.
+                if (Job.StartedAt != null && Job.CompletedAt == null)
+                {
+                    await InvokeAsync(StateHasChanged);
+                }
             }
         }
         catch (ObjectDisposedException ex)

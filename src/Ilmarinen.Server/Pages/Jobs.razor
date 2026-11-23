@@ -1,17 +1,12 @@
 @page "/jobs"
-@using Ilmarinen.Protocol
-@using Ilmarinen.Protocol.Requests
 @using Ilmarinen.Protocol.Responses
 @using Ilmarinen.Server.Services
 @using Microsoft.Extensions.DependencyInjection
 @using Microsoft.Extensions.Logging
-@using System.Threading
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
 @inject ILogger<Jobs> Logger
-@inject JobScheduler Scheduler
 @inject UIEventService UIEvents
-@inject NavigationManager Navigation
 
 <h1 class="page-title">Jobs</h1>
 
@@ -19,61 +14,13 @@
 <FilteredByPriority PriorityId="MinWorkerPriorityFilter" What="jobs needing worker priority" ClearHref="/jobs" />
 
 <div class="card">
-    <div class="table-scroll">
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Status</th>
-                    <th>Repository</th>
-                    <th>Ref</th>
-                    <th class="hide-mobile">Script</th>
-                    <th class="hide-mobile">Worker</th>
-                    <th>Duration</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (jobs != null)
-                {
-                    @foreach (var job in jobs)
-                    {
-                        <tr>
-                            <td><JobLink JobId="job.Id" /></td>
-                            <td>
-                                <span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span>
-                                @if (job.Status == JobStatus.Queued)
-                                {
-                                    <WakingFor JobId="job.Id" />
-                                }
-                                @if (job.Status is JobStatus.Failed or JobStatus.Cancelled)
-                                {
-                                    @if (job.CanRetry)
-                                    {
-                                        <button class="btn btn-retry" @onclick="() => RetryJob(job.Id)" @onclick:stopPropagation="true">Retry</button>
-                                    }
-                                    else
-                                    {
-                                        <button class="btn btn-retry" disabled title="@job.RetryBlockedReason">Retry</button>
-                                    }
-                                }
-                            </td>
-                            <td>@DisplayFormat.ShortRepoUrl(job.RepoUrl)</td>
-                            <td>@job.Ref</td>
-                            <td class="hide-mobile">@job.ScriptPath</td>
-                            <td class="hide-mobile"><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
-                            <td>@DisplayFormat.JobProgress(job, EstimateFor(job), DateTime.UtcNow)</td>
-                        </tr>
-                    }
-                }
-            </tbody>
-        </table>
-    </div>
+    <JobTable Items="jobs" Estimates="estimates" StorageKey="jobs" Defaults="JobColumns" />
 </div>
 
 @code {
     private IReadOnlyList<JobInfo>? jobs;
     private IReadOnlyDictionary<Guid, TimeSpan> estimates = new Dictionary<Guid, TimeSpan>();
-    private Timer? _timer;
+    private static readonly IReadOnlyList<string> JobColumns = ["id", "status", "repository", "ref", "script", "worker", "duration"];
 
     /// <summary>Only the jobs of this job priority.</summary>
     [SupplyParameterFromQuery(Name = "priority")]
@@ -91,9 +38,6 @@
     protected override void OnInitialized()
     {
         UIEvents.OnJobsChanged += OnJobsChanged;
-
-        // Tick every second to update running job durations
-        _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     private async void OnJobsChanged()
@@ -121,27 +65,8 @@
         return (all, await repo.GetDurationEstimatesAsync(all));
     }
 
-    private TimeSpan? EstimateFor(JobInfo job)
-    {
-        return estimates.TryGetValue(job.Id, out var estimate) ? estimate : null;
-    }
-
-    private async Task RetryJob(Guid jobId)
-    {
-        using var scope = ScopeFactory.CreateScope();
-        var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
-        var submission = await jobRepo.BuildRetrySubmissionAsync(jobId);
-        if (submission != null)
-        {
-            var newJobId = await Scheduler.EnqueueJobAsync(submission);
-            Navigation.NavigateTo($"/jobs/{newJobId}");
-        }
-    }
-
-
     public void Dispose()
     {
         UIEvents.OnJobsChanged -= OnJobsChanged;
-        _timer?.Dispose();
     }
 }

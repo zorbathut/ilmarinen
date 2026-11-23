@@ -1,0 +1,118 @@
+@using Ilmarinen.Protocol
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.DependencyInjection
+@inject IServiceScopeFactory ScopeFactory
+@inject JobScheduler Scheduler
+@inject NavigationManager Navigation
+@inject PriorityRanks Ranks
+
+<DataTable Items="Items" Columns="columns" StorageKey="@StorageKey" RowKey="job => job.Id" Exclude="Exclude" Empty="Empty" />
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<JobInfo>? Items { get; set; }
+
+    /// <summary>Each job's expected run time, for the Duration column; null where the page has none.</summary>
+    [Parameter]
+    public IReadOnlyDictionary<Guid, TimeSpan>? Estimates { get; set; }
+
+    [Parameter, EditorRequired]
+    public string StorageKey { get; set; } = "";
+
+    /// <summary>The columns shown until the viewer says otherwise, in order; the rest of the catalog follows them, hidden.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<string> Defaults { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyCollection<string>? Exclude { get; set; }
+
+    [Parameter]
+    public RenderFragment? Empty { get; set; }
+
+    private IReadOnlyList<TableColumn<JobInfo>> columns = [];
+    private IReadOnlyDictionary<Guid, int> ranks = new Dictionary<Guid, int>();
+
+    protected override void OnInitialized()
+    {
+        IReadOnlyList<TableColumn<JobInfo>> catalog =
+        [
+            new("id", "ID", job => @<JobLink JobId="job.Id" />) { SortKey = job => job.Id },
+            new("status", "Status", StatusCell) { SortKey = job => (int)job.Status },
+            new("repository", "Repository", job => @<text>@DisplayFormat.ShortRepoUrl(job.RepoUrl)</text>) { SortKey = job => DisplayFormat.ShortRepoUrl(job.RepoUrl) },
+            new("ref", "Ref", job => @<text>@job.Ref</text>) { SortKey = job => job.Ref },
+            new("script", "Script", job => @<text>@job.ScriptPath</text>) { SortKey = job => job.ScriptPath, HideMobile = true },
+            new("worker", "Worker", job => @<WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" />) { SortKey = job => job.WorkerName, HideMobile = true },
+            new("duration", "Duration", job => @<ElapsedTime Job="job" Estimate="EstimateFor(job)" />) { SortKey = Elapsed, FirstDescending = true },
+            new("created", "Created", job => @<text>@job.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</text>) { SortKey = job => job.CreatedAt, FirstDescending = true },
+            new("started", "Started", job => @<text>@(job.StartedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</text>) { SortKey = job => job.StartedAt, FirstDescending = true },
+            new("completed", "Completed", job => @<text>@(job.CompletedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</text>) { SortKey = job => job.CompletedAt, FirstDescending = true },
+            new("commit", "Commit", job => @<code>@(job.Commit?[..Math.Min(8, job.Commit.Length)] ?? "-")</code>) { SortKey = job => job.Commit },
+            new("pipeline", "Pipeline", job => @<PipelineLink PipelineId="job.PipelineId" PipelineName="@job.PipelineName" />) { SortKey = job => job.PipelineName },
+            new("priority", "Job Priority", job => @<text>@job.Priority.Name</text>) { SortKey = job => RankOf(job.Priority), FirstDescending = true },
+            new("min-worker-priority", "Min Worker Priority", job => @<text>@(job.MinWorkerPriority?.Name ?? "Any worker")</text>) { SortKey = job => RankOf(job.MinWorkerPriority), FirstDescending = true },
+            new("disk-used", "Disk Used", job => @<text>@(job.DiskUse?.UsedBytes is { } used ? DisplayFormat.Size(used) : "-")</text>) { SortKey = job => job.DiskUse?.UsedBytes, FirstDescending = true },
+        ];
+        columns = TableColumns.ShownFirst(catalog, Defaults);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        ranks = await Ranks.GetAsync();
+    }
+
+    private RenderFragment StatusCell(JobInfo job)
+    {
+        return @<text>
+            <span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span>
+            @if (job.Status == JobStatus.Queued)
+            {
+                <WakingFor JobId="job.Id" />
+            }
+            @if (job.Status is JobStatus.Failed or JobStatus.Cancelled)
+            {
+                @if (job.CanRetry)
+                {
+                    <button class="btn btn-retry" @onclick="() => RetryJob(job.Id)" @onclick:stopPropagation="true">Retry</button>
+                }
+                else
+                {
+                    <button class="btn btn-retry" disabled title="@job.RetryBlockedReason">Retry</button>
+                }
+            }
+        </text>;
+    }
+
+    private static IComparable? Elapsed(JobInfo job)
+    {
+        if (job.StartedAt == null)
+        {
+            return null;
+        }
+        return (job.CompletedAt ?? DateTime.UtcNow) - job.StartedAt.Value;
+    }
+
+    private IComparable? RankOf(PriorityRef? priority)
+    {
+        return priority != null && ranks.TryGetValue(priority.Id, out var rank) ? rank : null;
+    }
+
+    private TimeSpan? EstimateFor(JobInfo job)
+    {
+        return Estimates != null && Estimates.TryGetValue(job.Id, out var estimate) ? estimate : null;
+    }
+
+
+
+    private async Task RetryJob(Guid jobId)
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var submission = await jobRepo.BuildRetrySubmissionAsync(jobId);
+        if (submission != null)
+        {
+            var newJobId = await Scheduler.EnqueueJobAsync(submission);
+            Navigation.NavigateTo($"/jobs/{newJobId}");
+        }
+    }
+}

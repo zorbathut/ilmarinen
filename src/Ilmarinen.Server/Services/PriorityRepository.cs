@@ -46,6 +46,12 @@ public class PriorityRepository
             .ToListAsync();
     }
 
+    /// <summary>Every priority's rank, of both kinds, by id: what a list sorts priorities by.</summary>
+    public async Task<IReadOnlyDictionary<Guid, int>> GetRanksAsync()
+    {
+        return await _db.Priorities.AsNoTracking().ToDictionaryAsync(p => p.Id, p => p.Rank);
+    }
+
     public async Task<Priority> GetDefaultAsync(PriorityKind kind)
     {
         return await _db.Priorities.AsNoTracking().SingleAsync(p => p.Kind == kind && p.IsDefault);

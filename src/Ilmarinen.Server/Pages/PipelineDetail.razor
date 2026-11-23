@@ -209,36 +209,7 @@
 
     <div class="card" style="margin-top: 1rem;">
         <h2 class="card-title" style="font-size: 1.25rem; margin-bottom: 1rem;">Jobs</h2>
-        <div class="table-scroll">
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Status</th>
-                        <th>Ref</th>
-                        <th>Worker</th>
-                        <th>Created</th>
-                        <th>Completed</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @if (jobs != null)
-                    {
-                        @foreach (var job in jobs)
-                        {
-                            <tr>
-                                <td><JobLink JobId="job.Id" /></td>
-                                <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
-                                <td>@job.Ref</td>
-                                <td><WorkerLink WorkerId="job.WorkerId" WorkerName="@job.WorkerName" /></td>
-                                <td>@job.CreatedAt.ToString("HH:mm:ss")</td>
-                                <td>@(job.CompletedAt?.ToString("HH:mm:ss") ?? "-")</td>
-                            </tr>
-                        }
-                    }
-                </tbody>
-            </table>
-        </div>
+        <JobTable Items="jobs" StorageKey="pipeline-jobs" Defaults="JobColumns" Exclude="PipelineOwnColumns" />
     </div>
 }
 else if (loading)
@@ -256,6 +227,8 @@ else
 
     private PipelineInfo? pipeline;
     private IReadOnlyList<JobInfo>? jobs;
+    private static readonly IReadOnlyList<string> JobColumns = ["id", "status", "ref", "worker", "created", "completed"];
+    private static readonly IReadOnlyCollection<string> PipelineOwnColumns = ["pipeline"];
     private IReadOnlyList<RepositoryInfo>? repositories;
     private string refOverride = "";
     // Priorities by name, as submissions and updates give them; "" for the pipeline's own.

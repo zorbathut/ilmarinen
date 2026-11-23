@@ -38,6 +38,7 @@ public static class IlmarinenServerExtensions
         services.AddSingleton<DispatchHold>();
         services.AddSingleton<JobScheduler>();
         services.AddSingleton<UIEventService>();
+        services.AddSingleton<PriorityRanks>();
         services.AddSingleton<LogSubscriptionService>();
         services.AddSingleton<LogStreamService>();
         services.AddSingleton<WorkspaceDeletionService>();
