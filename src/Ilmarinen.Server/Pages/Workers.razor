@@ -47,82 +47,7 @@
 }
 
 <div class="card">
-    <div class="table-scroll">
-        <table>
-            <thead>
-                <tr>
-                    <th>Status</th>
-                    <th>Name</th>
-                    <th class="hide-mobile">ID</th>
-                    <th>Priority</th>
-                    <th>Current Job</th>
-                    <th>Disk Free</th>
-                    <th class="hide-mobile">Bundle</th>
-                    <th class="hide-mobile">Protocol</th>
-                    <th class="hide-mobile">Registered</th>
-                    <th class="hide-mobile">Last Seen</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (workers != null)
-                {
-                    @foreach (var worker in workers)
-                    {
-                        <tr @key="worker.Id">
-                            <td>
-                                <span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span>
-                                @WorkerBadge.GetStatusLabel(worker)
-                            </td>
-                            <td><WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" /></td>
-                            <td class="hide-mobile">@ShortId.From(worker.Id)</td>
-                            <td>
-                                @* Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without this the diff is a no-op and the dropdown would keep showing the value the user picked instead of the one that is actually stored. *@
-                                <select @key="(worker.Priority, prioritySaves)"
-                                        value="@worker.Priority.Id"
-                                        disabled="@IsSavingPriority(worker.Id)"
-                                        @onchange="e => SetPriority(worker.Id, e)">
-                                    @foreach (var priority in priorityOptions)
-                                    {
-                                        <option value="@priority.Id" selected="@(priority.Id == worker.Priority.Id)">@priority.Name</option>
-                                    }
-                                </select>
-                            </td>
-                            <td><JobsLink JobIds="worker.CurrentJobs" /></td>
-                            <td><DiskFree Worker="worker" /></td>
-                            <td class="hide-mobile">
-                                @if (worker.BundleHash == null)
-                                {
-                                    <span>-</span>
-                                }
-                                else
-                                {
-                                    @* The hash is worker-reported; don't let a short one crash the render *@
-                                    <span title="@worker.BundleHash">@worker.BundleHash[..Math.Min(8, worker.BundleHash.Length)]</span>
-                                    @if (BundleService.CurrentHash != null && worker.BundleHash != BundleService.CurrentHash)
-                                    {
-                                        <span style="color: var(--warning, orange);"> (stale)</span>
-                                    }
-                                }
-                            </td>
-                            <td class="hide-mobile"><WorkerProtocolVersion Worker="worker" /></td>
-                            <td class="hide-mobile">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm")</td>
-                            <td class="hide-mobile">@worker.LastSeen.ToString("HH:mm:ss")</td>
-                            <td>
-                                <button class="btn"
-                                        disabled="@IsSavingPause(worker.Id)"
-                                        title="@(worker.IsPaused ? "Let the server send this worker jobs again" : "Send this worker no new jobs; what it is running carries on")"
-                                        @onclick="() => TogglePause(worker)">@(worker.IsPaused ? "Unpause" : "Pause")</button>
-                                <button class="btn btn-danger"
-                                        disabled="@IsRevoking(worker.Id)"
-                                        @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
-                            </td>
-                        </tr>
-                    }
-                }
-            </tbody>
-        </table>
-    </div>
+    <DataTable Items="workers" Columns="workerColumns" StorageKey="workers" RowKey="worker => worker.Id" />
 </div>
 
 @if (workers != null && workers.Any(w => w.Workspaces.Count > 0 || w.ShowsMirrors))
@@ -213,8 +138,26 @@
         workers = await FetchWorkersAsync();
     }
 
+    private IReadOnlyList<TableColumn<WorkerView>> workerColumns = [];
+
     protected override void OnInitialized()
     {
+        workerColumns =
+        [
+            new("status", "Status", worker => @<text><span class="connection-badge @WorkerBadge.GetBadgeClass(worker)"></span> @WorkerBadge.GetStatusLabel(worker)</text>) { SortKey = WorkerBadge.GetStatusLabel },
+            new("name", "Name", worker => @<WorkerLink WorkerId="worker.Id" WorkerName="@worker.Name" />) { SortKey = worker => worker.Name },
+            new("id", "ID", worker => @<text>@ShortId.From(worker.Id)</text>) { SortKey = worker => ShortId.From(worker.Id), HideMobile = true },
+            new("priority", "Priority", PriorityCell) { SortKey = PriorityOrder },
+            new("current-job", "Current Job", worker => @<JobsLink JobIds="worker.CurrentJobs" />) { SortKey = worker => worker.CurrentJobs.Count, FirstDescending = true },
+            new("disk-free", "Disk Free", worker => @<DiskFree Worker="worker" />) { SortKey = worker => worker.DiskSpace?.FreeBytes, FirstDescending = true },
+            new("bundle", "Bundle", BundleCell) { SortKey = worker => worker.BundleHash, HideMobile = true },
+            new("protocol", "Protocol", worker => @<WorkerProtocolVersion Worker="worker" />) { SortKey = worker => worker.ProtocolVersion, HideMobile = true },
+            new("registered", "Registered", worker => @<text>@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm")</text>) { SortKey = worker => worker.RegisteredAt, FirstDescending = true, HideMobile = true },
+            new("last-seen", "Last Seen", worker => @<text>@worker.LastSeen.ToString("HH:mm:ss")</text>) { SortKey = worker => worker.LastSeen, FirstDescending = true, HideMobile = true },
+            new("last-ip", "Last IP", worker => @<text>@(worker.LastIpAddress ?? "-")</text>) { SortKey = worker => worker.LastIpAddress, ShownByDefault = false },
+            new("actions", "Actions", ActionsCell),
+        ];
+
         UIEvents.OnWorkersChanged += OnChanged;
         UIEvents.OnJobsChanged += OnChanged;
         UIEvents.OnPrioritiesChanged += OnChanged;
@@ -255,6 +198,56 @@
 
     // Workspace names can't start with a dot, so this never collides with one
     private const string MirrorsRowKey = ".mirrors";
+
+    private RenderFragment PriorityCell(WorkerView worker)
+    {
+        // Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without this the diff is a no-op and the dropdown would keep showing the value the user picked instead of the one that is actually stored.
+        return @<select @key="(worker.Priority, prioritySaves)"
+                        value="@worker.Priority.Id"
+                        disabled="@IsSavingPriority(worker.Id)"
+                        @onchange="e => SetPriority(worker.Id, e)">
+            @foreach (var priority in priorityOptions)
+            {
+                <option value="@priority.Id" selected="@(priority.Id == worker.Priority.Id)">@priority.Name</option>
+            }
+        </select>;
+    }
+
+    /// <summary>Highest first: the options are listed highest first.</summary>
+    private IComparable? PriorityOrder(WorkerView worker)
+    {
+        var index = priorityOptions.ToList().FindIndex(p => p.Id == worker.Priority.Id);
+        return index < 0 ? null : index;
+    }
+
+    private RenderFragment BundleCell(WorkerView worker)
+    {
+        if (worker.BundleHash == null)
+        {
+            return @<span>-</span>;
+        }
+        // The hash is worker-reported; don't let a short one crash the render
+        return @<text>
+            <span title="@worker.BundleHash">@worker.BundleHash[..Math.Min(8, worker.BundleHash.Length)]</span>
+            @if (BundleService.CurrentHash != null && worker.BundleHash != BundleService.CurrentHash)
+            {
+                <span style="color: var(--warning, orange);"> (stale)</span>
+            }
+        </text>;
+    }
+
+    private RenderFragment ActionsCell(WorkerView worker)
+    {
+        return @<text>
+            <button class="btn"
+                    disabled="@IsSavingPause(worker.Id)"
+                    title="@(worker.IsPaused ? "Let the server send this worker jobs again" : "Send this worker no new jobs; what it is running carries on")"
+                    @onclick="() => TogglePause(worker)">@(worker.IsPaused ? "Unpause" : "Pause")</button>
+            <button class="btn btn-danger"
+                    disabled="@IsRevoking(worker.Id)"
+                    @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
+        </text>;
+    }
 
     private bool IsDeleting(Guid workerId, string workspace) =>
         deletingWorkspaces.Contains($"{workerId}:{workspace}");
