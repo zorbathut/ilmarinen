@@ -267,7 +267,7 @@
                             <tr>
                                 <td><JobLink JobId="job.Id" /></td>
                                 <td><span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span></td>
-                                <td>@GetShortRepoUrl(job.RepoUrl)</td>
+                                <td>@DisplayFormat.ShortRepoUrl(job.RepoUrl)</td>
                                 <td>@job.Ref</td>
                                 <td class="hide-mobile">@job.ScriptPath</td>
                                 <td>@DisplayFormat.JobProgress(job, EstimateFor(job), DateTime.UtcNow)</td>
@@ -567,14 +567,6 @@ else
         }
     }
 
-    private static string GetShortRepoUrl(string url)
-    {
-        if (url.StartsWith("https://github.com/"))
-            return url.Replace("https://github.com/", "");
-        if (url.StartsWith("git@github.com:"))
-            return url.Replace("git@github.com:", "").Replace(".git", "");
-        return url;
-    }
 
     public void Dispose()
     {

@@ -1,3 +1,4 @@
+@using Ilmarinen.Server.Services
 @using Microsoft.Extensions.Logging
 @implements IAsyncDisposable
 @inject IJSRuntime JS
@@ -65,7 +66,7 @@
             handle = attached;
             attachedJobId = JobId;
         }
-        catch (Exception ex) when (IsCircuitGone(ex))
+        catch (Exception ex) when (BrowserInterop.IsCircuitGone(ex))
         {
             Logger.LogDebug(ex, "Circuit went away while attaching the log viewer for job {JobId}", JobId);
         }
@@ -92,15 +93,10 @@
             await leaving.InvokeVoidAsync("detach", handle);
             await leaving.DisposeAsync();
         }
-        catch (Exception ex) when (IsCircuitGone(ex))
+        catch (Exception ex) when (BrowserInterop.IsCircuitGone(ex))
         {
             // The circuit can go first, in which case the browser has dropped the page and its timers along with it.
             Logger.LogDebug(ex, "Log viewer for job {JobId} was already gone at teardown", JobId);
         }
-    }
-
-    private static bool IsCircuitGone(Exception ex)
-    {
-        return ex is JSDisconnectedException or ObjectDisposedException or TaskCanceledException;
     }
 }

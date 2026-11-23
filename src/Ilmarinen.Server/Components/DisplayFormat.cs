@@ -1,5 +1,6 @@
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
+using Ilmarinen.Server.Services;
 using System.Globalization;
 using System;
 
@@ -108,5 +109,31 @@ public static class DisplayFormat
             return $"{(int)age.TotalHours}h ago";
         }
         return $"{(int)age.TotalDays}d ago";
+    }
+
+    /// <summary>
+    /// A stored (UTC) cron schedule as the viewer reads it: in their time zone once the browser has said what it is, and marked as UTC until then. An unparseable expression shows as stored.
+    /// </summary>
+    public static string LocalCron(string utcCron, TimeZoneInfo? viewerZone)
+    {
+        if (viewerZone == null)
+        {
+            return $"{utcCron} (UTC)";
+        }
+        return CronTimezoneHelper.UtcToLocal(utcCron, viewerZone) ?? utcCron;
+    }
+
+    /// <summary>A GitHub repository URL as its owner/name; any other URL as given.</summary>
+    public static string ShortRepoUrl(string url)
+    {
+        if (url.StartsWith("https://github.com/"))
+        {
+            return url.Replace("https://github.com/", "");
+        }
+        if (url.StartsWith("git@github.com:"))
+        {
+            return url.Replace("git@github.com:", "").Replace(".git", "");
+        }
+        return url;
     }
 }

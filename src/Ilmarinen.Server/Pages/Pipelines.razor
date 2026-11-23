@@ -7,7 +7,7 @@
 @implements IDisposable
 @inject IServiceScopeFactory ScopeFactory
 @inject UIEventService UIEvents
-@inject IJSRuntime JS
+@inject BrowserTimeZone TimeZone
 
 <h1 class="page-title">Pipelines</h1>
 
@@ -30,7 +30,7 @@
                 {
                     @foreach (var repo in repositories)
                     {
-                        <option value="@repo.Id">@repo.Name (@GetShortRepoUrl(repo.RepoUrl))</option>
+                        <option value="@repo.Id">@repo.Name (@DisplayFormat.ShortRepoUrl(repo.RepoUrl))</option>
                     }
                 }
             </select>
@@ -107,7 +107,7 @@
                             <td>@pipeline.RepositoryName</td>
                             <td>@pipeline.DefaultRef</td>
                             <td>@pipeline.ScriptPath</td>
-                            <td>@FormatLocalCron(pipeline.Schedule)</td>
+                            <td>@(pipeline.Schedule is { } schedule ? DisplayFormat.LocalCron(schedule, _browserTz) : "-")</td>
                             <td>@pipeline.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
                         </tr>
                     }
@@ -197,13 +197,8 @@
     {
         if (firstRender)
         {
-            try
-            {
-                var tzId = await JS.InvokeAsync<string>("getBrowserTimeZone");
-                _browserTz = TimeZoneInfo.FindSystemTimeZoneById(tzId);
-                StateHasChanged();
-            }
-            catch { }
+            _browserTz = await TimeZone.GetAsync();
+            StateHasChanged();
         }
     }
 
@@ -260,27 +255,11 @@
         }
     }
 
-    private string FormatLocalCron(string? utcCron)
-    {
-        if (utcCron == null) return "-";
-        if (_browserTz == null) return $"{utcCron} (UTC)";
-        return CronTimezoneHelper.UtcToLocal(utcCron, _browserTz) ?? utcCron;
-    }
-
     private string? ConvertScheduleToUtc(string input)
     {
         if (string.IsNullOrWhiteSpace(input)) return null;
         var trimmed = input.Trim();
         if (_browserTz == null) return trimmed;
         return CronTimezoneHelper.LocalToUtc(trimmed, _browserTz) ?? trimmed;
-    }
-
-    private string GetShortRepoUrl(string url)
-    {
-        if (url.StartsWith("https://github.com/"))
-            return url.Replace("https://github.com/", "");
-        if (url.StartsWith("git@github.com:"))
-            return url.Replace("git@github.com:", "").Replace(".git", "");
-        return url;
     }
 }

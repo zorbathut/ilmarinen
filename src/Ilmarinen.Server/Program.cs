@@ -39,6 +39,7 @@ builder.Services.AddIlmarinenServer();
 
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
+builder.Services.AddScoped<BrowserTimeZone>();
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<IlmarinenDbContext>();
 

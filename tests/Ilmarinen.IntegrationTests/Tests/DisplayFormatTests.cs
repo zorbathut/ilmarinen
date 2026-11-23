@@ -148,4 +148,36 @@ public class DisplayFormatTests
 
         Assert.That(DisplayFormat.Ago(now + TimeSpan.FromMinutes(3), now), Is.EqualTo(DisplayFormat.Ago(now, now)));
     }
+
+    [Test]
+    public void LocalCron_BeforeTheViewersZoneIsKnown_IsMarkedAsUtc()
+    {
+        var shown = DisplayFormat.LocalCron("0 2 * * *", null);
+
+        Assert.That(shown, Does.Contain("0 2 * * *"));
+        Assert.That(shown, Is.Not.EqualTo(DisplayFormat.LocalCron("0 2 * * *", TimeZoneInfo.Utc)));
+    }
+
+    [Test]
+    public void LocalCron_InTheViewersZone_ShiftsTheHour()
+    {
+        var plusThree = TimeZoneInfo.CreateCustomTimeZone("plus-three", TimeSpan.FromHours(3), "plus-three", "plus-three");
+
+        Assert.That(DisplayFormat.LocalCron("0 2 * * *", plusThree), Is.EqualTo("0 5 * * *"));
+        Assert.That(DisplayFormat.LocalCron("0 2 * * *", TimeZoneInfo.Utc), Is.EqualTo("0 2 * * *"));
+    }
+
+    [Test]
+    public void LocalCron_Unparseable_ShowsAsStored()
+    {
+        Assert.That(DisplayFormat.LocalCron("not a cron", TimeZoneInfo.Utc), Is.EqualTo("not a cron"));
+    }
+
+    [TestCase("https://github.com/owner/repo", "owner/repo")]
+    [TestCase("git@github.com:owner/repo.git", "owner/repo")]
+    [TestCase("https://forgejo.example/owner/repo.git", "https://forgejo.example/owner/repo.git")]
+    public void ShortRepoUrl_ShortensGitHubUrlsOnly(string url, string expected)
+    {
+        Assert.That(DisplayFormat.ShortRepoUrl(url), Is.EqualTo(expected));
+    }
 }

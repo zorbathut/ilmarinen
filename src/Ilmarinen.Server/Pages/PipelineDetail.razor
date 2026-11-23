@@ -11,7 +11,7 @@
 @inject JobScheduler Scheduler
 @inject UIEventService UIEvents
 @inject NavigationManager Navigation
-@inject IJSRuntime JS
+@inject BrowserTimeZone TimeZone
 
 <h1 class="page-title">Pipeline</h1>
 
@@ -52,7 +52,7 @@
                     }
                     else
                     {
-                        <input type="text" @bind="editSchedule" placeholder="@(pipeline.Schedule != null ? $"Current: {FormatLocalCron(pipeline.Schedule)}" : "0 2 * * * in your local time (optional)")" />
+                        <input type="text" @bind="editSchedule" placeholder="@(pipeline.Schedule != null ? $"Current: {DisplayFormat.LocalCron(pipeline.Schedule, _browserTz)}" : "0 2 * * * in your local time (optional)")" />
                         @if (pipeline.Schedule != null)
                         {
                             <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.85rem;" @onclick="() => clearingSchedule = true">Remove</button>
@@ -129,7 +129,7 @@
                     <span class="detail-value">
                         @if (pipeline.Schedule != null)
                         {
-                            @FormatLocalCron(pipeline.Schedule)
+                            @DisplayFormat.LocalCron(pipeline.Schedule, _browserTz)
                             var nextRun = GetNextRunLocal(pipeline.Schedule);
                             if (nextRun != null)
                             {
@@ -330,16 +330,8 @@ else
     {
         if (firstRender)
         {
-            try
-            {
-                var tzId = await JS.InvokeAsync<string>("getBrowserTimeZone");
-                _browserTz = TimeZoneInfo.FindSystemTimeZoneById(tzId);
-                StateHasChanged();
-            }
-            catch
-            {
-                // Fall back to UTC if browser timezone is unavailable
-            }
+            _browserTz = await TimeZone.GetAsync();
+            StateHasChanged();
         }
     }
 
@@ -455,15 +447,6 @@ else
             await pipelineRepo.DeleteAsync(ulid);
             Navigation.NavigateTo("/pipelines");
         }
-    }
-
-    private string FormatLocalCron(string utcCron)
-    {
-        if (_browserTz == null)
-            return $"{utcCron} (UTC)";
-
-        var local = CronTimezoneHelper.UtcToLocal(utcCron, _browserTz);
-        return local ?? utcCron;
     }
 
     private string? GetNextRunLocal(string utcCron)
