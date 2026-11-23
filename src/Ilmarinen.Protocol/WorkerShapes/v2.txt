@@ -1,0 +1,173 @@
+member Ilmarinen.Protocol.DeleteWorkspaceStatus.Error 4
+member Ilmarinen.Protocol.DeleteWorkspaceStatus.InUse 1
+member Ilmarinen.Protocol.DeleteWorkspaceStatus.NotFound 2
+member Ilmarinen.Protocol.DeleteWorkspaceStatus.Success 0
+member Ilmarinen.Protocol.DeleteWorkspaceStatus.Timeout 3
+member Ilmarinen.Protocol.DiagnosticStatus.Degraded 4
+member Ilmarinen.Protocol.DiagnosticStatus.Healthy 2
+member Ilmarinen.Protocol.DiagnosticStatus.Running 1
+member Ilmarinen.Protocol.DiagnosticStatus.Unhealthy 3
+member Ilmarinen.Protocol.DiagnosticStatus.Unknown 0
+member Ilmarinen.Protocol.DiagnosticStepKind.Advisory 2
+member Ilmarinen.Protocol.DiagnosticStepKind.Capability 0
+member Ilmarinen.Protocol.DiagnosticStepKind.Hygiene 1
+member Ilmarinen.Protocol.FailureKind.AgentApiUnreachable 11
+member Ilmarinen.Protocol.FailureKind.ContainerCreateFailed 6
+member Ilmarinen.Protocol.FailureKind.ContainerDnsFailure 10
+member Ilmarinen.Protocol.FailureKind.ContainerExecFailed 7
+member Ilmarinen.Protocol.FailureKind.DaemonError 4
+member Ilmarinen.Protocol.FailureKind.None 0
+member Ilmarinen.Protocol.FailureKind.OutputMismatch 8
+member Ilmarinen.Protocol.FailureKind.RegistryUnreachable 5
+member Ilmarinen.Protocol.FailureKind.SocketPermission 3
+member Ilmarinen.Protocol.FailureKind.SocketUnreachable 2
+member Ilmarinen.Protocol.FailureKind.Timeout 12
+member Ilmarinen.Protocol.FailureKind.Unknown 1
+member Ilmarinen.Protocol.FailureKind.WorkerDnsFailure 9
+member Ilmarinen.Protocol.JobOutcomeKind.Completed 0
+member Ilmarinen.Protocol.JobOutcomeKind.Rejected 1
+member Ilmarinen.Protocol.JobStatus.Cancelled 5
+member Ilmarinen.Protocol.JobStatus.Failed 4
+member Ilmarinen.Protocol.JobStatus.Pending 0
+member Ilmarinen.Protocol.JobStatus.Queued 1
+member Ilmarinen.Protocol.JobStatus.Running 2
+member Ilmarinen.Protocol.JobStatus.Success 3
+member Ilmarinen.Protocol.SessionAnswer.Fenced 1
+member Ilmarinen.Protocol.SessionAnswer.NotResumed 2
+member Ilmarinen.Protocol.SessionAnswer.Ok 0
+member Ilmarinen.Protocol.WorkerActivity.Idle 0
+member Ilmarinen.Protocol.WorkerActivity.RunningDiagnostic 2
+member Ilmarinen.Protocol.WorkerActivity.RunningJob 1
+member Ilmarinen.Protocol.WorkerHold.InUse 0
+member Ilmarinen.Protocol.WorkerHold.ShuttingDown 2
+member Ilmarinen.Protocol.WorkerHold.Sleeping 1
+member Ilmarinen.Protocol.WorkspaceKind.Ephemeral 1
+member Ilmarinen.Protocol.WorkspaceKind.Named 2
+member Ilmarinen.Protocol.WorkspaceKind.Unknown 0
+method client AssignJob(Ilmarinen.Protocol.Responses.JobAssignment)
+method client CancelJob(System.String)
+method client DeleteWorkspace(System.String)
+method client RecheckHost()
+method client RunDiagnostic()
+method http UploadArtifact(System.Guid, System.String) -> Ilmarinen.Protocol.Responses.ArtifactInfo
+method hub Authenticate(Ilmarinen.Protocol.Requests.WorkerAuthenticate) -> Ilmarinen.Protocol.SessionAnswer
+method hub Connect(Ilmarinen.Protocol.Requests.WorkerConnect) -> Ilmarinen.Protocol.Responses.AuthChallenge
+method hub Heartbeat() -> Ilmarinen.Protocol.SessionAnswer
+method hub ReportCommit(System.Guid, System.String) -> Ilmarinen.Protocol.SessionAnswer
+method hub ReportDiagnostic(Ilmarinen.Protocol.Requests.DiagnosticReport) -> Ilmarinen.Protocol.SessionAnswer
+method hub ReportDiskSpace(Ilmarinen.Protocol.Requests.DiskSpaceReport) -> Ilmarinen.Protocol.SessionAnswer
+method hub ReportOutcome(Ilmarinen.Protocol.Requests.JobOutcome) -> Ilmarinen.Protocol.SessionAnswer
+method hub ReportState(Ilmarinen.Protocol.Requests.WorkerState) -> Ilmarinen.Protocol.SessionAnswer
+method hub ReportWorkspaceUsage(Ilmarinen.Protocol.Requests.WorkspaceUsageReport) -> Ilmarinen.Protocol.SessionAnswer
+method hub Resume(Ilmarinen.Protocol.Requests.WorkerResume) -> Ilmarinen.Protocol.Responses.ResumeResponse
+method hub StreamLogs(Ilmarinen.Protocol.Requests.LogChunk) -> Ilmarinen.Protocol.SessionAnswer
+method hub StreamMetrics(Ilmarinen.Protocol.Requests.JobMetricsChunk) -> Ilmarinen.Protocol.SessionAnswer
+method hub WorkspaceDeleted(System.String, Ilmarinen.Protocol.Responses.DeleteWorkspaceResult) -> Ilmarinen.Protocol.SessionAnswer
+property Ilmarinen.Protocol.DiagnosticStepResult.Duration System.TimeSpan
+property Ilmarinen.Protocol.DiagnosticStepResult.Failure Ilmarinen.Protocol.FailureKind
+property Ilmarinen.Protocol.DiagnosticStepResult.Kind Ilmarinen.Protocol.DiagnosticStepKind
+property Ilmarinen.Protocol.DiagnosticStepResult.Message System.String?
+property Ilmarinen.Protocol.DiagnosticStepResult.Name System.String required
+property Ilmarinen.Protocol.DiagnosticStepResult.Success System.Boolean required
+property Ilmarinen.Protocol.DiagnosticStepResult.Suggestion System.String?
+property Ilmarinen.Protocol.JobDiskUse.StoppedForDisk System.Boolean
+property Ilmarinen.Protocol.JobDiskUse.UsedBytes System.Int64?
+property Ilmarinen.Protocol.JobDiskUse.WorkspaceFresh System.Boolean
+property Ilmarinen.Protocol.JobDiskUse.WorkspaceKind Ilmarinen.Protocol.WorkspaceKind required
+property Ilmarinen.Protocol.JobDiskUse.WorkspaceName System.String?
+property Ilmarinen.Protocol.Requests.DiagnosticReport.CheckedAt System.DateTime required
+property Ilmarinen.Protocol.Requests.DiagnosticReport.Status Ilmarinen.Protocol.DiagnosticStatus required
+property Ilmarinen.Protocol.Requests.DiagnosticReport.Steps System.Collections.Generic.IReadOnlyList<Ilmarinen.Protocol.DiagnosticStepResult> required
+property Ilmarinen.Protocol.Requests.DiagnosticReport.Summary System.String required
+property Ilmarinen.Protocol.Requests.DiskSpaceReport.FreeBytes System.Int64 required
+property Ilmarinen.Protocol.Requests.DiskSpaceReport.MinFreeBytes System.Int64 required
+property Ilmarinen.Protocol.Requests.DiskSpaceReport.TotalBytes System.Int64 required
+property Ilmarinen.Protocol.Requests.JobMetricsChunk.Content System.String required
+property Ilmarinen.Protocol.Requests.JobMetricsChunk.JobId System.Guid required
+property Ilmarinen.Protocol.Requests.JobMetricsChunk.SequenceNumber System.Int32 required
+property Ilmarinen.Protocol.Requests.JobMetricsChunk.Timestamp System.DateTime required
+property Ilmarinen.Protocol.Requests.JobOutcome.AssignmentId System.Guid required
+property Ilmarinen.Protocol.Requests.JobOutcome.DiskUse Ilmarinen.Protocol.JobDiskUse?
+property Ilmarinen.Protocol.Requests.JobOutcome.Duration System.TimeSpan
+property Ilmarinen.Protocol.Requests.JobOutcome.JobId System.Guid required
+property Ilmarinen.Protocol.Requests.JobOutcome.Kind Ilmarinen.Protocol.JobOutcomeKind required
+property Ilmarinen.Protocol.Requests.JobOutcome.Status Ilmarinen.Protocol.JobStatus?
+property Ilmarinen.Protocol.Requests.JobOutcome.Workspaces System.Collections.Generic.IReadOnlyList<Ilmarinen.Protocol.Responses.WorkspaceInfo>?
+property Ilmarinen.Protocol.Requests.LogChunk.Content System.String required
+property Ilmarinen.Protocol.Requests.LogChunk.JobId System.Guid required
+property Ilmarinen.Protocol.Requests.LogChunk.SequenceNumber System.Int32 required
+property Ilmarinen.Protocol.Requests.LogChunk.Timestamp System.DateTime required
+property Ilmarinen.Protocol.Requests.WorkerAuthenticate.Signature System.Byte[] required
+property Ilmarinen.Protocol.Requests.WorkerAuthenticate.Workspaces System.Collections.Generic.IReadOnlyList<Ilmarinen.Protocol.Responses.WorkspaceInfo>?
+property Ilmarinen.Protocol.Requests.WorkerConnect.BundleHash System.String?
+property Ilmarinen.Protocol.Requests.WorkerConnect.ConnectionCounter System.Int64
+property Ilmarinen.Protocol.Requests.WorkerConnect.InstanceId System.Guid
+property Ilmarinen.Protocol.Requests.WorkerConnect.Nonce System.Byte[] required
+property Ilmarinen.Protocol.Requests.WorkerConnect.ProtocolHash System.String?
+property Ilmarinen.Protocol.Requests.WorkerConnect.ProtocolVersion System.Int32
+property Ilmarinen.Protocol.Requests.WorkerConnect.WorkerId System.Guid required
+property Ilmarinen.Protocol.Requests.WorkerResume.DiskSpace Ilmarinen.Protocol.Requests.DiskSpaceReport?
+property Ilmarinen.Protocol.Requests.WorkerResume.Outcomes System.Collections.Generic.IReadOnlyList<Ilmarinen.Protocol.Requests.JobOutcome> required
+property Ilmarinen.Protocol.Requests.WorkerResume.State Ilmarinen.Protocol.Requests.WorkerState required
+property Ilmarinen.Protocol.Requests.WorkerState.Activity Ilmarinen.Protocol.WorkerActivity required
+property Ilmarinen.Protocol.Requests.WorkerState.AssignmentId System.Guid?
+property Ilmarinen.Protocol.Requests.WorkerState.DiagnosticStatus Ilmarinen.Protocol.DiagnosticStatus?
+property Ilmarinen.Protocol.Requests.WorkerState.Hold Ilmarinen.Protocol.WorkerHold?
+property Ilmarinen.Protocol.Requests.WorkerState.JobId System.Guid?
+property Ilmarinen.Protocol.Requests.WorkerState.Seq System.Int64 required
+property Ilmarinen.Protocol.Requests.WorkerState.Workspace System.String?
+property Ilmarinen.Protocol.Requests.WorkspaceUsageReport.MirrorsSizeBytes System.Int64?
+property Ilmarinen.Protocol.Requests.WorkspaceUsageReport.WorkspaceSizes System.Collections.Generic.IReadOnlyDictionary<System.String, System.Int64?> required
+property Ilmarinen.Protocol.Responses.ArtifactInfo.CreatedAt System.DateTime
+property Ilmarinen.Protocol.Responses.ArtifactInfo.Id System.Guid required
+property Ilmarinen.Protocol.Responses.ArtifactInfo.Name System.String required
+property Ilmarinen.Protocol.Responses.ArtifactInfo.Size System.Int64 required
+property Ilmarinen.Protocol.Responses.AuthChallenge.CurrentBundleHash System.String?
+property Ilmarinen.Protocol.Responses.AuthChallenge.Nonce System.Byte[] required
+property Ilmarinen.Protocol.Responses.AuthChallenge.ServerSignature System.Byte[] required
+property Ilmarinen.Protocol.Responses.DeleteWorkspaceResult.Error System.String?
+property Ilmarinen.Protocol.Responses.DeleteWorkspaceResult.Status Ilmarinen.Protocol.DeleteWorkspaceStatus required
+property Ilmarinen.Protocol.Responses.JobAssignment.AssignmentId System.Guid required
+property Ilmarinen.Protocol.Responses.JobAssignment.DiskNeededBytes System.Int64
+property Ilmarinen.Protocol.Responses.JobAssignment.DiskNeededToReuseBytes System.Int64
+property Ilmarinen.Protocol.Responses.JobAssignment.GitToken System.String?
+property Ilmarinen.Protocol.Responses.JobAssignment.Id System.Guid required
+property Ilmarinen.Protocol.Responses.JobAssignment.PredictedWorkspace System.String?
+property Ilmarinen.Protocol.Responses.JobAssignment.Ref System.String required
+property Ilmarinen.Protocol.Responses.JobAssignment.RepoUrl System.String required
+property Ilmarinen.Protocol.Responses.JobAssignment.ScriptPath System.String required
+property Ilmarinen.Protocol.Responses.JobAssignment.StartFresh System.Boolean
+property Ilmarinen.Protocol.Responses.JobAssignment.TakeWhileInUse System.Boolean
+property Ilmarinen.Protocol.Responses.ResumeResponse.AbortAssignments System.Collections.Generic.IReadOnlyList<System.Guid>
+property Ilmarinen.Protocol.Responses.ResumeResponse.Answer Ilmarinen.Protocol.SessionAnswer required
+property Ilmarinen.Protocol.Responses.WorkspaceInfo.LastUsed System.DateTimeOffset required
+property Ilmarinen.Protocol.Responses.WorkspaceInfo.Name System.String required
+property Ilmarinen.Protocol.Responses.WorkspaceInfo.Path System.String required
+type Ilmarinen.Protocol.DeleteWorkspaceStatus up
+type Ilmarinen.Protocol.DiagnosticStatus up
+type Ilmarinen.Protocol.DiagnosticStepKind up
+type Ilmarinen.Protocol.DiagnosticStepResult up
+type Ilmarinen.Protocol.FailureKind up
+type Ilmarinen.Protocol.JobDiskUse up
+type Ilmarinen.Protocol.JobOutcomeKind up
+type Ilmarinen.Protocol.JobStatus up
+type Ilmarinen.Protocol.Requests.DiagnosticReport up
+type Ilmarinen.Protocol.Requests.DiskSpaceReport up
+type Ilmarinen.Protocol.Requests.JobMetricsChunk up
+type Ilmarinen.Protocol.Requests.JobOutcome up
+type Ilmarinen.Protocol.Requests.LogChunk up
+type Ilmarinen.Protocol.Requests.WorkerAuthenticate up
+type Ilmarinen.Protocol.Requests.WorkerConnect up
+type Ilmarinen.Protocol.Requests.WorkerResume up
+type Ilmarinen.Protocol.Requests.WorkerState up
+type Ilmarinen.Protocol.Requests.WorkspaceUsageReport up
+type Ilmarinen.Protocol.Responses.ArtifactInfo down
+type Ilmarinen.Protocol.Responses.AuthChallenge down
+type Ilmarinen.Protocol.Responses.DeleteWorkspaceResult up
+type Ilmarinen.Protocol.Responses.JobAssignment down
+type Ilmarinen.Protocol.Responses.ResumeResponse down
+type Ilmarinen.Protocol.Responses.WorkspaceInfo up
+type Ilmarinen.Protocol.SessionAnswer down
+type Ilmarinen.Protocol.WorkerActivity up
+type Ilmarinen.Protocol.WorkerHold up
+type Ilmarinen.Protocol.WorkspaceKind up

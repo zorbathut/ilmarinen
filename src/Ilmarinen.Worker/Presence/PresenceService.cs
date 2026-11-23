@@ -51,7 +51,7 @@ public sealed class PresenceService : BackgroundService
             _logger.LogInformation("No keyboard or mouse is readable, so the worker won't hold back while someone uses this machine (see the in-use compose overlay)");
             return;
         }
-        _logger.LogInformation("Holding back from new jobs while someone uses this machine: watching {Devices}, idle after {Minutes} minutes", string.Join(", ", _input.Reading.Select(d => $"{d.EventNode} ({d.Name})")), _config.InUseIdleTime.TotalMinutes);
+        _logger.LogInformation("Holding back from new jobs while someone uses this machine, unless the server says to take them anyway: watching {Devices}, idle after {Minutes} minutes", string.Join(", ", _input.Reading.Select(d => $"{d.EventNode} ({d.Name})")), _config.InUseIdleTime.TotalMinutes);
         await JudgeAsync(stoppingToken);
 
         var lastRescan = _time.GetUtcNow();
@@ -129,7 +129,7 @@ public sealed class PresenceService : BackgroundService
         }
 
         _inUse = verdict.InUse;
-        _logger.LogInformation(_inUse ? "Someone is using this machine ({Reason}): taking no new jobs" : "Nobody is using this machine ({Reason}): taking jobs again", verdict.Reason);
+        _logger.LogInformation(_inUse ? "Someone is using this machine ({Reason}): taking no new jobs unless the server says to" : "Nobody is using this machine ({Reason}): taking jobs again", verdict.Reason);
         await _worker.SetHoldAsync(WorkerHold.InUse, _inUse);
     }
 

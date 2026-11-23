@@ -16,11 +16,14 @@ namespace Ilmarinen.Protocol;
 /// </summary>
 public static class WorkerProtocol
 {
-    public const int Version = 1;
+    public const int Version = 2;
     public const int MinSupportedVersion = 1;
 
     /// <summary>The hashes of versions that have shipped, so their recorded shapes can't be amended after the fact. Every supported version below the current one must be sealed; the current one is sealed once it ships.</summary>
-    public static readonly IReadOnlyDictionary<int, string> Sealed = new Dictionary<int, string>();
+    public static readonly IReadOnlyDictionary<int, string> Sealed = new Dictionary<int, string>
+    {
+        [1] = "7042CD2E0F42"
+    };
 
     public static string ShapeText { get; } = WorkerShape.Describe(typeof(IWorkerHub), typeof(IWorkerClient), typeof(IWorkerHttp));
 

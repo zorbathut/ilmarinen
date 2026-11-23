@@ -20,7 +20,7 @@ public record WorkerState
     /// <summary>The verdict of the worker's latest diagnostic; null before its first one.</summary>
     public DiagnosticStatus? DiagnosticStatus { get; init; }
 
-    /// <summary>Set while the worker takes no new jobs; it hands back any that cross this report on the way.</summary>
+    /// <summary>Set while the worker takes no new jobs; it hands back any that cross this report on the way, except, while the hold is <see cref="WorkerHold.InUse"/>, one that says to take it anyway.</summary>
     public WorkerHold? Hold { get; init; }
 
     /// <summary>The persistent workspace the running job is using, once its script has named one; null otherwise. The worker refuses to delete it meanwhile.</summary>

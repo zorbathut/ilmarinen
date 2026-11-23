@@ -27,4 +27,7 @@ public record JobAssignment
 
     /// <summary>Free space the job is expected to take reusing <see cref="PredictedWorkspace"/>; set with <see cref="StartFresh"/>.</summary>
     public long DiskNeededToReuseBytes { get; init; }
+
+    /// <summary>Take the job even if someone is using the worker's machine: the server says that hold doesn't count for this worker. Any other hold still hands it back.</summary>
+    public bool TakeWhileInUse { get; init; }
 }

@@ -567,6 +567,10 @@ public class WorkerService : BackgroundService
                 return;
             }
 
+            if (_state.Hold == WorkerHold.InUse)
+            {
+                _logger.LogInformation("Taking job {JobId} though someone is using this machine: the server says to", assignment.Id);
+            }
             ReportState();
             var cancel = new CancellationTokenSource();
             _runningJobs[assignment.Id] = cancel;

@@ -54,10 +54,11 @@ internal sealed class WorkerProtocolState
         };
     }
 
-    /// <summary>Takes the job if idle and not held and returns null; otherwise returns the hand-back to report, and the server queues the job again.</summary>
+    /// <summary>Takes the job if idle and not held, or held only because someone is using the machine and the assignment says to take it anyway, and returns null; otherwise returns the hand-back to report, and the server queues the job again.</summary>
     public JobOutcome? Assign(JobAssignment assignment)
     {
-        if (Activity != WorkerActivity.Idle || Hold != null)
+        var held = assignment.TakeWhileInUse ? _holds.Any(h => h != WorkerHold.InUse) : _holds.Count > 0;
+        if (Activity != WorkerActivity.Idle || held)
         {
             return HandBack(assignment);
         }

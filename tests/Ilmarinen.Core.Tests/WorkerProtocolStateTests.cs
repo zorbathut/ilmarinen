@@ -293,6 +293,30 @@ public class WorkerProtocolStateTests
         Assert.That(state.Snapshot().JobId, Is.EqualTo(job.Id));
     }
 
+    [Test]
+    public void Assign_WhileInUse_TakesAJobThatSaysToTakeItAnyway_AndHandsBackOneThatDoesnt()
+    {
+        var state = new WorkerProtocolState();
+        state.SetHold(WorkerHold.InUse, true);
+
+        Assert.That(state.Assign(Assignment()), Is.Not.Null, "in use, and the server didn't say otherwise");
+        var anyway = Assignment() with { TakeWhileInUse = true };
+        Assert.That(state.Assign(anyway), Is.Null);
+        Assert.That(state.Snapshot().JobId, Is.EqualTo(anyway.Id));
+    }
+
+    [TestCase(WorkerHold.Sleeping)]
+    [TestCase(WorkerHold.ShuttingDown)]
+    public void Assign_SleepingOrStopping_HandsBackEvenAJobToTakeWhileInUse(WorkerHold hold)
+    {
+        var state = new WorkerProtocolState();
+        state.SetHold(WorkerHold.InUse, true);
+        state.SetHold(hold, true);
+
+        Assert.That(state.Assign(Assignment() with { TakeWhileInUse = true }), Is.Not.Null);
+        Assert.That(state.Snapshot().Activity, Is.EqualTo(WorkerActivity.Idle));
+    }
+
     private static JobAssignment Assignment()
     {
         return new JobAssignment
