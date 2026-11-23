@@ -41,11 +41,6 @@
                             <td><JobLink JobId="job.Id" /></td>
                             <td>
                                 <span class="status-badge status-@job.Status.ToString().ToLower()">@job.Status</span>
-                                @* Only a job off the default priority says so: what dispatch takes first should be visible from the queue. *@
-                                @if (PriorityBadge(job) is { } badge)
-                                {
-                                    <span class="status-badge @badge" title="Job priority">@job.Priority.Name</span>
-                                }
                                 @if (job.Status == JobStatus.Queued)
                                 {
                                     <WakingFor JobId="job.Id" />
@@ -78,7 +73,6 @@
 @code {
     private IReadOnlyList<JobInfo>? jobs;
     private IReadOnlyDictionary<Guid, TimeSpan> estimates = new Dictionary<Guid, TimeSpan>();
-    private IReadOnlyList<Ilmarinen.Database.Entities.Priority> jobPriorities = [];
     private Timer? _timer;
 
     /// <summary>Only the jobs of this job priority.</summary>
@@ -97,7 +91,6 @@
     protected override void OnInitialized()
     {
         UIEvents.OnJobsChanged += OnJobsChanged;
-        UIEvents.OnPrioritiesChanged += OnJobsChanged;
 
         // Tick every second to update running job durations
         _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
@@ -125,20 +118,7 @@
         using var scope = ScopeFactory.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<JobRepository>();
         var all = await repo.GetAllAsync(PriorityFilter, MinWorkerPriorityFilter);
-        jobPriorities = await scope.ServiceProvider.GetRequiredService<PriorityRepository>().GetAllAsync(PriorityKind.Job);
         return (all, await repo.GetDurationEstimatesAsync(all));
-    }
-
-    /// <summary>The badge class for a job whose priority is above or below the default; null for the default, or for a priority gone since the list was read.</summary>
-    private string? PriorityBadge(JobInfo job)
-    {
-        var defaultPriority = jobPriorities.FirstOrDefault(p => p.IsDefault);
-        var priority = jobPriorities.FirstOrDefault(p => p.Id == job.Priority.Id);
-        if (defaultPriority == null || priority == null || priority.Id == defaultPriority.Id)
-        {
-            return null;
-        }
-        return priority.Rank > defaultPriority.Rank ? "job-priority-above" : "job-priority-below";
     }
 
     private TimeSpan? EstimateFor(JobInfo job)
@@ -170,7 +150,6 @@
     public void Dispose()
     {
         UIEvents.OnJobsChanged -= OnJobsChanged;
-        UIEvents.OnPrioritiesChanged -= OnJobsChanged;
         _timer?.Dispose();
     }
 }
