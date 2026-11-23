@@ -300,7 +300,7 @@ else
         pauseError = null;
         try
         {
-            if (!await Scheduler.SetWorkerPausedAsync(worker.Id, !worker.IsPaused))
+            if (!await Scheduler.SetWorkerModeAsync(worker.Id, worker.IsPaused ? WorkerMode.Normal : WorkerMode.Paused))
             {
                 pauseError = "Worker not found.";
             }

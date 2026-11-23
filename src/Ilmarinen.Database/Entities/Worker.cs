@@ -1,3 +1,4 @@
+using Ilmarinen.Protocol;
 using System;
 
 namespace Ilmarinen.Database.Entities;
@@ -24,8 +25,8 @@ public class Worker
     // A host re-check or operator diagnostic was asked for and hasn't started yet; the worker takes no work until it has. Persisted so a server restart can't skip it.
     public bool DiagnosticOwed { get; set; }
 
-    // The operator has held this worker back from new jobs; what it is running carries on.
-    public bool Paused { get; set; }
+    // What the operator has set this worker to do about new jobs.
+    public WorkerMode Mode { get; set; }
 
     // The MAC address of the worker's host, in aa:bb:cc:dd:ee:ff form, for waking it with a wake-on-LAN packet; null if it can't be woken. Entered by an operator: a worker in a container can't see its host's network card.
     public string? WakeMacAddress { get; set; }

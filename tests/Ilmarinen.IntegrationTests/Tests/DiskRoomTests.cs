@@ -123,7 +123,7 @@ public class DiskRoomTests
     private async Task RoomyButPausedAsync()
     {
         var roomy = await DirectedWorker.ReadyAsync(_fixture, "roomy-paused", "conn-roomy-paused");
-        await Scheduler.SetWorkerPausedAsync(roomy.WorkerId, true);
+        await Scheduler.SetWorkerModeAsync(roomy.WorkerId, WorkerMode.Paused);
         await roomy.Hub.ReportDiskSpace(Free(500));
     }
 
@@ -188,7 +188,7 @@ public class DiskRoomTests
         await RanAsync("big.csx", "big-ws", fresh: true, usedBytes: 50 * Gb);
         await RoomyButPausedAsync();
         var paused = await FullWorkerAsync("paused-full", freeGb: 10);
-        await Scheduler.SetWorkerPausedAsync(paused.WorkerId, true);
+        await Scheduler.SetWorkerModeAsync(paused.WorkerId, WorkerMode.Paused);
         var small = await DirectedWorker.ReadyAsync(_fixture, "small", "conn-small");
         await small.Hub.ReportWorkspaceUsage(NoWorkspaces);
         await small.Hub.ReportDiskSpace(new DiskSpaceReport { FreeBytes = 10 * Gb, TotalBytes = 30 * Gb, MinFreeBytes = Gb });

@@ -86,7 +86,7 @@ public class WorkerPauseTests
     public async Task APausedWorker_IsSentNoJob_UntilUnpaused()
     {
         var worker = await ReadyWorkerAsync("conn-pause-ready");
-        Assert.That(await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused), Is.True);
         Assert.That(await worker.IsReadyAsync(), Is.False);
 
         var jobId = await Scheduler.EnqueueJobAsync(Submission());
@@ -94,7 +94,7 @@ public class WorkerPauseTests
         Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Queued));
         Assert.That((await worker.SentAsync()).Assignments, Is.Empty);
 
-        Assert.That(await Scheduler.SetWorkerPausedAsync(worker.WorkerId, false), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Normal), Is.True);
 
         Assert.That(await JobStatusAsync(jobId), Is.EqualTo(JobStatus.Running), "unpausing dispatches; nothing else would");
         Assert.That(await JobWorkerAsync(jobId), Is.EqualTo(worker.WorkerId));
@@ -105,7 +105,7 @@ public class WorkerPauseTests
     public async Task AWorkerPausedWhileOffline_IsSentNoJobWhenItConnects()
     {
         var worker = await DirectedWorker.RegisterAsync(_fixture, "pause-offline");
-        Assert.That(await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused), Is.True);
         var jobId = await Scheduler.EnqueueJobAsync(Submission());
 
         await worker.ConnectAsync("conn-pause-offline");
@@ -124,7 +124,7 @@ public class WorkerPauseTests
         var assignment = (await worker.SentAsync()).Assignments.Single();
         await worker.ReportAsync(worker.Running(first, assignment.AssignmentId));
 
-        Assert.That(await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused), Is.True);
         var second = await Scheduler.EnqueueJobAsync(Submission());
 
         await worker.ReportAsync(DirectedWorker.Completed(first, assignment.AssignmentId, JobStatus.Success));
@@ -140,7 +140,7 @@ public class WorkerPauseTests
     {
         var high = await ReadyWorkerAsync("conn-pause-high", StandardPriority.High);
         var low = await ReadyWorkerAsync("conn-pause-low", StandardPriority.Low);
-        Assert.That(await Scheduler.SetWorkerPausedAsync(high.WorkerId, true), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(high.WorkerId, WorkerMode.Paused), Is.True);
 
         var jobId = await Scheduler.EnqueueJobAsync(Submission());
 
@@ -152,7 +152,7 @@ public class WorkerPauseTests
     public async Task APause_SurvivesAServerRestart()
     {
         var worker = await DirectedWorker.RegisterAsync(_fixture, "pause-restart");
-        await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true);
+        await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused);
 
         await _fixture.RestartServerAsync(null);
 
@@ -173,7 +173,7 @@ public class WorkerPauseTests
         var worker = await ReadyWorkerAsync("conn-pause-busy");
         var running = await Scheduler.EnqueueJobAsync(Submission());
         Assert.That(await JobStatusAsync(running), Is.EqualTo(JobStatus.Running));
-        await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true);
+        await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused);
         var queued = await Scheduler.EnqueueJobAsync(Submission());
 
         var report = await GetUnsatisfiableJobsAsync();
@@ -193,8 +193,8 @@ public class WorkerPauseTests
         var high = await ReadyWorkerAsync("conn-pause-report-high", StandardPriority.High);
         var low = await ReadyWorkerAsync("conn-pause-report-low", StandardPriority.Low);
         var pausedLow = await ReadyWorkerAsync("conn-pause-report-paused-low", StandardPriority.Low);
-        Assert.That(await Scheduler.SetWorkerPausedAsync(high.WorkerId, true), Is.True);
-        Assert.That(await Scheduler.SetWorkerPausedAsync(pausedLow.WorkerId, true), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(high.WorkerId, WorkerMode.Paused), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(pausedLow.WorkerId, WorkerMode.Paused), Is.True);
 
         var jobId = await Scheduler.EnqueueJobAsync(Submission(StandardPriority.High));
 
@@ -213,8 +213,8 @@ public class WorkerPauseTests
         await unhealthy.ConnectAsync("conn-pause-unhealthy");
         await unhealthy.ResumeAsync(unhealthy.Idle(DiagnosticStatus.Unhealthy));
         var offline = await DirectedWorker.RegisterAsync(_fixture, "pause-offline-report");
-        Assert.That(await Scheduler.SetWorkerPausedAsync(unhealthy.WorkerId, true), Is.True);
-        Assert.That(await Scheduler.SetWorkerPausedAsync(offline.WorkerId, true), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(unhealthy.WorkerId, WorkerMode.Paused), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(offline.WorkerId, WorkerMode.Paused), Is.True);
 
         var jobId = await Scheduler.EnqueueJobAsync(Submission());
 
@@ -227,7 +227,7 @@ public class WorkerPauseTests
     public async Task NothingStuck_NamesNoPausedWorker()
     {
         var worker = await ReadyWorkerAsync("conn-pause-nothing-stuck");
-        await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true);
+        await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused);
 
         var report = await GetUnsatisfiableJobsAsync();
 
@@ -238,12 +238,12 @@ public class WorkerPauseTests
     [Test]
     public async Task Pausing_AnUnknownWorkerFails_AndPausingTwiceIsHarmless()
     {
-        Assert.That(await Scheduler.SetWorkerPausedAsync(Guid.NewGuid(), true), Is.False);
+        Assert.That(await Scheduler.SetWorkerModeAsync(Guid.NewGuid(), WorkerMode.Paused), Is.False);
 
         var worker = await ReadyWorkerAsync("conn-pause-twice");
-        Assert.That(await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true), Is.True);
-        Assert.That(await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true), Is.True);
-        Assert.That(await Scheduler.SetWorkerPausedAsync(worker.WorkerId, false), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused), Is.True);
+        Assert.That(await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Normal), Is.True);
         Assert.That(await worker.IsReadyAsync(), Is.True);
     }
 }

@@ -22,7 +22,7 @@ public class WorkerBadgeTests
             Priority = new PriorityRef(Guid.NewGuid(), "Default"),
             IsConnected = connected,
             IsReady = ready,
-            IsPaused = paused,
+            Mode = paused ? WorkerMode.Paused : WorkerMode.Normal,
             Hold = hold,
             IsWaking = waking,
             WakeFailedAt = wakeFailedAt,

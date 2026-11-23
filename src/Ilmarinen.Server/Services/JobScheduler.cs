@@ -267,15 +267,15 @@ public class JobScheduler
     }
 
     /// <summary>
-    /// Pauses or unpauses a worker; unpausing dispatches, since the worker may be ready for a job that is waiting. A paused worker is sent no new jobs, connected or not; what it is running carries on. Returns false if the worker doesn't exist.
+    /// Sets what a worker does about new jobs; any mode but Paused dispatches, since the worker may be ready for a job that is waiting. A paused worker is sent no new jobs, connected or not; what it is running carries on. Returns false if the worker doesn't exist.
     /// </summary>
-    public async Task<bool> SetWorkerPausedAsync(Guid workerId, bool paused)
+    public async Task<bool> SetWorkerModeAsync(Guid workerId, WorkerMode mode)
     {
         using var scope = _scopeFactory.CreateScope();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
         // Under the dispatch lock, so once a pause returns no dispatch can still be acting on the worker as unpaused.
-        var updated = await UnderDispatchLockAsync(() => workers.SetPausedAsync(workerId, paused));
+        var updated = await UnderDispatchLockAsync(() => workers.SetModeAsync(workerId, mode));
 
         if (!updated)
         {
@@ -283,7 +283,7 @@ public class JobScheduler
         }
 
         _uiEvents.NotifyWorkersChanged();
-        if (!paused)
+        if (mode != WorkerMode.Paused)
         {
             await DispatchAsync();
         }

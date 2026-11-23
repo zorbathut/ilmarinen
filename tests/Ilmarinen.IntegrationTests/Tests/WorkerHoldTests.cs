@@ -165,7 +165,7 @@ public class WorkerHoldTests
     {
         var worker = await DirectedWorker.ReadyAsync(_fixture, "hold-paused-in-use", "conn-hold-paused-in-use");
         await worker.ReportAsync(worker.Idle() with { Hold = WorkerHold.InUse });
-        await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true);
+        await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused);
         await Scheduler.EnqueueJobAsync(Submission());
 
         var report = await GetUnsatisfiableJobsAsync();
@@ -179,7 +179,7 @@ public class WorkerHoldTests
     {
         var worker = await DirectedWorker.ReadyAsync(_fixture, "hold-paused-stopping", "conn-hold-paused-stopping");
         await worker.ReportAsync(worker.Idle() with { Hold = WorkerHold.ShuttingDown });
-        await Scheduler.SetWorkerPausedAsync(worker.WorkerId, true);
+        await Scheduler.SetWorkerModeAsync(worker.WorkerId, WorkerMode.Paused);
         await Scheduler.EnqueueJobAsync(Submission());
 
         var report = await GetUnsatisfiableJobsAsync();

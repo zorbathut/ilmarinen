@@ -95,7 +95,7 @@ public class WorkerRepository
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
         var row = await db.Workers
             .Where(w => w.Id == session.WorkerId)
-            .Select(w => new { w.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .Select(w => new { Paused = w.Mode == WorkerMode.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .FirstOrDefaultAsync();
         return row != null && IsReady(session, session.State?.Hold, row.Paused, row.Busy);
     }
@@ -123,7 +123,7 @@ public class WorkerRepository
         var workerIds = sessions.Select(s => s.WorkerId).ToList();
         var rows = (await db.Workers
             .Where(w => workerIds.Contains(w.Id))
-            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, w.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, Paused = w.Mode == WorkerMode.Paused, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .ToListAsync()).ToDictionary(w => w.Id);
 
         return sessions
@@ -214,7 +214,7 @@ public class WorkerRepository
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
         var rows = await db.Workers
-            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, w.Paused, w.WakeMacAddress, w.LastSeen, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
+            .Select(w => new { w.Id, w.Name, w.Priority!.Rank, Paused = w.Mode == WorkerMode.Paused, w.WakeMacAddress, w.LastSeen, Busy = db.Jobs.Any(j => j.WorkerId == w.Id && j.Status == JobStatus.Running) })
             .ToListAsync();
 
         return rows.Select(w =>
@@ -246,16 +246,16 @@ public class WorkerRepository
     }
 
     /// <summary>
-    /// Writes the stored pause and nothing else. To pause or unpause a worker use JobScheduler.SetWorkerPausedAsync, which keeps the write from racing a dispatch and dispatches afterwards.
+    /// Writes the stored mode and nothing else. To set a worker's mode use JobScheduler.SetWorkerModeAsync, which keeps the write from racing a dispatch and dispatches afterwards.
     /// </summary>
-    public async Task<bool> SetPausedAsync(Guid workerId, bool paused)
+    public async Task<bool> SetModeAsync(Guid workerId, WorkerMode mode)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
 
         var rows = await db.Workers
             .Where(w => w.Id == workerId)
-            .ExecuteUpdateAsync(s => s.SetProperty(w => w.Paused, paused));
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.Mode, mode));
 
         return rows > 0;
     }
@@ -374,7 +374,7 @@ public class WorkerRepository
             .Select(j => j.Id)
             .ToListAsync();
 
-        var isReady = session != null && IsReady(session, session.State?.Hold, w.Paused, currentJobIds.Count > 0);
+        var isReady = session != null && IsReady(session, session.State?.Hold, w.Mode == WorkerMode.Paused, currentJobIds.Count > 0);
 
         return new WorkerView
         {
@@ -388,7 +388,7 @@ public class WorkerRepository
             LastIpAddress = w.LastIpAddress,
             ProtocolVersion = w.ProtocolVersion,
             Priority = PriorityRepository.ToRef(w.Priority!),
-            IsPaused = w.Paused,
+            Mode = w.Mode,
             Hold = session?.State?.Hold,
             WakeMacAddress = w.WakeMacAddress,
             IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
@@ -426,7 +426,7 @@ public class WorkerRepository
         return workers.Select(w =>
         {
             var session = _sessions.ByWorker(w.Id);
-            var isReady = session != null && IsReady(session, session.State?.Hold, w.Paused, workerToJobs[w.Id].Any());
+            var isReady = session != null && IsReady(session, session.State?.Hold, w.Mode == WorkerMode.Paused, workerToJobs[w.Id].Any());
             _workerDiagnostics.TryGetValue(w.Id, out var diagnostic);
             _workerUsage.TryGetValue(w.Id, out var usage);
 
@@ -442,7 +442,7 @@ public class WorkerRepository
                 LastIpAddress = w.LastIpAddress,
                 ProtocolVersion = w.ProtocolVersion,
                 Priority = PriorityRepository.ToRef(w.Priority!),
-                IsPaused = w.Paused,
+                Mode = w.Mode,
                 Hold = session?.State?.Hold,
                 WakeMacAddress = w.WakeMacAddress,
                 IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
@@ -486,7 +486,12 @@ public record WorkerView
         get { return ProtocolVersion < WorkerProtocol.Version; }
     }
     public required PriorityRef Priority { get; init; }
-    public bool IsPaused { get; init; }
+    public WorkerMode Mode { get; init; }
+
+    public bool IsPaused
+    {
+        get { return Mode == WorkerMode.Paused; }
+    }
 
     /// <summary>Why the worker says it is taking no new jobs, if it is.</summary>
     public WorkerHold? Hold { get; init; }

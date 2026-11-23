@@ -234,4 +234,26 @@ public class DatabaseSchemaTests
 
         Assert.That(failure!.MessageText, Does.Contain("MakePrioritiesUserDefined"));
     }
+
+    [Test]
+    public async Task AddWorkerMode_KeepsPausedWorkersPaused()
+    {
+        var migrator = _dbContext.GetService<IMigrator>();
+        await migrator.MigrateAsync("RecordWorkerProtocolVersion");
+        var priorityId = await _dbContext.Database.SqlQuery<Guid>($"""SELECT "Id" AS "Value" FROM "Priorities" WHERE "Kind" = 0 AND "IsDefault" """).SingleAsync();
+        var paused = Guid.NewGuid();
+        var running = Guid.NewGuid();
+        foreach (var (id, isPaused) in new[] { (paused, true), (running, false) })
+        {
+            await _dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "Workers" ("Id", "Name", "PublicKey", "RegisteredAt", "LastSeen", "PriorityId", "Paused")
+                VALUES ({id}, {"worker-" + id}, '\x00'::bytea, now(), now(), {priorityId}, {isPaused})
+                """);
+        }
+
+        await migrator.MigrateAsync("AddWorkerMode");
+
+        Assert.That(await _dbContext.Workers.Where(w => w.Id == paused).Select(w => w.Mode).SingleAsync(), Is.EqualTo(WorkerMode.Paused));
+        Assert.That(await _dbContext.Workers.Where(w => w.Id == running).Select(w => w.Mode).SingleAsync(), Is.EqualTo(WorkerMode.Normal));
+    }
 }

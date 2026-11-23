@@ -146,7 +146,7 @@ public class WorkerWakeTests
     public async Task NoSleeperIsWoken_ThatIsPaused_HasNoAddress_OrCantTakeTheJob_OrWithWakingOff()
     {
         var paused = await SleeperAsync("wake-paused", "aa:bb:cc:dd:ee:02", StandardPriority.High);
-        await Get<JobScheduler>().SetWorkerPausedAsync(paused.WorkerId, true);
+        await Get<JobScheduler>().SetWorkerModeAsync(paused.WorkerId, WorkerMode.Paused);
         await DirectedWorker.RegisterAsync(_fixture, "wake-no-address");
         await SleeperAsync("wake-low", "aa:bb:cc:dd:ee:03", StandardPriority.Low);
         await QueueWhileAsleepAsync(StandardPriority.High);

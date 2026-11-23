@@ -448,12 +448,12 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<DateTime>("LastSeen")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("Mode")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<bool>("Paused")
-                        .HasColumnType("boolean");
 
                     b.Property<Guid>("PriorityId")
                         .HasColumnType("uuid");
