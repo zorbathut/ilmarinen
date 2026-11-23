@@ -76,19 +76,14 @@ public sealed class WorkerWaker
             using var scope = _scopeFactory.CreateScope();
             var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
             // Nothing is dispatched while the fleet drains, so no job needs a worker woken for it.
-            var queuedRows = _hold.Held ? [] : await jobs.GetQueuedJobsAsync();
-            var history = await jobs.GetDiskHistoryAsync(queuedRows.Select(j => (j.RepoUrl, j.ScriptPath)));
-            var fleet = _workers.GetFleetDisks();
+            var queuedJobs = _hold.Held ? [] : await jobs.GetQueuedForDispatchAsync(_workers.GetFleetDisks());
             workers = await _workers.GetWakeWorkersAsync();
             var disks = workers.Select(w => _workers.DiskOf(w.Id)).ToList();
-            var queued = queuedRows
-                .Select(j =>
+            var queued = queuedJobs
+                .Select(q =>
                 {
-                    var runs = history.GetValueOrDefault((j.RepoUrl, j.ScriptPath)) ?? [];
-                    var workspace = DiskEstimate.PredictedWorkspace(runs);
-                    var need = DiskEstimate.NeedOnFleet(runs, fleet);
-                    var noRoom = disks.Where(d => DiskEstimate.Fit(workspace, need, d) == null).Select(d => d.WorkerId).ToHashSet();
-                    return new WakeJob(j.Id, j.MinWorkerRank, new DateTimeOffset(DateTime.SpecifyKind(j.CreatedAt, DateTimeKind.Utc)), noRoom);
+                    var noRoom = disks.Where(d => DiskEstimate.Fit(q.Dispatch.Workspace, q.Dispatch.Need, d) == null).Select(d => d.WorkerId).ToHashSet();
+                    return new WakeJob(q.Row.Id, q.Row.MinWorkerRank, new DateTimeOffset(DateTime.SpecifyKind(q.Row.CreatedAt, DateTimeKind.Utc)), noRoom);
                 })
                 .ToList();
             before = _status.State;

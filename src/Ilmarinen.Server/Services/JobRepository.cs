@@ -371,6 +371,20 @@ public class JobRepository
             .ToListAsync();
     }
 
+    /// <summary>The queued jobs (<see cref="GetQueuedJobsAsync"/>), each with what dispatch goes by: the workspace its script's latest runs used and the disk its next run will take on this fleet (<see cref="DiskEstimate"/>).</summary>
+    public async Task<IReadOnlyList<QueuedDispatchJob>> GetQueuedForDispatchAsync(IReadOnlyCollection<WorkerDisk> fleet)
+    {
+        var queued = await GetQueuedJobsAsync();
+        var history = await GetDiskHistoryAsync(queued.Select(j => (j.RepoUrl, j.ScriptPath)));
+        return queued
+            .Select(j =>
+            {
+                var runs = history.GetValueOrDefault((j.RepoUrl, j.ScriptPath)) ?? [];
+                return new QueuedDispatchJob(j, new DispatchJob(j.MinWorkerRank, DiskEstimate.PredictedWorkspace(runs), DiskEstimate.NeedOnFleet(runs, fleet)));
+            })
+            .ToList();
+    }
+
     /// <summary>How many of a script's latest runs disk estimates look at.</summary>
     public const int DiskHistorySize = 5;
 
@@ -789,6 +803,9 @@ public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInst
 
 /// <summary>A Queued job as dispatch and waking read it; MinWorkerRank is the rank of its minimum worker priority, null for none.</summary>
 public record QueuedJobRow(Guid Id, int? MinWorkerRank, DateTime CreatedAt, string RepoUrl, string ScriptPath);
+
+/// <summary>A queued job, and how dispatch sees it.</summary>
+public record QueuedDispatchJob(QueuedJobRow Row, DispatchJob Dispatch);
 
 public record ScriptEstimates(IReadOnlyDictionary<(Guid WorkerId, string RepoUrl, string ScriptPath), TimeSpan> PerWorker, IReadOnlyDictionary<(string RepoUrl, string ScriptPath), TimeSpan> AcrossWorkers);
 
