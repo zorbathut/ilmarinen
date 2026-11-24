@@ -468,6 +468,95 @@ internal class Commands
         }
     }
 
+    /// <summary>Punt a running job: stop its run and put it back in the queue once its worker has, its log kept. Refused when it would only come straight back to the same worker, unless --anyway. Exit 0 once asked of the worker, 1 if refused or on error</summary>
+    [Command("punt")]
+    public async Task<int> Punt(
+        [Option('s', Description = "Server URL")] string server,
+        [Argument(Description = "Job ID")] string jobId,
+        [Option("anyway", Description = "Punt even if it would come straight back to the same worker")] bool anyway = false)
+    {
+        var serverUrl = NormalizeServerUrl(server);
+        if (serverUrl == null)
+        {
+            return 1;
+        }
+        if (!Guid.TryParse(jobId, out var id))
+        {
+            Console.Error.WriteLine($"Invalid job ID: {jobId}");
+            return 1;
+        }
+
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        using var http = new HttpClient();
+        try
+        {
+            var jobResponse = await http.GetAsync($"{serverUrl}/api/jobs/{id}");
+            if (jobResponse.StatusCode == HttpStatusCode.NotFound)
+            {
+                Console.Error.WriteLine($"No job {id}.");
+                return 1;
+            }
+            if (!jobResponse.IsSuccessStatusCode)
+            {
+                await WriteErrorAsync(jobResponse);
+                return 1;
+            }
+            var job = (await jobResponse.Content.ReadFromJsonAsync<JobInfo>(jsonOptions))!;
+            if (job.Status != JobStatus.Running || job.StartedAt is not { } startedAt)
+            {
+                Console.Error.WriteLine($"Job {id} is {job.Status}, not running: there is no run to punt.");
+                return 1;
+            }
+
+            var response = await http.PostAsJsonAsync($"{serverUrl}/api/jobs/{id}/punt", new PuntRequest { StartedAt = startedAt, Force = anyway });
+            if (response.StatusCode is not (HttpStatusCode.Accepted or HttpStatusCode.Conflict))
+            {
+                await WriteErrorAsync(response);
+                return 1;
+            }
+
+            var answer = (await response.Content.ReadFromJsonAsync<PuntResponse>(jsonOptions))!;
+            var worker = job.WorkerName ?? "its worker";
+            switch (answer.Status)
+            {
+                case PuntStatus.Requested:
+                case PuntStatus.AlreadyRequested:
+                    Console.Error.WriteLine(answer.WorkerConnected
+                        ? $"Punting job {id}: {worker} is stopping the run, and the job goes back in the queue once it has."
+                        : $"Punting job {id}: {worker} isn't connected, so the run stops when it reconnects, and the job goes back in the queue then.");
+                    if (answer.Forecast != null)
+                    {
+                        Console.Error.WriteLine(DescribeForecast(answer.Forecast));
+                    }
+                    return 0;
+                case PuntStatus.WouldComeBack:
+                    Console.Error.WriteLine($"Not punted: nothing else would take job {id}, so it would come straight back to {answer.Forecast?.WorkerName ?? worker}. A punt rarely fixes that; pass --anyway to punt it all the same.");
+                    return 1;
+                case PuntStatus.Stale:
+                    Console.Error.WriteLine($"Not punted: the run of job {id} that started at {startedAt:u} has already ended.");
+                    return 1;
+                default:
+                    Console.Error.WriteLine($"Not punted: job {id} isn't running.");
+                    return 1;
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"Error talking to the server: {ex.Message}");
+            return 1;
+        }
+    }
+
+    private static string DescribeForecast(PuntForecastInfo forecast)
+    {
+        return forecast.Outcome switch
+        {
+            PuntOutcome.GoesElsewhere => $"It should go to {forecast.WorkerName ?? "another worker"} next.",
+            PuntOutcome.ComesBack => $"Nothing else would take it, so it will be back on {forecast.WorkerName ?? "the same worker"} as soon as it has stopped.",
+            _ => forecast.Draining ? "The fleet is draining, so it will wait in the queue." : "No worker would take it right now, so it will wait in the queue."
+        };
+    }
+
     /// <summary>Get job status</summary>
     [Command("status")]
     public async Task<int> Status(
