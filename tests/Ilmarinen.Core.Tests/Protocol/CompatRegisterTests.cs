@@ -1,5 +1,6 @@
 using Ilmarinen.Protocol;
 using NUnit.Framework;
+using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -28,9 +29,13 @@ public class CompatRegisterTests
             .Select(v => $"v{v}")
             .ToList();
 
+        // The date starts the month after which an entry is due whatever the fleet runs; reporting that is a duty in CLAUDE.md, not a failure here, which would turn old commits red as the calendar moves.
+        var undated = headings.Where(h => !Regex.IsMatch(h, @"\(added \d{4}-\d{2}-\d{2}\)$") || !DateOnly.TryParseExact(Regex.Match(h, @"\d{4}-\d{2}-\d{2}").Value, "yyyy-MM-dd", out _)).ToList();
+
         Assert.Multiple(() =>
         {
             Assert.That(unparsed, Is.Empty, "every section of COMPAT.md is headed \"## Until vN\", or this test can't tell when it is due");
+            Assert.That(undated, Is.Empty, "every section of COMPAT.md ends \"(added YYYY-MM-DD)\", the date it was written, which starts its month");
             Assert.That(due, Is.Empty, $"WorkerProtocol.MinSupportedVersion is {WorkerProtocol.MinSupportedVersion}, so no worker needing these COMPAT.md entries can connect: delete their code, their tests and the entries");
         });
     }

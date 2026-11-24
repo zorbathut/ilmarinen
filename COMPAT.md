@@ -4,15 +4,17 @@ Code kept only so the server can still talk to workers on older worker protocol 
 
 `CompatRegisterTests` fails once the minimum reaches a heading here, naming what to delete. Delete the code, its test and the entry, then the heading once it's empty.
 
+Compatibility code is kept for a month, not until every worker has caught up. A heading ends with the date its first entry was written, and a month after that date its entries are due: propose raising the minimum past them, naming any worker that still speaks the old version and so needs rebuilding or updating.
+
 An entry names the code and says what it does for older workers:
 
 ```
-## Until v3
+## Until v3 (added 2026-12-01)
 
 - `WorkerHub.ReportOutcome`: treats a missing `DiskUse` as unknown, for workers before v3. Test: `DiskUseTests.AnOutcomeWithoutDiskUse_IsStored`.
 ```
 
-## Until v2
+## Until v2 (added 2026-11-23)
 
 - `WorkerReadiness.EffectiveHold`: keeps a worker's in-use hold even in `WorkerMode.EvenWhileInUse` when it speaks v1, which hands back any assignment while it is held (it doesn't know `JobAssignment.TakeWhileInUse`). Going with it:
   - the version check and `WorkerReadiness.TakesJobsWhileInUseFromVersion`;
