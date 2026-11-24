@@ -1,0 +1,137 @@
+@using Ilmarinen.Protocol
+@using Ilmarinen.Protocol.Responses
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.Logging
+@inject JobScheduler Scheduler
+@inject ILogger<PuntButton> Logger
+
+@if (Status == JobStatus.Running && StartedAt != null)
+{
+    <span class="punt">
+        @if (PuntRequested)
+        {
+            <button class="btn btn-punt" disabled title="Its worker is stopping this run; the job goes back in the queue once it has">Punting…</button>
+        }
+        else if (forecast == null)
+        {
+            <button class="btn btn-punt" disabled="@busy" @onclick="AskAsync"
+                    title="Stop this run and put the job back in the queue, its log kept">Punt</button>
+        }
+        else
+        {
+            <span class="punt-confirm @(forecast.Outcome == PuntOutcome.ComesBack ? "punt-warning" : "")">
+                @switch (forecast.Outcome)
+                {
+                    case PuntOutcome.GoesElsewhere:
+                        <span>Punt it to @(forecast.WorkerName ?? "another worker")?</span>
+                        break;
+                    case PuntOutcome.ComesBack:
+                        <span>Nothing else would take it: it would come straight back to @(forecast.WorkerName ?? "the same worker") as soon as it has stopped. A punt rarely fixes that.</span>
+                        break;
+                    default:
+                        <span>@(forecast.Draining ? "The fleet is draining, so it would wait in the queue." : "No worker would take it right now; it would wait in the queue.")</span>
+                        break;
+                }
+                <button class="btn btn-punt" disabled="@busy" @onclick="PuntAsync">@(forecast.Outcome == PuntOutcome.ComesBack ? "Punt anyway" : "Punt")</button>
+                <button class="btn-arrange" disabled="@busy" @onclick="() => forecast = null">Never mind</button>
+            </span>
+        }
+        @if (message != null)
+        {
+            <span class="punt-message">@message</span>
+        }
+    </span>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public Guid JobId { get; set; }
+
+    // The run as the page last read it, so the button follows the page's refreshes: these change from run to run, where the job's id doesn't.
+    [Parameter, EditorRequired]
+    public JobStatus Status { get; set; }
+
+    /// <summary>Names the run a punt is for: one that has ended since is refused rather than punting the next.</summary>
+    [Parameter, EditorRequired]
+    public DateTime? StartedAt { get; set; }
+
+    [Parameter, EditorRequired]
+    public bool PuntRequested { get; set; }
+
+    private PuntForecastInfo? forecast;
+    private DateTime? forecastFor;
+    private bool busy;
+    private string? message;
+
+    protected override void OnParametersSet()
+    {
+        // A question asked about a run that has since ended, or is being punted, is no longer the one to answer.
+        if (forecastFor != StartedAt || PuntRequested || Status != JobStatus.Running)
+        {
+            forecast = null;
+        }
+    }
+
+    private async Task AskAsync()
+    {
+        busy = true;
+        message = null;
+        try
+        {
+            forecast = await Scheduler.ForecastPuntAsync(JobId);
+            forecastFor = StartedAt;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Forecasting a punt of job {JobId} failed", JobId);
+            message = $"Couldn't tell where it would go: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task PuntAsync()
+    {
+        if (StartedAt is not { } startedAt || forecast == null)
+        {
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var answer = await Scheduler.PuntJobAsync(JobId, startedAt, force: forecast.Outcome == PuntOutcome.ComesBack, "the web UI");
+            switch (answer?.Status)
+            {
+                case PuntStatus.Requested:
+                case PuntStatus.AlreadyRequested:
+                    forecast = null;
+                    message = answer.WorkerConnected ? null : "Its worker isn't connected: the punt takes effect when it reconnects.";
+                    break;
+                case PuntStatus.WouldComeBack:
+                    // The fleet changed since the question: ask again with what it would do now.
+                    forecast = answer.Forecast;
+                    break;
+                case PuntStatus.Stale:
+                    forecast = null;
+                    message = "That run has already ended.";
+                    break;
+                default:
+                    forecast = null;
+                    message = "The job isn't running.";
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Punting job {JobId} failed", JobId);
+            message = $"Punting failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

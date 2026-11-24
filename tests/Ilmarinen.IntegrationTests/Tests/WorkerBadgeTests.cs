@@ -27,7 +27,7 @@ public class WorkerBadgeTests
             Hold = hold,
             IsWaking = waking,
             WakeFailedAt = wakeFailedAt,
-            CurrentJobs = busy ? [Guid.NewGuid()] : [],
+            CurrentRuns = busy ? [new CurrentRun(Guid.NewGuid(), DateTime.UtcNow, PuntRequested: false)] : [],
             NoRoom = noRoom ? new NoRoomWorker(2, new DiskGap(30L << 30, 14L << 30), 300L << 30) : null
         };
     }

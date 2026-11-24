@@ -135,6 +135,7 @@
                 {
                     <button class="btn btn-danger" @onclick="CancelJob">Cancel Job</button>
                 }
+                <PuntButton JobId="job.Id" Status="job.Status" StartedAt="job.StartedAt" PuntRequested="job.PuntRequested" />
                 @if (job.Status is JobStatus.Failed or JobStatus.Cancelled)
                 {
                     @if (job.CanRetry)

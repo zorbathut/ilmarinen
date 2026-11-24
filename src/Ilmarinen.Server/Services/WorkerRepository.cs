@@ -408,12 +408,12 @@ public class WorkerRepository
         _workerDiagnostics.TryGetValue(w.Id, out var diagnostic);
         _workerUsage.TryGetValue(w.Id, out var usage);
 
-        var currentJobIds = await db.Jobs
+        var currentRuns = await db.Jobs
             .Where(j => j.WorkerId == id && j.Status == JobStatus.Running)
-            .Select(j => j.Id)
+            .Select(j => new CurrentRun(j.Id, j.StartedAt, j.PuntAssignmentId != null && j.PuntAssignmentId == j.AssignmentId))
             .ToListAsync();
 
-        var isReady = session != null && IsReadyInMode(session, w.Mode, currentJobIds.Count > 0);
+        var isReady = session != null && IsReadyInMode(session, w.Mode, currentRuns.Count > 0);
 
         return new WorkerView
         {
@@ -421,7 +421,7 @@ public class WorkerRepository
             Name = w.Name,
             IsConnected = session != null,
             IsReady = isReady,
-            CurrentJobs = currentJobIds,
+            CurrentRuns = currentRuns,
             RegisteredAt = w.RegisteredAt,
             LastSeen = w.LastSeen,
             LastIpAddress = w.LastIpAddress,
@@ -459,10 +459,10 @@ public class WorkerRepository
         // Get all currently running jobs to derive CurrentJobs
         var runningJobs = await db.Jobs
             .Where(j => j.Status == JobStatus.Running && j.WorkerId != null)
-            .Select(j => new { j.WorkerId, JobId = j.Id })
+            .Select(j => new { j.WorkerId, Run = new CurrentRun(j.Id, j.StartedAt, j.PuntAssignmentId != null && j.PuntAssignmentId == j.AssignmentId) })
             .ToListAsync();
 
-        var workerToJobs = runningJobs.ToLookup(j => j.WorkerId!.Value, j => j.JobId);
+        var workerToJobs = runningJobs.ToLookup(j => j.WorkerId!.Value, j => j.Run);
 
         return workers.Select(w =>
         {
@@ -477,7 +477,7 @@ public class WorkerRepository
                 Name = w.Name,
                 IsConnected = session != null,
                 IsReady = isReady,
-                CurrentJobs = workerToJobs[w.Id].ToList(),
+                CurrentRuns = workerToJobs[w.Id].ToList(),
                 RegisteredAt = w.RegisteredAt,
                 LastSeen = w.LastSeen,
                 LastIpAddress = w.LastIpAddress,
@@ -504,6 +504,9 @@ public class WorkerRepository
 /// <summary>Whether a worker can be handed a job now, and whether the job should say to take it although someone may be using its machine (its mode says so).</summary>
 public record WorkerReadyCheck(bool Ready, bool TakeWhileInUse);
 
+/// <summary>A job a worker is running: when the run started, and whether it is being punted.</summary>
+public record CurrentRun(Guid JobId, DateTime? StartedAt, bool PuntRequested);
+
 /// <summary>An available worker, with the rank of its priority.</summary>
 public record AvailableWorker(Guid WorkerId, int Rank);
 
@@ -518,7 +521,15 @@ public record WorkerView
     public required string Name { get; init; }
     public bool IsConnected { get; init; }
     public bool IsReady { get; init; }
-    public IReadOnlyList<Guid> CurrentJobs { get; init; } = [];
+    public IReadOnlyList<CurrentRun> CurrentRuns { get; init; } = [];
+
+    public IReadOnlyList<Guid> CurrentJobs
+    {
+        get
+        {
+            return CurrentRuns.Select(r => r.JobId).ToList();
+        }
+    }
     public DateTime RegisteredAt { get; init; }
     public DateTime LastSeen { get; init; }
     public string? LastIpAddress { get; init; }

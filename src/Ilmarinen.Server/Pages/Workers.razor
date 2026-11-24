@@ -193,6 +193,10 @@
             <button class="btn btn-danger"
                     disabled="@IsRevoking(worker.Id)"
                     @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
+            @foreach (var current in worker.CurrentRuns)
+            {
+                <PuntButton @key="current.JobId" JobId="current.JobId" Status="JobStatus.Running" StartedAt="current.StartedAt" PuntRequested="current.PuntRequested" />
+            }
         </text>;
     }
 
