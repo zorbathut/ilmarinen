@@ -719,6 +719,13 @@ public class WorkerService : BackgroundService
                 status = abandoned ? JobStatus.Failed : JobStatus.Cancelled;
                 await logCollector.FlushAsync();
             }
+            catch (Exception ex) when (cancel.IsCancellationRequested)
+            {
+                // A stop can surface as whatever the step was doing when its container went; asked for, it is still a cancel, and no fault of the host's.
+                status = JobStatus.Cancelled;
+                jobLogger.LogInformation(ex, "Job {JobId} was cancelled, and stopped with an error", job.Id);
+                await logCollector.FlushAsync();
+            }
             catch (Exception ex)
             {
                 status = JobStatus.Failed;
