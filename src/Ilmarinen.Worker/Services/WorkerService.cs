@@ -220,7 +220,7 @@ public class WorkerService : BackgroundService
 
             // Registered on this connection only, so an invocation is always from the session it arrived on. Posted rather than handled here: the handlers wait for the state lock, and the connection's receive loop must keep running meanwhile to deliver the answer to a Resume in progress.
             connection.On<JobAssignment>(nameof(IWorkerClient.AssignJob), assignment => Post(session, "AssignJob", () => OnJobAssignedAsync(session, assignment)));
-            connection.On<string>(nameof(IWorkerClient.CancelJob), jobId => Post(session, "CancelJob", () => OnCancelJob(jobId)));
+            connection.On<string>(nameof(IWorkerClient.CancelJob), jobId => Post(session, "CancelJob", () => OnCancelJobAsync(session, jobId)));
             connection.On<string>(nameof(IWorkerClient.DeleteWorkspace), name => Post(session, "DeleteWorkspace", () => OnDeleteWorkspace(session, name)));
             connection.On(nameof(IWorkerClient.RunDiagnostic), () => Post(session, "RunDiagnostic", () => OnDiagnosticRequestedAsync(session, DiagnosticTrigger.Operator)));
             connection.On(nameof(IWorkerClient.RecheckHost), () => Post(session, "RecheckHost", () => OnDiagnosticRequestedAsync(session, DiagnosticTrigger.Automatic)));
@@ -582,14 +582,28 @@ public class WorkerService : BackgroundService
         }
     }
 
-    private Task OnCancelJob(string jobId)
+    private async Task OnCancelJobAsync(HubSession session, string jobId)
     {
-        _logger.LogInformation("Received cancel request for job {JobId}", jobId);
-        if (!Guid.TryParse(jobId, out var id) || !CancelRunningJob(id))
+        await _stateLock.WaitAsync();
+        try
         {
-            _logger.LogInformation("Cancel requested for job {JobId}, which isn't running on this worker", jobId);
+            // A cancel still queued on a superseded connection may be for an earlier run of a job this worker has since been given again; whatever the server still wants stopped, the current session's Resume lists in AbortAssignments.
+            if (!IsCurrent(session))
+            {
+                _logger.LogInformation("Ignoring the cancel of job {JobId} sent on connection {Counter}, which is no longer current", jobId, session.Counter);
+                return;
+            }
+
+            _logger.LogInformation("Received cancel request for job {JobId}", jobId);
+            if (!Guid.TryParse(jobId, out var id) || !CancelRunningJob(id))
+            {
+                _logger.LogInformation("Cancel requested for job {JobId}, which isn't running on this worker", jobId);
+            }
         }
-        return Task.CompletedTask;
+        finally
+        {
+            _stateLock.Release();
+        }
     }
 
     private bool CancelRunningJob(Guid jobId)
