@@ -21,6 +21,7 @@ On 2026-11-18 two workers each failed ~15 queued jobs in milliseconds while real
 7. **Diagnostic requests are never folded** into a diagnostic already running: one that arrives during a diagnostic gets a fresh one afterwards.
 8. **Edge-triggered dispatch**, as today: every handler that can change readiness or the queue — `Resume`, state reports, results, cancel, and in the implementation a priority change, a mode change that stops holding a worker back (an unpause, or taking jobs even while in use), a drain's release, or a report that changes a worker's disk room — runs dispatch afterwards.
 9. **The worker acts only on invocations from its current connection.**
+10. **A punt waits for the run to stop.** Punting marks the worker's current run of the job and sends `CancelJob`; the job stays Running for the worker until the worker reports that run over. Stopped (`Cancelled`), it is queued again; finished anyway, it completes. Resume tells a worker still running a punted run to stop it, and queues again a punted job the worker no longer has, whichever process had it. So the stopped run and the next never overlap.
 
 ### What the model doesn't prove
 
@@ -31,14 +32,15 @@ Two elements are kept although the model shows them saving churn rather than cor
 The model takes these for granted; this is where the C# makes them true.
 
 - **Handlers are atomic.** `WorkerSessions` holds one async lock per worker; every hub handler that reads or changes a worker's state, dispatch to it, cancel and the operator's diagnostic run under it, with the fence check inside.
-- **Invocations from the current connection only.** The worker builds a fresh `HubConnection` per transport, and registers its handlers on that connection alone, so an invocation is always from the session it arrived on (`WorkerService.HubSession`). Handlers post to the session's inbox, processed in order; those that change the worker's state, and cancel, wait for the state lock — so an invocation that arrives during Resume waits rather than being dropped — and act only if their session is still current and resumed. A cancel matters here as much as an assignment: it names only the job, and the same job may have been handed back and given to this worker again since.
+- **Invocations from the current connection only.** The worker builds a fresh `HubConnection` per transport, and registers its handlers on that connection alone, so an invocation is always from the session it arrived on (`WorkerService.HubSession`). Handlers post to the session's inbox, processed in order; those that change the worker's state, and cancel, wait for the state lock — so an invocation that arrives during Resume waits rather than being dropped — and act only if their session is still current and resumed. A cancel matters here as much as an assignment: it names only the job, and the same job may be running again on this worker since, after a punt.
 - **Nothing changes during Resume.** The worker holds its state lock from the Resume snapshot until the answer (`WorkerService.SyncAsync`).
 - **Ordered reports.** A state change and the report of it happen under the worker's state lock, onto the session's single ordered outbox; reports also carry a sequence number, and the server keeps the highest.
 - **Ordered sends.** `WorkerMessenger` keeps one queue per connection, written under the worker's lock and drained by one task, so an `AssignJob` and the `CancelJob` after it arrive in that order, and no lock waits on a stalled connection.
 - **Retirement** keeps the last 16 superseded instances per worker, in memory; a server restart forgets them, which costs nothing but a possible round of churn.
 - **Locking.** The global dispatch lock is taken before a worker's lock, never inside it; handlers dispatch after releasing the worker's lock.
 - **Heartbeat** is an invocation answered Ok or Fenced, with a timeout; either failure starts a new session.
-- **Outcomes carry an assignment id** (`Job.AssignmentId`), so a stale completion or hand-back can't touch a later assignment; a requeue clears the job's worker, start time, assignment and instance. The assignment id is what implements the model's hand-back guard.
+- **Outcomes carry an assignment id** (`Job.AssignmentId`), so a stale completion or hand-back can't touch a later assignment; a requeue clears the job's worker, start time, assignment and instance. The assignment id is the model's `run`, and what implements its hand-back guard.
+- **A punt is the assignment it was for** (`Job.PuntAssignmentId`): pending only while that is still the job's assignment, so however else the run ends — a hand-back, a cancel, a completion — nothing of the punt is left for the next run.
 - **Outcomes are kept until acknowledged** (`WorkerProtocolState`), apart from the lossy log buffer. They don't survive a process restart, which Resume treats as a different instance (`Job.WorkerInstanceId`).
 - **Every exit from a job records an outcome**, atomically with going idle, so the same instance never comes back idle without having said what became of its job.
 - **Server restart** drops every connection; workers resume and rebuild the session state. Whether a diagnostic is owed is persisted (`Worker.DiagnosticOwed`), set in the same transaction as the Failed that caused it.
@@ -55,6 +57,7 @@ The model takes these for granted; this is where the C# makes them true.
 | `SrvHeartbeat` | `WorkerHub.Heartbeat` |
 | `SrvDispatch` | `JobScheduler.DispatchAsync` (readiness: `WorkerReadiness.IsReady`) |
 | `SrvCancel` | `JobScheduler.CancelJobAsync` |
+| `SrvPunt` | `JobScheduler.PuntJobAsync`; its requeue, `JobScheduler.ApplyOutcomeAsync` and `WorkerHub.Resume` → `RequeuePuntedAsync` |
 | `SrvOperatorDiagnostic` | `JobScheduler.RequestDiagnosticAsync` |
 | `SrvDisconnected` | `WorkerHub.OnDisconnectedAsync` |
 | `WConnect`, `WOnReply` | `WorkerService.OpenSessionAsync`, `SyncAsync`, `SendAsync` |
@@ -72,6 +75,8 @@ Out of scope: waking sleeping workers (the server only sends wake-on-LAN packets
 - Diagnostics come back Healthy or Unhealthy (bounded), with the retry loop.
 - The worker's reasons for a hold are one flag: what matters to the protocol is whether one is set. Holds are bounded, and each is eventually released (a restart releases it too, as a new process starts with none); a hold that never ends would strand the worker by design, which is why `WorkerNotStranded` asks only about a worker that isn't holding back.
 - `MaxQueue` bounds how far the worker may run ahead of the server on one connection; it's a bound on the model, not a protocol rule.
+- Results and assignments carry a run number (the assignment id), so a result applies only to the run it reports. Runs are counted only in configurations with punts (or `AltNoRunIdentity`): elsewhere every assignment is run 1, so those configurations keep the state space they had before runs were modelled, and lean on the hand-back guard as they did. That equivalence is argued, not checked: counting runs everywhere puts liveness out of reach.
+- Punts are bounded and the operator's; nothing forces one. The forecast that refuses a punt which would come straight back, and naming the run by its start time, are UI and API matters the model leaves out.
 
 ## Properties
 
@@ -80,22 +85,23 @@ Out of scope: waking sleeping workers (the server only sends wake-on-LAN packets
 | `NoUntrackedRun` | The server never silently gives up on a job the worker is still running. |
 | `NoUnexplainedFailure` | A job is Failed only because the worker's run of it failed or its process died — never because the worker was busy when it arrived. |
 | `NoSpuriousFailure` | A job is failed as lost only when the process it was assigned to has died and the live process doesn't have it. |
+| `NoUnexplainedCancel` | A job is Cancelled only because someone cancelled it — never by a stop meant for another run of it, such as a punted one's. |
 | `NoDoubleRun` | Two workers never run the same job. |
 | `NotIncident` | The worker never runs a job the server failed as lost while the server considers it ready for more. |
 | `AllJobsSettle` | Every job eventually reaches a final status (under fairness). |
 | `WorkerNotStranded` | A connected, idle, healthy worker that isn't holding back is eventually seen by the server as ready (under fairness). |
 
-`NoSpuriousFailure` and `NotIncident` only bite where a job can be failed as lost, which takes a process restart; the restart configurations exercise them, and the witness `NeverLosesAJob` checks that they do. `NeverHandsBack` likewise checks that hand-back is exercised.
+`NeverRerunsAPuntedJob` checks that a punted job is queued again and run again. `NoSpuriousFailure` and `NotIncident` only bite where a job can be failed as lost, which takes a process restart; the restart configurations exercise them, and the witness `NeverLosesAJob` checks that they do. `NeverHandsBack` likewise checks that hand-back is exercised.
 
 ## Results
 
-`scripts/check-protocol.sh`, TLC 1.7.4 on 32 cores: about 46 minutes in full, about 17 with `quick` (which skips `reorder`, `restart1`, `restart` and the checks that need them).
+`scripts/check-protocol.sh`, TLC 1.7.4 on 32 shared cores: about 4 hours in full, about 70 minutes with `quick` (which skips `reorder`, `restart1`, `restart`, `punt-restart1` and the checks that need them). The punt configurations account for most of the growth.
 
 | Check | Result |
 | --- | --- |
-| Base, stall, false timeout, cancel, operator diagnostic, unhealthy retry, competitor, cancel + operator diagnostic, competitor + operator diagnostic, hold, hold + operator diagnostic, out-of-order handshakes (3 connections), restart with 1 job | every safety property and both liveness properties hold |
-| Restart with 2 jobs | safety holds; liveness at this size doesn't finish in reasonable time |
-| Witnesses `NeverHandsBack` (operator diagnostic), `NeverLosesAJob` (restart, 1 job) | violated, as expected: the guarded paths are taken |
+| Base, stall, false timeout, cancel, operator diagnostic, unhealthy retry, competitor, cancel + operator diagnostic, competitor + operator diagnostic, hold, hold + operator diagnostic, punt, punt + competitor, punt + cancel, punt + stall, punt + hold, out-of-order handshakes (3 connections), restart with 1 job | every safety property and both liveness properties hold |
+| Restart with 2 jobs; punt + restart with 1 job | safety holds; liveness at these sizes doesn't finish in reasonable time |
+| Witnesses `NeverHandsBack` (operator diagnostic), `NeverRerunsAPuntedJob` (punt), `NeverLosesAJob` (restart, 1 job) | violated, as expected: the guarded paths are taken |
 
 Each design element replaced by its alternative (deadlock checking off, so a bounded run exhausting its reconnects doesn't count):
 
@@ -111,4 +117,6 @@ Each design element replaced by its alternative (deadlock checking off, so a bou
 | `AltStateDoesNotDispatch` — a state report doesn't trigger dispatch | base | liveness |
 | `AltNoInvocationEpoch` — W acts on an invocation from an older connection | stall | `NoUntrackedRun` |
 | `AltClockEpochs` — clock epochs step back across a restart | restart, 1 job | liveness (the restarted process is fenced out for good) |
+| `AltPuntRequeuesAtOnce` — a punt queues the job again when asked, not once the run has stopped | competitor + punt | `NoDoubleRun` |
+| `AltNoRunIdentity` — a result applies to the job whichever run of it reported it | stall + punt | `NoUnexplainedCancel` (the punted run's resent Cancelled outcome cancels the rerun) |
 | `AltHoldFromEvents` — the hold is a server-side flag that live reports set and clear, so Resume's state doesn't carry it | hold | liveness (a release made while disconnected is never heard, and the worker is held for good) |

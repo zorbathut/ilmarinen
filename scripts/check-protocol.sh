@@ -75,38 +75,44 @@ expect() {
 }
 
 # ---------------------------------------------------------------------------
-# NumJobs MaxConns MaxStalls MaxFalseTimeouts MaxRestarts MaxCancels MaxOperatorDiags WithCompetitor MaxUnhealthy MaxHolds
+# NumJobs MaxConns MaxStalls MaxFalseTimeouts MaxRestarts MaxCancels MaxOperatorDiags WithCompetitor MaxUnhealthy MaxHolds MaxPunts
 declare -A FEATURE=(
-    [base]="2 2 0 0 0 0 0 FALSE 0 0"
-    [stall]="2 2 1 0 0 0 0 FALSE 0 0"
-    [falsetimeout]="2 2 0 1 0 0 0 FALSE 0 0"
-    [cancel]="2 2 0 0 0 1 0 FALSE 0 0"
-    [opdiag]="2 2 0 0 0 0 1 FALSE 0 0"
-    [unhealthy]="2 2 0 0 0 0 0 FALSE 1 0"
-    [competitor]="2 2 0 0 0 0 0 TRUE 0 0"
-    [cancel-opdiag]="2 2 0 0 0 1 1 FALSE 0 0"
-    [competitor-opdiag]="2 2 0 0 0 0 1 TRUE 0 0"
-    [reorder]="2 3 0 0 0 0 0 FALSE 0 0"
-    [restart1]="1 3 0 0 1 0 0 FALSE 0 0"
-    [restart]="2 3 0 0 1 0 0 FALSE 0 0"
-    [hold]="2 2 0 0 0 0 0 FALSE 0 1"
-    [hold-opdiag]="2 2 0 0 0 0 1 FALSE 0 1"
+    [base]="2 2 0 0 0 0 0 FALSE 0 0 0"
+    [stall]="2 2 1 0 0 0 0 FALSE 0 0 0"
+    [falsetimeout]="2 2 0 1 0 0 0 FALSE 0 0 0"
+    [cancel]="2 2 0 0 0 1 0 FALSE 0 0 0"
+    [opdiag]="2 2 0 0 0 0 1 FALSE 0 0 0"
+    [unhealthy]="2 2 0 0 0 0 0 FALSE 1 0 0"
+    [competitor]="2 2 0 0 0 0 0 TRUE 0 0 0"
+    [cancel-opdiag]="2 2 0 0 0 1 1 FALSE 0 0 0"
+    [competitor-opdiag]="2 2 0 0 0 0 1 TRUE 0 0 0"
+    [reorder]="2 3 0 0 0 0 0 FALSE 0 0 0"
+    [restart1]="1 3 0 0 1 0 0 FALSE 0 0 0"
+    [restart]="2 3 0 0 1 0 0 FALSE 0 0 0"
+    [hold]="2 2 0 0 0 0 0 FALSE 0 1 0"
+    [hold-opdiag]="2 2 0 0 0 0 1 FALSE 0 1 0"
+    [punt]="2 2 0 0 0 0 0 FALSE 0 0 1"
+    [punt-competitor]="2 2 0 0 0 0 0 TRUE 0 0 1"
+    [punt-cancel]="2 2 0 0 0 1 0 FALSE 0 0 1"
+    [punt-stall]="2 2 1 0 0 0 0 FALSE 0 0 1"
+    [punt-hold]="2 2 0 0 0 0 0 FALSE 0 1 1"
+    [punt-restart1]="1 3 0 0 1 0 0 FALSE 0 0 1"
 )
-SMALL=(base stall falsetimeout cancel opdiag unhealthy competitor cancel-opdiag competitor-opdiag hold hold-opdiag)
+SMALL=(base stall falsetimeout cancel opdiag unhealthy competitor cancel-opdiag competitor-opdiag hold hold-opdiag punt punt-competitor punt-cancel punt-stall punt-hold)
 LARGE=(reorder restart1)
-ALTS=(AltClockEpochs AltReconcileBeforeResume AltFailCollision AltNoHandBackGuard AltFailUndelivered AltNoAbortOnResume AltFoldDiagnostic AltReadyFromTransitions AltStateDoesNotDispatch AltNoInvocationEpoch AltHoldFromEvents)
-SAFETY="TypeOK NoUntrackedRun NoUnexplainedFailure NoSpuriousFailure NoDoubleRun NotIncident"
+ALTS=(AltClockEpochs AltReconcileBeforeResume AltFailCollision AltNoHandBackGuard AltFailUndelivered AltNoAbortOnResume AltFoldDiagnostic AltReadyFromTransitions AltStateDoesNotDispatch AltNoInvocationEpoch AltHoldFromEvents AltPuntRequeuesAtOnce AltNoRunIdentity)
+SAFETY="TypeOK NoUntrackedRun NoUnexplainedFailure NoUnexplainedCancel NoSpuriousFailure NoDoubleRun NotIncident"
 LIVENESS="AllJobsSettle WorkerNotStranded"
 
 # new_cfg FEATURE SPEC ALT DEADLOCK INVARIANTS PROPERTIES
 new_cfg() {
-    local nj mc ms mf mr mca mo wc mu mh
-    read -r nj mc ms mf mr mca mo wc mu mh <<< "${FEATURE[$1]}"
+    local nj mc ms mf mr mca mo wc mu mh mp
+    read -r nj mc ms mf mr mca mo wc mu mh mp <<< "${FEATURE[$1]}"
     echo "SPECIFICATION $2"
     echo "CONSTANTS"
     echo "NumJobs = $nj"; echo "MaxConns = $mc"; echo "MaxStalls = $ms"; echo "MaxFalseTimeouts = $mf"; echo "MaxRestarts = $mr"
     echo "MaxCancels = $mca"; echo "MaxOperatorDiags = $mo"; echo "WithCompetitor = $wc"; echo "MaxUnhealthy = $mu"
-    echo "MaxHolds = $mh"
+    echo "MaxHolds = $mh"; echo "MaxPunts = $mp"
     echo "MaxQueue = 4"
     for a in "${ALTS[@]}"; do if [[ "$3" == "$a" ]]; then echo "$a = TRUE"; else echo "$a = FALSE"; fi; done
     echo "CHECK_DEADLOCK $4"
@@ -134,10 +140,13 @@ done
 if (( ! QUICK )); then
     # Liveness at two jobs with a restart is beyond TLC in reasonable time: safety here, liveness at one job above
     expect "design-restart-safety" "$(tlc WorkerProtocol restart-design "$(new_cfg restart Spec "" TRUE "$SAFETY" "")")" none
+    # A punt across a restart: safety only, as liveness with a restart and a punt is past TLC in reasonable time too
+    expect "design-punt-restart1-safety" "$(tlc WorkerProtocol punt-restart1-design "$(new_cfg punt-restart1 Spec "" TRUE "$SAFETY" "")")" none
 fi
 
 echo "Non-vacuity: the guarded paths are taken"
 expect "witness-hand-back" "$(tlc WorkerProtocol witness-hand-back "$(new_cfg opdiag Spec "" FALSE "TypeOK NeverHandsBack" "")")" NeverHandsBack
+expect "witness-punt-rerun" "$(tlc WorkerProtocol witness-punt-rerun "$(new_cfg punt Spec "" FALSE "TypeOK NeverRerunsAPuntedJob" "")")" NeverRerunsAPuntedJob
 if (( ! QUICK )); then
     expect "witness-lost-job" "$(tlc WorkerProtocol witness-lost-job "$(new_cfg restart1 Spec "" FALSE "TypeOK NeverLosesAJob" "")")" NeverLosesAJob
 fi
@@ -155,6 +164,8 @@ expect "alt-AltReadyFromTransitions" "$(check cancel AltReadyFromTransitions FAL
 expect "alt-AltStateDoesNotDispatch" "$(check base AltStateDoesNotDispatch FALSE)" liveness
 expect "alt-AltNoInvocationEpoch" "$(check stall AltNoInvocationEpoch FALSE)" NoUntrackedRun
 expect "alt-AltHoldFromEvents" "$(check hold AltHoldFromEvents FALSE)" liveness
+expect "alt-AltPuntRequeuesAtOnce" "$(check punt-competitor AltPuntRequeuesAtOnce FALSE)" NoDoubleRun
+expect "alt-AltNoRunIdentity" "$(check punt-stall AltNoRunIdentity FALSE)" NoUnexplainedCancel
 
 if (( failures )); then
     echo "$failures check(s) failed"

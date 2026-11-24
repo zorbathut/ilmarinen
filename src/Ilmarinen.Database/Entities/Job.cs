@@ -17,6 +17,9 @@ public class Job
     public Guid? AssignmentId { get; set; }
     public Guid? WorkerInstanceId { get; set; }
 
+    // The assignment an operator asked to punt back into the queue: a punt is pending only while it is still AssignmentId, so any other end to that run leaves nothing behind.
+    public Guid? PuntAssignmentId { get; set; }
+
     // Added to the sequence numbers of the current run's log chunks, which every run starts from 1: a rerun's log carries on after the runs before it.
     public int LogSequenceBase { get; set; }
     public DateTime CreatedAt { get; set; }

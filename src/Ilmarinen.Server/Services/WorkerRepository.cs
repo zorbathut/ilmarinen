@@ -170,6 +170,27 @@ public class WorkerRepository
             .ToList();
     }
 
+    /// <summary>The worker as dispatch would see it once the job it runs now is over, or null if it wouldn't be ready even then (offline, paused, held, owing a diagnostic, about to update).</summary>
+    public async Task<DispatchWorker?> GetOnceIdleAsync(Guid workerId)
+    {
+        if (_sessions.ByWorker(workerId) is not { } session)
+        {
+            return null;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        var row = await db.Workers
+            .Where(w => w.Id == workerId)
+            .Select(w => new { w.Mode, w.Priority!.Rank })
+            .FirstOrDefaultAsync();
+        if (row == null || !WorkerReadiness.IsReadyOnceIdle(session, EffectiveHold(session, row.Mode), _sessions.DiagnosticOwed(workerId), row.Mode == WorkerMode.Paused, _bundles.CurrentHash))
+        {
+            return null;
+        }
+        return new DispatchWorker(row.Rank, DiskOf(workerId));
+    }
+
     /// <summary>What the server last heard of a worker's disk: its free space, and the workspaces it holds — as listed on its session if it is connected, else as last measured — each with the space deleting it would free.</summary>
     public WorkerDisk DiskOf(Guid workerId)
     {
@@ -366,6 +387,13 @@ public class WorkerRepository
     public string? FindConnectionIdByWorkerId(Guid workerId)
     {
         return _sessions.ByWorker(workerId)?.ConnectionId;
+    }
+
+    public async Task<string?> GetNameAsync(Guid id)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IlmarinenDbContext>();
+        return await db.Workers.Where(w => w.Id == id).Select(w => w.Name).FirstOrDefaultAsync();
     }
 
     public async Task<WorkerView?> GetByIdAsync(Guid id)

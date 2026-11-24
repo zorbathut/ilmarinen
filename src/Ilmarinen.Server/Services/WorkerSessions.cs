@@ -74,15 +74,21 @@ public static class WorkerReadiness
     /// <param name="hold">The hold to judge it by: normally the one in its state, but the stuck report asks whether it would be ready without it.</param>
     public static bool IsReady(WorkerSession session, WorkerHold? hold, bool diagnosticOwed, bool paused, bool hasRunningJob, string? serverBundleHash)
     {
-        var state = session.State;
+        return session.State is { Activity: WorkerActivity.Idle }
+            && !hasRunningJob
+            && IsReadyOnceIdle(session, hold, diagnosticOwed, paused, serverBundleHash);
+    }
+
+    /// <summary>Whether the worker would be ready once the job it is running is over: everything readiness asks but that.</summary>
+    public static bool IsReadyOnceIdle(WorkerSession session, WorkerHold? hold, bool diagnosticOwed, bool paused, string? serverBundleHash)
+    {
         return session.Resumed
-            && state is { Activity: WorkerActivity.Idle, DiagnosticStatus: { } diagnostic }
+            && session.State is { DiagnosticStatus: { } diagnostic }
             && hold == null
             && DiagnosticStatusPolicy.CanAcceptJobs(diagnostic)
             && !HasStaleBundle(session, serverBundleHash)
             && !diagnosticOwed
-            && !paused
-            && !hasRunningJob;
+            && !paused;
     }
 
     /// <summary>A launcher-run worker on a different bundle from the one this server serves is about to exit for an update; it must not be handed work. Classic workers report no bundle and are never stale.</summary>

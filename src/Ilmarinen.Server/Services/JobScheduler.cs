@@ -13,6 +13,9 @@ using System.Threading.Tasks;
 
 namespace Ilmarinen.Server.Services;
 
+/// <summary>The answer to a punt: what became of it, where the job would go, and whether its worker could be told at once.</summary>
+public record PuntAnswer(PuntStatus Status, PuntForecastInfo? Forecast, bool WorkerConnected);
+
 public class JobScheduler
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -421,9 +424,14 @@ public class JobScheduler
 
         if (outcome.Kind == JobOutcomeKind.Rejected)
         {
+            var punted = await jobs.GetPuntedAssignmentAsync(outcome.JobId) == outcome.AssignmentId;
             if (await jobs.RequeueAsync(outcome.JobId, session.WorkerId, outcome.AssignmentId))
             {
                 _logger.LogInformation("Worker {WorkerId} was busy when job {JobId} arrived; queued it again", session.WorkerId, outcome.JobId);
+                if (punted)
+                {
+                    await _logStream.AppendLineAsync(outcome.JobId, "The worker handed the job back before starting it, so there was no run to stop; it is queued again.");
+                }
                 _uiEvents.NotifyJobsChanged();
             }
             return false;
@@ -433,6 +441,17 @@ public class JobScheduler
         {
             _logger.LogWarning("Worker {WorkerId} reported job {JobId} completed with status {Status}; ignoring", session.WorkerId, outcome.JobId, outcome.Status);
             return false;
+        }
+
+        // The run an operator punted is over. Stopped, the job goes back in the queue; finished anyway, it completes, but the log says the punt came too late first, where a reader stopping at the terminal status still sees it.
+        if (await jobs.GetPuntedAssignmentAsync(outcome.JobId) == outcome.AssignmentId)
+        {
+            if (status == JobStatus.Cancelled)
+            {
+                await RequeuePuntedAsync(session.WorkerId, outcome.JobId, outcome.AssignmentId, "stopped (the cancel above was the punt)");
+                return false;
+            }
+            await _logStream.AppendLineAsync(outcome.JobId, $"The run finished ({status}) before the punt reached it, so the job is not queued again.");
         }
 
         // Persist the buffered tail before the status turns terminal, as CompleteJobAsync does.
@@ -580,6 +599,122 @@ public class JobScheduler
             _logger.LogInformation("Sending CancelJob to worker {WorkerId} for job {JobId}", workerId, jobId);
             _messenger.Send(session.ConnectionId, $"cancel of job {jobId}", client => client.CancelJob(jobId.ToString()));
         }
+    }
+
+    /// <summary>
+    /// Punts a job: tells its worker to stop the run, and once the worker reports it stopped, puts the job back in the queue for any worker, its log kept and carried on (<see cref="RequeuePuntedAsync"/>). The job stays Running for its worker until then, so the stopped run and the next never overlap. Refused for a run other than the one that started at <paramref name="startedAt"/>, which the caller saw, and, unless <paramref name="force"/>, when the job would only come straight back to the same worker. Taken under the worker's lock, like a cancel. <paramref name="source"/> says in the log where the request came from.
+    /// </summary>
+    public async Task<PuntAnswer?> PuntJobAsync(Guid jobId, DateTime startedAt, bool force, string source)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        if (await jobs.GetLogRunAsync(jobId) is not { } run)
+        {
+            return null;
+        }
+        if (run.Status != JobStatus.Running || await jobs.GetAssignedWorkerAsync(jobId) is not { } owner)
+        {
+            return new PuntAnswer(PuntStatus.NotRunning, null, WorkerConnected: false);
+        }
+
+        var forecast = await ForecastPuntAsync(jobId);
+        if (forecast.Outcome == PuntOutcome.ComesBack && !force)
+        {
+            return new PuntAnswer(PuntStatus.WouldComeBack, forecast, _sessions.ByWorker(owner) != null);
+        }
+
+        var workerName = await workers.GetNameAsync(owner) ?? owner.ToString();
+        using (await _sessions.LockAsync(owner))
+        {
+            var connected = _sessions.ByWorker(owner) != null;
+            var result = await jobs.TryRequestPuntAsync(jobId, owner, startedAt);
+            if (result == PuntRequestResult.Stale)
+            {
+                return new PuntAnswer(PuntStatus.Stale, forecast, connected);
+            }
+            if (result == PuntRequestResult.AlreadyRequested)
+            {
+                return new PuntAnswer(PuntStatus.AlreadyRequested, forecast, connected);
+            }
+
+            // Sent once: the messenger only loses it with the connection, and then the worker's Resume is told to stop the run instead.
+            SendCancel(owner, jobId);
+            var when = connected ? "" : $" once it reconnects (it isn't connected now)";
+            await _logStream.AppendLineAsync(jobId, $"Punted from {source} at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC: stopping this run on {workerName}{when}; the job goes back in the queue when it has stopped.");
+            _logger.LogInformation("Punting job {JobId} from worker {WorkerId}, as asked from {Source}", jobId, owner, source);
+            _uiEvents.NotifyJobsChanged();
+            return new PuntAnswer(PuntStatus.Requested, forecast, connected);
+        }
+    }
+
+    /// <summary>Where the job would go if it were punted now (<see cref="PuntPlan"/>): a snapshot, taken without locks, like <see cref="GetQueueEstimateAsync"/>. For a job that isn't running, where it would go from the queue.</summary>
+    public async Task<PuntForecastInfo> ForecastPuntAsync(Guid jobId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        var owner = await jobs.GetAssignedWorkerAsync(jobId);
+        var queue = await jobs.GetQueuedForDispatchAsync(workers.GetFleetDisks(), asIfQueued: jobId);
+        var punted = queue.FirstOrDefault(q => q.Row.Id == jobId);
+        if (punted == null)
+        {
+            return new PuntForecastInfo { Outcome = PuntOutcome.Waits };
+        }
+
+        var others = (await workers.GetReadyWorkersByPriorityAsync()).Where(w => w.WorkerId != owner).ToList();
+        var punterOnceIdle = owner is { } o ? await workers.GetOnceIdleAsync(o) : null;
+        var prediction = PuntPlan.Predict(queue, q => q.Dispatch, punted, others, punterOnceIdle, _hold.Held);
+        return new PuntForecastInfo
+        {
+            Outcome = prediction.Outcome,
+            WorkerId = prediction.WorkerId,
+            WorkerName = prediction.WorkerId is { } w ? await workers.GetNameAsync(w) : null,
+            Draining = prediction.Draining
+        };
+    }
+
+    /// <summary>
+    /// Puts a punted job back in the queue now that its run is over (the worker reported it stopped, or came back without it): the log says so and carries on after that line, and what belonged to the stopped run goes (<see cref="JobRepository.RequeuePuntedAsync"/>). <paramref name="assignmentId"/> is the punted run's, or null for whichever is punted. Doesn't dispatch: the caller holds the worker's session lock, and dispatches once it has let go. Returns whether the job was requeued.
+    /// </summary>
+    public async Task<bool> RequeuePuntedAsync(Guid workerId, Guid jobId, Guid? assignmentId, string how)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
+
+        var workerName = await workers.GetNameAsync(workerId) ?? workerId.ToString();
+        var commit = (await jobs.GetAsync(jobId))?.Commit;
+
+        // Under the job's log lock from the line's number to the next run's start, so no chunk lands in between, and the next run's output comes after the line.
+        var dropped = await _logStream.WithServerLogAsync(jobId, async log =>
+        {
+            var sequence = await log.NextSequenceAsync();
+            var artifacts = await jobs.RequeuePuntedAsync(jobId, workerId, assignmentId, sequence);
+            if (artifacts == null)
+            {
+                return null;
+            }
+
+            var built = commit != null ? $" (commit {commit[..Math.Min(12, commit.Length)]})" : "";
+            log.StartNextRun();
+            await log.WriteLineAsync(sequence, $"The punted run {how} on {workerName}{built}; dropped its metrics, step timings and {artifacts.Count} artifact(s). Queued again; the next run's output follows.");
+            return artifacts;
+        });
+        if (dropped == null)
+        {
+            return false;
+        }
+
+        foreach (var (path, error) in scope.ServiceProvider.GetRequiredService<ArtifactRepository>().DeleteFiles(dropped))
+        {
+            _logger.LogWarning(error, "Couldn't delete artifact file {Path} of punted job {JobId}; left behind", path, jobId);
+        }
+        _logger.LogInformation("Punted job {JobId} {How} on worker {WorkerId}; queued it again", jobId, how, workerId);
+        _uiEvents.NotifyJobsChanged();
+        return true;
     }
 
     /// <summary>

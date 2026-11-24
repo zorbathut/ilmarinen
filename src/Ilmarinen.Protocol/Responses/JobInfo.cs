@@ -31,4 +31,7 @@ public record JobInfo
 
     /// <summary>What the run worked in and the disk it took; null until its worker reports it finished.</summary>
     public JobDiskUse? DiskUse { get; init; }
+
+    /// <summary>An operator has punted the current run: its worker is stopping it, and the job goes back in the queue once it has.</summary>
+    public bool PuntRequested { get; init; }
 }

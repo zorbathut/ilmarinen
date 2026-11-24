@@ -216,6 +216,12 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
             {
                 if (job.AssignmentId != null && job.AssignmentId == reported)
                 {
+                    // Punted while the worker was away, or by a server that has restarted since: the CancelJob went with the old connection.
+                    if (job.PuntPending)
+                    {
+                        _logger.LogInformation("Worker {WorkerId} is still running job {JobId}, which was punted; telling it to stop", session.WorkerId, job.JobId);
+                        abort.Add(job.AssignmentId.Value);
+                    }
                     continue;
                 }
 
@@ -224,8 +230,12 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
                     _logger.LogError("Worker {WorkerId} reports running job {JobId} under assignment {Reported}, but the server has it under {Assigned}", session.WorkerId, job.JobId, reported, job.AssignmentId);
                 }
 
-                // Running for the worker, yet it doesn't say so. The same process instance would have named it if it had ever arrived, so it can go back in the queue unrun; a different instance may have run part of it before dying, so it fails.
-                if (job.WorkerInstanceId == session.InstanceId && job.AssignmentId is { } assignment)
+                // Running for the worker, yet it doesn't say so. A punted run is over either way, which is all the punt waited for. Otherwise, the same process instance would have named it if it had ever arrived, so it can go back in the queue unrun; a different instance may have run part of it before dying, so it fails.
+                if (job.PuntPending)
+                {
+                    await scheduler.RequeuePuntedAsync(session.WorkerId, job.JobId, job.AssignmentId, "ended with the worker's process, or never arrived");
+                }
+                else if (job.WorkerInstanceId == session.InstanceId && job.AssignmentId is { } assignment)
                 {
                     if (await jobs.RequeueAsync(job.JobId, session.WorkerId, assignment))
                     {

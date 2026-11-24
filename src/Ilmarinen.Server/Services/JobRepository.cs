@@ -5,6 +5,7 @@ using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
+using System.Linq.Expressions;
 using System.Linq;
 using System.Threading.Tasks;
 using System;
@@ -304,6 +305,73 @@ public class JobRepository
     }
 
     /// <summary>
+    /// Marks the run of a job that started at <paramref name="startedAt"/> on this worker as punted, if it is still that run. The mark is the assignment itself, so it lapses with the run however the run ends.
+    /// </summary>
+    public async Task<PuntRequestResult> TryRequestPuntAsync(Guid id, Guid workerId, DateTime startedAt)
+    {
+        var rows = await _db.Jobs
+            .Where(j => j.Id == id && j.Status == JobStatus.Running && j.WorkerId == workerId && j.StartedAt == startedAt && j.AssignmentId != null)
+            .Where(j => j.PuntAssignmentId == null || j.PuntAssignmentId != j.AssignmentId)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.PuntAssignmentId, j => j.AssignmentId));
+        if (rows > 0)
+        {
+            return PuntRequestResult.Requested;
+        }
+
+        var pending = await _db.Jobs.Where(PuntPending).AnyAsync(j => j.Id == id && j.WorkerId == workerId && j.StartedAt == startedAt);
+        return pending ? PuntRequestResult.AlreadyRequested : PuntRequestResult.Stale;
+    }
+
+    /// <summary>The assignment of a job's run that is being punted, or null if none is.</summary>
+    public async Task<Guid?> GetPuntedAssignmentAsync(Guid id)
+    {
+        return await _db.Jobs
+            .Where(PuntPending)
+            .Where(j => j.Id == id)
+            .Select(j => j.AssignmentId)
+            .FirstOrDefaultAsync();
+    }
+
+    /// <summary>
+    /// Puts a punted job back in the queue once its run is over: only while it is still Running for this worker under the punted assignment (<paramref name="assignmentId"/>, or whichever is punted when null, for a run the worker lost). Drops what belonged to the run that was stopped (its commit, disk use, metrics, step timings and artifacts) and has the next run's log numbered from <paramref name="logSequenceBase"/>, in one transaction. Returns the dropped artifacts' stored paths, for the caller to delete once committed, or null if the job wasn't requeued.
+    /// </summary>
+    public async Task<IReadOnlyList<string>?> RequeuePuntedAsync(Guid id, Guid workerId, Guid? assignmentId, int logSequenceBase)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
+        var rows = await _db.Jobs
+            .Where(PuntPending)
+            .Where(j => j.Id == id && j.WorkerId == workerId)
+            .Where(j => assignmentId == null || j.AssignmentId == assignmentId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.Status, JobStatus.Queued)
+                .SetProperty(j => j.WorkerId, (Guid?)null)
+                .SetProperty(j => j.StartedAt, (DateTime?)null)
+                .SetProperty(j => j.AssignmentId, (Guid?)null)
+                .SetProperty(j => j.WorkerInstanceId, (Guid?)null)
+                .SetProperty(j => j.PuntAssignmentId, (Guid?)null)
+                .SetProperty(j => j.LogSequenceBase, logSequenceBase)
+                .SetProperty(j => j.Commit, (string?)null)
+                .SetProperty(j => j.WorkspaceKind, (WorkspaceKind?)null)
+                .SetProperty(j => j.WorkspaceName, (string?)null)
+                .SetProperty(j => j.WorkspaceFresh, (bool?)null)
+                .SetProperty(j => j.DiskUsedBytes, (long?)null)
+                .SetProperty(j => j.StoppedForDisk, (bool?)null));
+        if (rows == 0)
+        {
+            return null;
+        }
+
+        await _db.JobMetricsBatches.Where(b => b.JobId == id).ExecuteDeleteAsync();
+        await _db.JobSteps.Where(s => s.JobId == id).ExecuteDeleteAsync();
+        var artifacts = await _db.JobArtifacts.Where(a => a.JobId == id).Select(a => a.RelativePath).ToListAsync();
+        await _db.JobArtifacts.Where(a => a.JobId == id).ExecuteDeleteAsync();
+
+        await transaction.CommitAsync();
+        return artifacts;
+    }
+
+    /// <summary>
     /// Records a worker's report of how its run of an assignment went: only for that assignment, and with the same finality rules as <see cref="UpdateStatusAsync"/> (so a real outcome still overrides a cancel). A Failed that takes effect also marks the worker as owing a diagnostic, in the same transaction, so a crash between the two can't skip the re-check. Returns whether the status changed.
     /// </summary>
     public async Task<bool> CompleteReportedAsync(Guid id, Guid workerId, Guid assignmentId, JobStatus status, JobDiskUse? diskUse)
@@ -363,18 +431,18 @@ public class JobRepository
             .ToListAsync();
     }
 
-    /// <summary>The queued jobs, in dispatch order, with the rank of each one's minimum worker priority (null for none) and when it was submitted. Ranks are read here, so a reorder of the priorities counts from the next dispatch on.</summary>
-    public async Task<IReadOnlyList<QueuedJobRow>> GetQueuedJobsAsync()
+    /// <summary>The queued jobs, in dispatch order, with the rank of each one's minimum worker priority (null for none) and when it was submitted. Ranks are read here, so a reorder of the priorities counts from the next dispatch on. With <paramref name="asIfQueued"/>, that job too, in the place it would have were it queued.</summary>
+    public async Task<IReadOnlyList<QueuedJobRow>> GetQueuedJobsAsync(Guid? asIfQueued = null)
     {
-        return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued))
+        return await InDispatchOrder(_db.Jobs.Where(j => j.Status == JobStatus.Queued || j.Id == asIfQueued))
             .Select(j => new QueuedJobRow(j.Id, j.MinWorkerPriority != null ? j.MinWorkerPriority.Rank : null, j.CreatedAt, j.RepoUrl, j.ScriptPath))
             .ToListAsync();
     }
 
-    /// <summary>The queued jobs (<see cref="GetQueuedJobsAsync"/>), each with what dispatch goes by: the workspace its script's latest runs used and the disk its next run will take on this fleet (<see cref="DiskEstimate"/>).</summary>
-    public async Task<IReadOnlyList<QueuedDispatchJob>> GetQueuedForDispatchAsync(IReadOnlyCollection<WorkerDisk> fleet)
+    /// <summary>The queued jobs (<see cref="GetQueuedJobsAsync"/>), each with what dispatch goes by: the workspace its script's latest runs used and the disk its next run will take on this fleet (<see cref="DiskEstimate"/>). With <paramref name="asIfQueued"/>, that job too, in the place dispatch would give it were it queued: what a punt would make of the queue.</summary>
+    public async Task<IReadOnlyList<QueuedDispatchJob>> GetQueuedForDispatchAsync(IReadOnlyCollection<WorkerDisk> fleet, Guid? asIfQueued = null)
     {
-        var queued = await GetQueuedJobsAsync();
+        var queued = await GetQueuedJobsAsync(asIfQueued);
         var history = await GetDiskHistoryAsync(queued.Select(j => (j.RepoUrl, j.ScriptPath)));
         return queued
             .Select(j =>
@@ -454,7 +522,7 @@ public class JobRepository
     {
         return await _db.Jobs
             .Where(j => j.WorkerId == workerId && j.Status == JobStatus.Running)
-            .Select(j => new RunningAssignment(j.Id, j.AssignmentId, j.WorkerInstanceId))
+            .Select(j => new RunningAssignment(j.Id, j.AssignmentId, j.WorkerInstanceId, j.PuntAssignmentId != null && j.PuntAssignmentId == j.AssignmentId))
             .ToListAsync();
     }
 
@@ -775,6 +843,10 @@ public class JobRepository
         }
     }
 
+    /// <summary>A punt is pending while the job runs the assignment it was for (<see cref="TryRequestPuntAsync"/>).</summary>
+    private static readonly Expression<Func<Job, bool>> PuntPending = j => j.Status == JobStatus.Running && j.PuntAssignmentId != null && j.PuntAssignmentId == j.AssignmentId;
+    private static readonly Func<Job, bool> IsPuntPending = PuntPending.Compile();
+
     /// <summary>Jobs read with their priorities, in the same statement: a priority deleted between two reads would leave a job naming one that is gone.</summary>
     private IQueryable<Job> WithPriorities()
     {
@@ -803,6 +875,7 @@ public class JobRepository
             PipelineId = job.PipelineId,
             PipelineName = pipelineName,
             MinWorkerPriority = job.MinWorkerPriority is { } minimum ? PriorityRepository.ToRef(minimum) : null,
+            PuntRequested = IsPuntPending(job),
             Priority = PriorityRepository.ToRef(job.Priority ?? throw new InvalidOperationException("Job loaded without its priority")),
             CanRetry = canRetry,
             RetryBlockedReason = retryBlockedReason,
@@ -813,7 +886,18 @@ public class JobRepository
     }
 }
 
-public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInstanceId);
+/// <summary>A job Running for a worker; PuntPending when an operator has punted this run (<see cref="JobRepository.TryRequestPuntAsync"/>).</summary>
+public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInstanceId, bool PuntPending);
+
+/// <summary>What a request to punt a run found.</summary>
+public enum PuntRequestResult
+{
+    Requested,
+    AlreadyRequested,
+
+    /// <summary>The job isn't Running for that worker under the run the request named.</summary>
+    Stale
+}
 
 public record JobLogRun(JobStatus Status, Guid? AssignmentId, int LogSequenceBase);
 

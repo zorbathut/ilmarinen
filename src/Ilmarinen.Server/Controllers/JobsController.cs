@@ -574,6 +574,48 @@ public class JobsController : ControllerBase
         return Ok(new JobSubmissionResult { Id = jobId });
     }
 
+    /// <summary>Where the job would go if it were punted now; see POST. 409 for a job that isn't running, which has no run to punt.</summary>
+    [HttpGet("{id}/punt")]
+    public async Task<ActionResult<PuntForecastInfo>> GetPuntForecast(Guid id)
+    {
+        if (await _jobs.GetLogRunAsync(id) is not { } run)
+        {
+            return NotFound();
+        }
+        if (run.Status != JobStatus.Running)
+        {
+            return Conflict($"Job {id} is {run.Status}, not running: it has no run to punt.");
+        }
+        return await _scheduler.ForecastPuntAsync(id);
+    }
+
+    /// <summary>
+    /// Stops the job's run and puts the job back in the queue once its worker has stopped it, its log kept. 202 when asked (or already asked) of the worker; 409 when it isn't punted: the job isn't running, the run named has ended, or the job would come straight back to the same worker and Force isn't set.
+    /// </summary>
+    [HttpPost("{id}/punt")]
+    public async Task<ActionResult<PuntResponse>> PuntJob(Guid id, PuntRequest request)
+    {
+        // The run is named by its start time exactly as GET /api/jobs/{id} gives it, which is UTC; one without a zone could be any instant.
+        var startedAt = request.StartedAt.Kind switch
+        {
+            DateTimeKind.Utc => request.StartedAt,
+            DateTimeKind.Local => request.StartedAt.ToUniversalTime(),
+            _ => (DateTime?)null
+        };
+        if (startedAt == null)
+        {
+            return BadRequest("startedAt needs a time zone: pass the job's startedAt as GET /api/jobs/{id} gives it.");
+        }
+
+        if (await _scheduler.PuntJobAsync(id, startedAt.Value, request.Force, "the REST API") is not { } answer)
+        {
+            return NotFound();
+        }
+
+        var response = new PuntResponse { Status = answer.Status, Forecast = answer.Forecast, WorkerConnected = answer.WorkerConnected };
+        return answer.Status is PuntStatus.Requested or PuntStatus.AlreadyRequested ? Accepted(response) : Conflict(response);
+    }
+
     [HttpDelete("{id}")]
     public async Task<ActionResult> CancelJob(Guid id)
     {

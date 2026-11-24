@@ -62,6 +62,9 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<Guid>("PriorityId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("PuntAssignmentId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Ref")
                         .IsRequired()
                         .HasColumnType("text");

@@ -75,6 +75,40 @@ public class ArtifactRepository
         return (File.OpenRead(fullPath), artifact.Name);
     }
 
+    /// <summary>Deletes stored artifact files whose rows are already gone. A file that can't be deleted is left behind and reported in what this returns, the paths it couldn't delete.</summary>
+    public IReadOnlyList<(string Path, Exception Error)> DeleteFiles(IEnumerable<string> relativePaths)
+    {
+        var failed = new List<(string, Exception)>();
+        var directories = new HashSet<string>();
+        foreach (var relativePath in relativePaths)
+        {
+            var fullPath = Path.Combine(_storagePath, relativePath);
+            try
+            {
+                File.Delete(fullPath);
+                directories.Add(Path.GetDirectoryName(fullPath)!);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failed.Add((relativePath, ex));
+            }
+        }
+
+        // A job's artifacts share its directory; once they are all gone, so is it.
+        foreach (var directory in directories.Where(d => Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()))
+        {
+            try
+            {
+                Directory.Delete(directory);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failed.Add((Path.GetRelativePath(_storagePath, directory), ex));
+            }
+        }
+        return failed;
+    }
+
     private static string SanitizeFileName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
