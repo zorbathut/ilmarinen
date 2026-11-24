@@ -82,6 +82,7 @@ property Ilmarinen.Protocol.Requests.DiagnosticReport.Summary System.String requ
 property Ilmarinen.Protocol.Requests.DiskSpaceReport.FreeBytes System.Int64 required
 property Ilmarinen.Protocol.Requests.DiskSpaceReport.MinFreeBytes System.Int64 required
 property Ilmarinen.Protocol.Requests.DiskSpaceReport.TotalBytes System.Int64 required
+property Ilmarinen.Protocol.Requests.JobMetricsChunk.AssignmentId System.Guid?
 property Ilmarinen.Protocol.Requests.JobMetricsChunk.Content System.String required
 property Ilmarinen.Protocol.Requests.JobMetricsChunk.JobId System.Guid required
 property Ilmarinen.Protocol.Requests.JobMetricsChunk.SequenceNumber System.Int32 required
@@ -93,6 +94,7 @@ property Ilmarinen.Protocol.Requests.JobOutcome.JobId System.Guid required
 property Ilmarinen.Protocol.Requests.JobOutcome.Kind Ilmarinen.Protocol.JobOutcomeKind required
 property Ilmarinen.Protocol.Requests.JobOutcome.Status Ilmarinen.Protocol.JobStatus?
 property Ilmarinen.Protocol.Requests.JobOutcome.Workspaces System.Collections.Generic.IReadOnlyList<Ilmarinen.Protocol.Responses.WorkspaceInfo>?
+property Ilmarinen.Protocol.Requests.LogChunk.AssignmentId System.Guid?
 property Ilmarinen.Protocol.Requests.LogChunk.Content System.String required
 property Ilmarinen.Protocol.Requests.LogChunk.JobId System.Guid required
 property Ilmarinen.Protocol.Requests.LogChunk.SequenceNumber System.Int32 required

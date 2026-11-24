@@ -467,6 +467,20 @@ public class JobRepository
         await _db.SaveChangesAsync();
     }
 
+    public async Task SetLogSequenceBaseAsync(Guid id, int logSequenceBase)
+    {
+        await _db.Jobs.Where(j => j.Id == id).ExecuteUpdateAsync(s => s.SetProperty(j => j.LogSequenceBase, logSequenceBase));
+    }
+
+    /// <summary>What a job's log is numbered and checked by: its status, its current assignment, and the base its current run's sequence numbers start from. Null for an unknown job.</summary>
+    public async Task<JobLogRun?> GetLogRunAsync(Guid jobId)
+    {
+        return await _db.Jobs
+            .Where(j => j.Id == jobId)
+            .Select(j => new JobLogRun(j.Status, j.AssignmentId, j.LogSequenceBase))
+            .FirstOrDefaultAsync();
+    }
+
     /// <summary>The worker a job was last assigned to, or null if it never was (or doesn't exist).</summary>
     public async Task<Guid?> GetAssignedWorkerAsync(Guid jobId)
     {
@@ -800,6 +814,8 @@ public class JobRepository
 }
 
 public record RunningAssignment(Guid JobId, Guid? AssignmentId, Guid? WorkerInstanceId);
+
+public record JobLogRun(JobStatus Status, Guid? AssignmentId, int LogSequenceBase);
 
 /// <summary>A Queued job as dispatch and waking read it; MinWorkerRank is the rank of its minimum worker priority, null for none.</summary>
 public record QueuedJobRow(Guid Id, int? MinWorkerRank, DateTime CreatedAt, string RepoUrl, string ScriptPath);

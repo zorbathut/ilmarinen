@@ -63,7 +63,7 @@ public class JobRunnerTests
             job,
             sender,
             logger,
-            new LogCollector(job.Id, sender, logger),
+            new LogCollector(job.Id, job.AssignmentId, sender, logger),
             metrics: null,
             takeWorkspace: _ => Task.CompletedTask);
 

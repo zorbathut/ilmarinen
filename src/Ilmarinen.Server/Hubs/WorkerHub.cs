@@ -380,7 +380,7 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
         return SessionAnswer.Ok;
     }
 
-    /// <summary>A chunk of a job's resource metrics. Taken from the current connection like log output, and only for the worker's own job: a job reassigned since must not collect another worker's figures.</summary>
+    /// <summary>A chunk of a job's resource metrics. Taken from the current connection like log output, and only for the worker's own job and its current run: a job reassigned since must not collect another worker's figures, nor a rerun the punted run's.</summary>
     public async Task<SessionAnswer> StreamMetrics(JobMetricsChunk chunk)
     {
         if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
@@ -389,9 +389,17 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
         }
 
         using var scope = _scopeFactory.CreateScope();
-        if (await scope.ServiceProvider.GetRequiredService<JobRepository>().GetAssignedWorkerAsync(chunk.JobId) != session.WorkerId)
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        if (await jobs.GetAssignedWorkerAsync(chunk.JobId) != session.WorkerId)
         {
             _logger.LogWarning("Worker {WorkerId} sent metrics for {JobId}, which isn't assigned to it; ignoring", session.WorkerId, chunk.JobId);
+            return SessionAnswer.Ok;
+        }
+
+        // A worker before protocol v2 names no assignment; its metrics count as the current run's.
+        if (chunk.AssignmentId is { } assignment && (await jobs.GetLogRunAsync(chunk.JobId))?.AssignmentId != assignment)
+        {
+            _logger.LogWarning("Worker {WorkerId} sent metrics for {JobId} from assignment {AssignmentId}, which is no longer the job's run; ignoring", session.WorkerId, chunk.JobId, assignment);
             return SessionAnswer.Ok;
         }
 

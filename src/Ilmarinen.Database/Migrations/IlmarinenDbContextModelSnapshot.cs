@@ -50,6 +50,9 @@ namespace Ilmarinen.Database.Migrations
                     b.Property<int>("GitTokenMode")
                         .HasColumnType("integer");
 
+                    b.Property<int>("LogSequenceBase")
+                        .HasColumnType("integer");
+
                     b.Property<Guid?>("MinWorkerPriorityId")
                         .HasColumnType("uuid");
 

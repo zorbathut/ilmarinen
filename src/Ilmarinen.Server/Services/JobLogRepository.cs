@@ -36,6 +36,12 @@ public class JobLogRepository
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>The highest sequence number in the job's log; 0 for an empty log.</summary>
+    public async Task<int> GetMaxSequenceAsync(Guid jobId)
+    {
+        return await _db.JobLogChunks.Where(c => c.JobId == jobId).MaxAsync(c => (int?)c.SequenceNumber) ?? 0;
+    }
+
     public async Task<IReadOnlyList<LogChunkInfo>> GetChunksAsync(
         Guid jobId,
         int fromSequence = 0,
@@ -45,6 +51,7 @@ public class JobLogRepository
             .AsNoTracking()
             .Where(c => c.JobId == jobId && c.SequenceNumber >= fromSequence)
             .OrderBy(c => c.SequenceNumber)
+            .ThenBy(c => c.Id)
             .Take(limit)
             .ToListAsync();
 
@@ -69,6 +76,7 @@ public class JobLogRepository
             .AsNoTracking()
             .Where(c => c.JobId == jobId && c.SequenceNumber < beforeSequence)
             .OrderByDescending(c => c.SequenceNumber)
+            .ThenByDescending(c => c.Id)
             .Take(limit)
             .ToListAsync();
 

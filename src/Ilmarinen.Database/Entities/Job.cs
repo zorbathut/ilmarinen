@@ -16,6 +16,9 @@ public class Job
     // Name the current handing of the job to WorkerId: which one (so a stale outcome can't touch it) and which process of that worker it went to (so a reconnect can tell a job that never arrived from one that may have partly run). Cleared when the job is queued again.
     public Guid? AssignmentId { get; set; }
     public Guid? WorkerInstanceId { get; set; }
+
+    // Added to the sequence numbers of the current run's log chunks, which every run starts from 1: a rerun's log carries on after the runs before it.
+    public int LogSequenceBase { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }

@@ -668,9 +668,9 @@ public class WorkerService : BackgroundService
     {
         var startTime = DateTime.UtcNow;
         var status = JobStatus.Failed;
-        var logCollector = new LogCollector(job.Id, _sender, _logger);
+        var logCollector = new LogCollector(job.Id, job.AssignmentId, _sender, _logger);
         var jobLogger = new LoggerTee(_logger, logCollector);
-        var metrics = StartMetrics(job.Id);
+        var metrics = StartMetrics(job.Id, job.AssignmentId);
         await using var diskWatch = new DiskWatch(_diskSpace, _config.WorkspacePath, _config.MinFreeBytes, jobLogger);
         JobRunner? runner = null;
 
@@ -762,7 +762,7 @@ public class WorkerService : BackgroundService
     /// <summary>
     /// Starts sampling the job's resource use, unless the worker has it turned off. Best effort: a job runs, and is reported, whether or not it can be measured. Given the plain logger, for the same reason the sender is: a failure logged into the job's own log would be sent back through the same path.
     /// </summary>
-    private JobMetricsSampler? StartMetrics(Guid jobId)
+    private JobMetricsSampler? StartMetrics(Guid jobId, Guid assignmentId)
     {
         if (_config.MetricsInterval <= TimeSpan.Zero)
         {
@@ -771,7 +771,7 @@ public class WorkerService : BackgroundService
 
         try
         {
-            var sampler = new JobMetricsSampler(jobId, _config.MetricsInterval, new ProcHostSource("/proc"), new DockerContainerSource(_metricsDocker.Value, _config.WorkerContainerId), _config.WorkerContainerId, chunk => _sender.SendOrBufferAsync(nameof(IWorkerHub.StreamMetrics), chunk), _logger, TimeProvider.System);
+            var sampler = new JobMetricsSampler(jobId, assignmentId, _config.MetricsInterval, new ProcHostSource("/proc"), new DockerContainerSource(_metricsDocker.Value, _config.WorkerContainerId), _config.WorkerContainerId, chunk => _sender.SendOrBufferAsync(nameof(IWorkerHub.StreamMetrics), chunk), _logger, TimeProvider.System);
             sampler.Start();
             return sampler;
         }

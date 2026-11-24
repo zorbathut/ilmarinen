@@ -19,7 +19,7 @@ public class LogCollectorTests
         // No connection, so every chunk lands in the inspectable MessageBuffer instead of going over the wire.
         _messageBuffer = new MessageBuffer();
         _logger = new LoggerCapture();
-        _collector = new LogCollector(Guid.NewGuid(), new BufferedHubSender(() => null, _messageBuffer, _logger), _logger);
+        _collector = new LogCollector(Guid.NewGuid(), Guid.NewGuid(), new BufferedHubSender(() => null, _messageBuffer, _logger), _logger);
     }
 
     [Test]

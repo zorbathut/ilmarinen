@@ -20,7 +20,7 @@ public class LoggerTeeTests
     {
         _messageBuffer = new MessageBuffer();
         _inner = new LoggerCapture();
-        _collector = new LogCollector(Guid.NewGuid(), new BufferedHubSender(() => null, _messageBuffer, _inner), _inner);
+        _collector = new LogCollector(Guid.NewGuid(), Guid.NewGuid(), new BufferedHubSender(() => null, _messageBuffer, _inner), _inner);
         _tee = new LoggerTee(_inner, _collector);
     }
 

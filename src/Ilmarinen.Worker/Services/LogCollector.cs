@@ -16,6 +16,7 @@ namespace Ilmarinen.Worker.Services;
 public class LogCollector
 {
     private readonly Guid _jobId;
+    private readonly Guid _assignmentId;
     private readonly BufferedHubSender _sender;
     private readonly ILogger _logger;
     private readonly StringBuilder _buffer = new();
@@ -28,9 +29,10 @@ public class LogCollector
     private const int FlushBytes = 4096;
     private const int FlushMs = 100;
 
-    public LogCollector(Guid jobId, BufferedHubSender sender, ILogger logger)
+    public LogCollector(Guid jobId, Guid assignmentId, BufferedHubSender sender, ILogger logger)
     {
         _jobId = jobId;
+        _assignmentId = assignmentId;
         _sender = sender;
         _logger = logger;
     }
@@ -172,6 +174,7 @@ public class LogCollector
         await _sender.SendOrBufferAsync(nameof(IWorkerHub.StreamLogs), new LogChunk
         {
             JobId = _jobId,
+            AssignmentId = _assignmentId,
             SequenceNumber = sequence,
             Content = content,
             Timestamp = DateTime.UtcNow

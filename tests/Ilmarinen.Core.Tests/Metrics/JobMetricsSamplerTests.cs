@@ -17,6 +17,7 @@ namespace Ilmarinen.Core.Tests.Metrics;
 public class JobMetricsSamplerTests
 {
     private static readonly Guid JobId = Guid.NewGuid();
+    private static readonly Guid AssignmentId = Guid.NewGuid();
     private const string WorkerContainer = "worker000000";
 
     private sealed class ManualTime : TimeProvider
@@ -113,7 +114,7 @@ public class JobMetricsSamplerTests
         _containers = new FakeContainers();
         _sent = [];
         // An interval long enough that the timer never fires: each test ticks by hand.
-        _sampler = new JobMetricsSampler(JobId, TimeSpan.FromHours(1), _host, _containers, WorkerContainer, chunk =>
+        _sampler = new JobMetricsSampler(JobId, AssignmentId, TimeSpan.FromHours(1), _host, _containers, WorkerContainer, chunk =>
         {
             _sent.Add(chunk);
             return Task.CompletedTask;
@@ -283,7 +284,7 @@ public class JobMetricsSamplerTests
     {
         var started = 0;
         var never = new TaskCompletionSource();
-        var sampler = new JobMetricsSampler(JobId, TimeSpan.FromHours(1), _host, _containers, null, _ =>
+        var sampler = new JobMetricsSampler(JobId, AssignmentId, TimeSpan.FromHours(1), _host, _containers, null, _ =>
         {
             Interlocked.Increment(ref started);
             return never.Task;

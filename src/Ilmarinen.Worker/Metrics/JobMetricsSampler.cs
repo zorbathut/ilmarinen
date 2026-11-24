@@ -24,6 +24,7 @@ public sealed class JobMetricsSampler
     public static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(10);
 
     private readonly Guid _jobId;
+    private readonly Guid _assignmentId;
     private readonly TimeSpan _interval;
     private readonly IHostSource _host;
     private readonly IContainerSource _containers;
@@ -58,9 +59,10 @@ public sealed class JobMetricsSampler
     private bool _reportedOversizedSample;
 
     /// <param name="send">Delivers a chunk, buffering it for replay if it can't, and never throws: the worker's BufferedHubSender. Not awaited where the pipeline waits.</param>
-    public JobMetricsSampler(Guid jobId, TimeSpan interval, IHostSource host, IContainerSource containers, string? workerContainerId, Func<JobMetricsChunk, Task> send, ILogger logger, TimeProvider time)
+    public JobMetricsSampler(Guid jobId, Guid assignmentId, TimeSpan interval, IHostSource host, IContainerSource containers, string? workerContainerId, Func<JobMetricsChunk, Task> send, ILogger logger, TimeProvider time)
     {
         _jobId = jobId;
+        _assignmentId = assignmentId;
         _interval = interval;
         _host = host;
         _containers = containers;
@@ -405,6 +407,7 @@ public sealed class JobMetricsSampler
         _ready.Add(new JobMetricsChunk
         {
             JobId = _jobId,
+            AssignmentId = _assignmentId,
             SequenceNumber = _sequence++,
             Content = _hostLine + _batch,
             Timestamp = _lastFlush.UtcDateTime
