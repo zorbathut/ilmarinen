@@ -108,7 +108,7 @@ public class PersistentWorkspaceTests
 
     // The step waits, in its container, for a file the test creates in the workspace: the job holds its workspace until the test lets it go, and cancelling the job ends the wait with the container.
     [Test]
-    public async Task AWorkspaceInUse_IsShownSo_AndTheWorkerRefusesToDeleteIt()
+    public async Task AWorkspaceInUse_IsShownSo_AndDeletingIt_WaitsForTheJob()
     {
         _repo.AddFile("pipeline.csx", """
             Workspace("gated-ws");
@@ -139,8 +139,10 @@ public class PersistentWorkspaceTests
         {
             await WaitUntilAsync(InUseAsync, "the running job's workspace to be shown in use");
 
-            var refused = await _fixture.HttpClient.DeleteAsync($"/api/workers/{workerId}/workspaces/gated-ws");
-            Assert.That(refused.StatusCode, Is.EqualTo(HttpStatusCode.Conflict), "the worker itself refuses to delete it");
+            var queued = await _fixture.HttpClient.DeleteAsync($"/api/workers/{workerId}/workspaces/gated-ws");
+            Assert.That(queued.StatusCode, Is.EqualTo(HttpStatusCode.Accepted), "queued until the job ends");
+            Assert.That((await workers.GetByIdAsync(workerId))!.Workspaces.Single(w => w.Name == "gated-ws").DeletePending, Is.True);
+            Assert.That(Directory.Exists(Path.GetDirectoryName(gate)), Is.True, "not while the job is using it");
         }
         finally
         {
@@ -149,8 +151,8 @@ public class PersistentWorkspaceTests
         }
 
         Assert.That((await _fixture.WaitForJobCompletionAsync(jobId)).Status, Is.EqualTo(JobStatus.Success));
-        // The outcome is reported ahead of the idle state that lets the workspace go, so give that a moment to follow.
-        await WaitUntilAsync(async () => !await InUseAsync(), "the finished job to let its workspace go");
+        // The outcome is reported ahead of the idle state that lets the workspace go, and the delete follows that.
+        await WaitUntilAsync(async () => !Directory.Exists(Path.GetDirectoryName(gate)) && (await workers.GetByIdAsync(workerId))!.Workspaces.All(w => w.Name != "gated-ws"), "the queued delete");
     }
 
     private static async Task WaitUntilAsync(Func<Task<bool>> condition, string what)

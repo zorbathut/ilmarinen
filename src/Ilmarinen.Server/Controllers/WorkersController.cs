@@ -91,7 +91,7 @@ public class WorkersController : ControllerBase
         return result.Status switch
         {
             DeleteWorkspaceStatus.Success => Ok(result),
-            DeleteWorkspaceStatus.InUse => Conflict(new { error = result.Error }),
+            DeleteWorkspaceStatus.InUse => Accepted(new { message = "In use by the running job; it will be deleted once the job ends." }),
             DeleteWorkspaceStatus.NotFound => NotFound(new { error = result.Error }),
             DeleteWorkspaceStatus.Timeout => StatusCode(504, new { error = result.Error }),
             _ => BadRequest(new { error = result.Error })

@@ -263,6 +263,10 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
             }
             session.Resumed = true;
 
+            // What an earlier connection was sent may never have reached the worker; a delete it did act on is answered NotFound this time.
+            scope.ServiceProvider.GetRequiredService<WorkerRepository>().ResendQueuedDeletes(session.WorkerId);
+            scope.ServiceProvider.GetRequiredService<WorkspaceDeletionService>().SendFreed(session.WorkerId);
+
             if (recheck)
             {
                 _sessions.SetDiagnosticOwed(session.WorkerId, true);
@@ -303,6 +307,7 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
             }
 
             session.State = state;
+            scope.ServiceProvider.GetRequiredService<WorkspaceDeletionService>().SendFreed(session.WorkerId);
 
             // A diagnostic that has started is the one that was owed: the worker runs a fresh one for every request, even one that arrived mid-diagnostic, and readiness still waits for its verdict.
             if (state.Activity == WorkerActivity.RunningDiagnostic && _sessions.DiagnosticOwed(session.WorkerId))
@@ -432,7 +437,7 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
     /// <summary>The answer to an operator's delete request, or a worker's own deletion to make room for a job (which no request waits on).</summary>
     public async Task<SessionAnswer> WorkspaceDeleted(string name, DeleteWorkspaceResult result)
     {
-        if (_sessions.ByConnection(Context.ConnectionId) == null)
+        if (_sessions.ByConnection(Context.ConnectionId) is not { } session)
         {
             return SessionAnswer.Fenced;
         }
@@ -441,12 +446,21 @@ public class WorkerHub : Hub<IWorkerClient>, IWorkerHub
         var deletionService = scope.ServiceProvider.GetRequiredService<WorkspaceDeletionService>();
         var workers = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
 
+        using (await _sessions.LockAsync(session.WorkerId))
+        {
+            deletionService.Answered(session.WorkerId, name, result);
+        }
         deletionService.Complete(Context.ConnectionId, name, result);
         if (result.Status == DeleteWorkspaceStatus.Success)
         {
             workers.RemoveWorkspace(Context.ConnectionId, name);
             _uiEvents.NotifyWorkersChanged();
             await scope.ServiceProvider.GetRequiredService<JobScheduler>().DispatchAsync();
+        }
+        else
+        {
+            // A queued delete it settled shows as no longer waiting.
+            _uiEvents.NotifyWorkersChanged();
         }
 
         return SessionAnswer.Ok;

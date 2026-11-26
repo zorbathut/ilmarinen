@@ -1,6 +1,7 @@
 using Ilmarinen.Models;
 using Ilmarinen.Protocol.Responses;
 using Ilmarinen.Protocol;
+using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using System.Threading;
@@ -16,15 +17,19 @@ public class WorkspaceDeletionService
     private readonly ConcurrentDictionary<string, TaskCompletionSource<DeleteWorkspaceResult>> _pending = new();
     private readonly WorkerRepository _workers;
     private readonly WorkerMessenger _messenger;
+    private readonly WorkerSessions _sessions;
+    private readonly ILogger<WorkspaceDeletionService> _logger;
 
-    public WorkspaceDeletionService(WorkerRepository workers, WorkerMessenger messenger)
+    public WorkspaceDeletionService(WorkerRepository workers, WorkerMessenger messenger, WorkerSessions sessions, ILogger<WorkspaceDeletionService> logger)
     {
         _workers = workers;
         _messenger = messenger;
+        _sessions = sessions;
+        _logger = logger;
     }
 
     /// <summary>
-    /// Asks a worker to delete one of its workspaces and waits for its answer. A name that isn't a workspace's is an Error, and a worker that isn't connected is NotFound, both without asking it.
+    /// Asks a worker to delete one of its workspaces and waits for its answer. A name that isn't a workspace's is an Error, and a worker that isn't connected is NotFound, both without asking it. InUse means the running job has it, and the delete is queued until the job lets it go (<see cref="SendFreed"/>).
     /// </summary>
     public async Task<DeleteWorkspaceResult> RequestAsync(Guid workerId, string name)
     {
@@ -41,7 +46,58 @@ public class WorkspaceDeletionService
 
         var key = CreatePending(connectionId, name);
         _messenger.Send(connectionId, $"deletion of workspace {name}", client => client.DeleteWorkspace(name));
-        return await WaitForResultAsync(key, AnswerTimeout);
+        var result = await WaitForResultAsync(key, AnswerTimeout);
+        if (result.Status == DeleteWorkspaceStatus.InUse)
+        {
+            using (await _sessions.LockAsync(workerId))
+            {
+                _workers.QueueDelete(workerId, name);
+                SendFreed(workerId);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Sends the queued deletes, not yet sent, of every workspace the worker's latest state no longer has its job holding. Called under the worker's session lock with each new state, before any dispatch, so a delete reaches the worker ahead of the next assignment, which could take the workspace again. A refusal can arrive after the state that frees the workspace, so queueing calls it too.
+    /// </summary>
+    public void SendFreed(Guid workerId)
+    {
+        if (_sessions.ByWorker(workerId) is not { Resumed: true, State: { } state } session)
+        {
+            return;
+        }
+        foreach (var name in _workers.TakeQueuedDeletesToSend(workerId, state.Workspace))
+        {
+            _logger.LogInformation("Worker {WorkerId}'s state no longer has its job holding workspace {WorkspaceName}; sending the delete asked for while it did", workerId, name);
+            _messenger.Send(session.ConnectionId, $"queued deletion of workspace {name}", client => client.DeleteWorkspace(name));
+        }
+    }
+
+    /// <summary>
+    /// Settles a queued delete by the worker's answer, whichever request it answers. Refused again, the job has the workspace once more, and it waits again; gone, it is done; failed, it is reported and dropped. Caller holds the worker's session lock.
+    /// </summary>
+    public void Answered(Guid workerId, string name, DeleteWorkspaceResult result)
+    {
+        if (!_workers.IsDeleteQueued(workerId, name))
+        {
+            return;
+        }
+        switch (result.Status)
+        {
+            case DeleteWorkspaceStatus.InUse:
+                _workers.QueueDelete(workerId, name);
+                SendFreed(workerId);
+                break;
+            case DeleteWorkspaceStatus.Success:
+            case DeleteWorkspaceStatus.NotFound:
+                _workers.UnqueueDelete(workerId, name);
+                break;
+            default:
+                _logger.LogWarning("Worker {WorkerId} failed to delete workspace {WorkspaceName}, which was queued for when its job ended: {Status} {Error}", workerId, name, result.Status, result.Error);
+                _workers.UnqueueDelete(workerId, name);
+                break;
+        }
     }
 
     private static string MakeKey(string connectionId, string name) => $"{connectionId}:{name}";

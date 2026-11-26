@@ -513,7 +513,8 @@ else
             }
 
             var result = await DeletionService.RequestAsync(workerId, workspace);
-            if (result.Status != DeleteWorkspaceStatus.Success)
+            // InUse is queued until the job ends, which the table shows.
+            if (result.Status is not (DeleteWorkspaceStatus.Success or DeleteWorkspaceStatus.InUse))
             {
                 deleteError = result.Error ?? "Workspace deletion failed.";
             }

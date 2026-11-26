@@ -1,13 +1,13 @@
 @using Ilmarinen.Server.Services
 
-@* Marks the workspace the worker's running job is using, beside its name; Reason is the title for its disabled Delete button. *@
+@* Marks the workspace the worker's running job is using, beside its name; Reason is the title for its Delete button. *@
 @if (Workspace.InUse)
 {
     <span style="margin-left: 0.5rem; color: var(--warning, orange);" title="@Reason">in use</span>
 }
 
 @code {
-    public const string Reason = "In use by the running job; the worker won't delete it until the job ends";
+    public const string Reason = "In use by the running job: deleting it waits until the job ends";
 
     [Parameter, EditorRequired]
     public WorkspaceView Workspace { get; set; } = null!;

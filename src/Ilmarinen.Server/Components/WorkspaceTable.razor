@@ -90,8 +90,12 @@
         {
             return @<text></text>;
         }
+        if (ws.DeletePending)
+        {
+            return @<span style="color: var(--text-secondary);" title="Deleted as soon as the running job lets it go">deletes when the job ends</span>;
+        }
         return @<button class="btn btn-danger"
-                        disabled="@(ws.InUse || IsDeleting(row.Worker.Id, ws.Name))"
+                        disabled="@IsDeleting(row.Worker.Id, ws.Name)"
                         title="@(ws.InUse ? WorkspaceInUse.Reason : null)"
                         @onclick="() => Delete.InvokeAsync((row.Worker.Id, ws.Name))">Delete</button>;
     }

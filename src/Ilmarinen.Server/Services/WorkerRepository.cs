@@ -29,6 +29,9 @@ public class WorkerRepository
     // Kept across disconnects, like the usage: the last that is known of a sleeping worker's disk.
     private readonly ConcurrentDictionary<Guid, DiskSpaceReport> _workerDisk = new();
 
+    // Workspace deletes the worker refused while its job held the workspace, each with whether it has been sent again since: queued until the worker answers one it was sent. Kept across reconnects, lost with the server.
+    private readonly ConcurrentDictionary<Guid, ImmutableDictionary<string, bool>> _queuedDeletes = new();
+
     public WorkerRepository(IServiceScopeFactory scopeFactory, WorkerSessions sessions, WorkerBundleService bundles, Wake.WakeStatus wakeStatus)
     {
         _scopeFactory = scopeFactory;
@@ -345,10 +348,50 @@ public class WorkerRepository
         using (await _sessions.LockAsync(workerId))
         {
             _sessions.Forget(workerId);
+            _queuedDeletes.TryRemove(workerId, out _);
         }
         _workerDiagnostics.TryRemove(workerId, out _);
         _workerUsage.TryRemove(workerId, out _);
         _workerDisk.TryRemove(workerId, out _);
+    }
+
+    // The queued deletes' callers hold the worker's session lock.
+
+    /// <summary>Queues the delete of a workspace the worker refused while its job held it, to send once the job lets it go.</summary>
+    public void QueueDelete(Guid workerId, string name)
+    {
+        _queuedDeletes[workerId] = QueuedDeletes(workerId).SetItem(name, false);
+    }
+
+    /// <summary>The queued deletes not yet sent, of every workspace but <paramref name="held"/>, the one the worker's job still has; marked sent, though they stay queued until answered.</summary>
+    public IReadOnlyList<string> TakeQueuedDeletesToSend(Guid workerId, string? held)
+    {
+        var queued = QueuedDeletes(workerId);
+        var due = queued.Where(d => !d.Value && d.Key != held).Select(d => d.Key).ToList();
+        _queuedDeletes[workerId] = queued.SetItems(due.Select(name => KeyValuePair.Create(name, true)));
+        return due;
+    }
+
+    /// <summary>Marks every queued delete unsent: a new connection may not have received what was sent on the last one.</summary>
+    public void ResendQueuedDeletes(Guid workerId)
+    {
+        var queued = QueuedDeletes(workerId);
+        _queuedDeletes[workerId] = queued.SetItems(queued.Keys.Select(name => KeyValuePair.Create(name, false)));
+    }
+
+    public bool IsDeleteQueued(Guid workerId, string name)
+    {
+        return QueuedDeletes(workerId).ContainsKey(name);
+    }
+
+    public void UnqueueDelete(Guid workerId, string name)
+    {
+        _queuedDeletes[workerId] = QueuedDeletes(workerId).Remove(name);
+    }
+
+    private ImmutableDictionary<string, bool> QueuedDeletes(Guid workerId)
+    {
+        return _queuedDeletes.GetValueOrDefault(workerId) ?? ImmutableDictionary<string, bool>.Empty;
     }
 
     /// <summary>Less than this either way is drift, not a change worth dispatching or redrawing for.</summary>
@@ -434,7 +477,7 @@ public class WorkerRepository
             WakeMacAddress = w.WakeMacAddress,
             IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
             WakeFailedAt = session == null ? _wakeStatus.FailedAt(w.Id) : null,
-            Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage, session?.State?.Workspace),
+            Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage, session?.State?.Workspace, QueuedDeletes(id).Keys.ToHashSet()),
             MirrorsSizeBytes = usage?.MirrorsSizeBytes,
             UsageMeasured = usage != null,
             DiskSpace = _workerDisk.GetValueOrDefault(id),
@@ -490,7 +533,7 @@ public class WorkerRepository
                 WakeMacAddress = w.WakeMacAddress,
                 IsWaking = session == null && _wakeStatus.IsWaking(w.Id),
                 WakeFailedAt = session == null ? _wakeStatus.FailedAt(w.Id) : null,
-                Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage, session?.State?.Workspace),
+                Workspaces = WorkspaceView.Join(session?.Workspaces ?? [], usage, session?.State?.Workspace, QueuedDeletes(w.Id).Keys.ToHashSet()),
                 MirrorsSizeBytes = usage?.MirrorsSizeBytes,
                 UsageMeasured = usage != null,
                 DiskSpace = _workerDisk.GetValueOrDefault(w.Id),
@@ -635,11 +678,15 @@ public record WorkspaceView
     /// </summary>
     public long? SizeBytes { get; init; }
 
-    /// <summary>The running job is using it, as the worker last reported; the worker refuses to delete it meanwhile.</summary>
+    /// <summary>The running job is using it, as the worker last reported; a delete waits until the job lets it go.</summary>
     public bool InUse { get; init; }
 
+    /// <summary>A delete is waiting for the running job to let it go.</summary>
+    public bool DeletePending { get; init; }
+
     /// <param name="inUse">The workspace the worker's running job is using, if any.</param>
-    public static IReadOnlyList<WorkspaceView> Join(IReadOnlyList<WorkspaceInfo> workspaces, WorkspaceUsageReport? usage, string? inUse)
+    /// <param name="deleteQueued">The workspaces whose delete waits for the job.</param>
+    public static IReadOnlyList<WorkspaceView> Join(IReadOnlyList<WorkspaceInfo> workspaces, WorkspaceUsageReport? usage, string? inUse, IReadOnlySet<string> deleteQueued)
     {
         return workspaces.Select(ws =>
         {
@@ -652,7 +699,8 @@ public record WorkspaceView
                 LastUsed = ws.LastUsed,
                 Measured = measured,
                 SizeBytes = size,
-                InUse = ws.Name == inUse
+                InUse = ws.Name == inUse,
+                DeletePending = deleteQueued.Contains(ws.Name)
             };
         }).ToList();
     }
