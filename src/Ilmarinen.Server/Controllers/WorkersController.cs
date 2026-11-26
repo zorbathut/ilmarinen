@@ -1,4 +1,3 @@
-using Ilmarinen.Models;
 using Ilmarinen.Protocol.Requests;
 using Ilmarinen.Protocol;
 using Ilmarinen.Server.Services;
@@ -16,7 +15,6 @@ public class WorkersController : ControllerBase
     private readonly WorkerRepository _workers;
     private readonly WorkerRegistrationService _registration;
     private readonly WorkspaceDeletionService _deletionService;
-    private readonly WorkerMessenger _messenger;
     private readonly JobScheduler _scheduler;
     private readonly PriorityRepository _priorities;
 
@@ -24,14 +22,12 @@ public class WorkersController : ControllerBase
         WorkerRepository workers,
         WorkerRegistrationService registration,
         WorkspaceDeletionService deletionService,
-        WorkerMessenger messenger,
         JobScheduler scheduler,
         PriorityRepository priorities)
     {
         _workers = workers;
         _registration = registration;
         _deletionService = deletionService;
-        _messenger = messenger;
         _scheduler = scheduler;
         _priorities = priorities;
     }
@@ -90,18 +86,7 @@ public class WorkersController : ControllerBase
     [HttpDelete("{workerId}/workspaces/{workspaceName}")]
     public async Task<ActionResult> DeleteWorkspace(Guid workerId, string workspaceName)
     {
-        if (!WorkspaceConfig.IsValidName(workspaceName, out var validationError))
-            return BadRequest(new { error = validationError });
-
-        var connectionId = _workers.FindConnectionIdByWorkerId(workerId);
-        if (connectionId == null)
-            return NotFound(new { error = "Worker not found or not connected." });
-
-        var key = _deletionService.CreatePending(connectionId, workspaceName);
-
-        _messenger.Send(connectionId, $"deletion of workspace {workspaceName}", client => client.DeleteWorkspace(workspaceName));
-
-        var result = await _deletionService.WaitForResultAsync(key, TimeSpan.FromSeconds(30));
+        var result = await _deletionService.RequestAsync(workerId, workspaceName);
 
         return result.Status switch
         {

@@ -1,7 +1,6 @@
 @page "/workers"
 @using Ilmarinen.Protocol
 @using Ilmarinen.Server.Services
-@using Ilmarinen.Models
 @using Microsoft.Extensions.DependencyInjection
 @using Microsoft.Extensions.Logging
 @implements IDisposable
@@ -9,7 +8,6 @@
 @inject ILogger<Workers> Logger
 @inject WorkerRegistrationService RegistrationService
 @inject WorkspaceDeletionService DeletionService
-@inject WorkerMessenger Messenger
 @inject JobScheduler Scheduler
 @inject UIEventService UIEvents
 @inject WorkerBundleService BundleService
@@ -298,31 +296,8 @@
 
         try
         {
-            if (!WorkspaceConfig.IsValidName(workspace, out var validationError))
-            {
-                actionError = validationError;
-                return;
-            }
-
-            using var scope = ScopeFactory.CreateScope();
-            var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
-
-            var connectionId = workerRepo.FindConnectionIdByWorkerId(workerId);
-            if (connectionId == null)
-            {
-                actionError = "Worker not found or not connected.";
-                return;
-            }
-
-            var key = DeletionService.CreatePending(connectionId, workspace);
-            Messenger.Send(connectionId, $"deletion of workspace {workspace}", client => client.DeleteWorkspace(workspace));
-            var result = await DeletionService.WaitForResultAsync(key, TimeSpan.FromSeconds(30));
-
-            if (result.Status == Ilmarinen.Protocol.DeleteWorkspaceStatus.Success)
-            {
-                workerRepo.RemoveWorkspace(connectionId, workspace);
-            }
-            else
+            var result = await DeletionService.RequestAsync(workerId, workspace);
+            if (result.Status != DeleteWorkspaceStatus.Success)
             {
                 actionError = result.Error ?? "Workspace deletion failed.";
             }
