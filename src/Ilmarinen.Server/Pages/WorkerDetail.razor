@@ -42,8 +42,31 @@
                 }
             </span>
 
+            <span class="detail-label">Disk free</span>
+            <span class="detail-value">
+                <DiskFree Worker="worker" />
+                @if (worker.DiskSpace is { } disk)
+                {
+                    <span> · keeps @DisplayFormat.Size(disk.MinFreeBytes) free</span>
+                }
+                @if (worker.OtherUseBytes is { } other)
+                {
+                    <span title="Space in use that isn't workspaces or git mirrors: the host's own files and, for a containerized worker, usually Docker's images and build cache. Deleting workspaces can't free it."> · other use @DisplayFormat.Size(other)</span>
+                }
+                @if (WorkerBadge.GetStatusDetail(worker) is { } blocked)
+                {
+                    <div style="color: var(--warning);">@blocked</div>
+                }
+            </span>
+
             <span class="detail-label">Priority</span>
-            <span class="detail-value">@worker.Priority.Name</span>
+            <span class="detail-value">
+                <PrioritySelect Options="priorityOptions" Value="worker.Priority" Disabled="savingPriority" OnChange="SetPriority" />
+                @if (priorityError != null)
+                {
+                    <span style="margin-left: 1rem; color: var(--error);">@priorityError</span>
+                }
+            </span>
 
             <span class="detail-label">Current Jobs</span>
             <span class="detail-value">
@@ -55,7 +78,10 @@
             </span>
 
             <span class="detail-label">Registered</span>
-            <span class="detail-value">@worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm:ss")</span>
+            <span class="detail-value">
+                @worker.RegisteredAt.ToString("yyyy-MM-dd HH:mm:ss")
+                <span style="margin-left: 1rem;"><WorkerRevokeButton WorkerId="worker.Id" WorkerName="@worker.Name" OnRevoked="@(() => Navigation.NavigateTo("/workers"))" /></span>
+            </span>
 
             <span class="detail-label">Last Seen</span>
             <span class="detail-value">@worker.LastSeen.ToString("yyyy-MM-dd HH:mm:ss")</span>
@@ -114,21 +140,6 @@
         else
         {
             <p style="color: var(--text-secondary);">No workspaces</p>
-        }
-        <p style="color: var(--text-secondary);">
-            Disk: <DiskFree Worker="worker" />
-            @if (worker.DiskSpace is { } disk)
-            {
-                <span> · keeps @DisplayFormat.Size(disk.MinFreeBytes) free</span>
-            }
-            @if (worker.OtherUseBytes is { } other)
-            {
-                <span title="Space in use that isn't workspaces or git mirrors: the host's own files and, for a containerized worker, usually Docker's images and build cache. Deleting workspaces can't free it."> · other use @DisplayFormat.Size(other)</span>
-            }
-        </p>
-        @if (WorkerBadge.GetStatusDetail(worker) is { } blocked)
-        {
-            <p style="color: var(--warning);">@blocked</p>
         }
     </div>
 
@@ -245,6 +256,10 @@ else
     private string? deleteError;
     private string? diagnosticError;
     private bool savingMode;
+    // Highest first, as the scheduler prefers them.
+    private IReadOnlyList<PriorityRef> priorityOptions = [];
+    private bool savingPriority;
+    private string? priorityError;
     private string? modeError;
     private string? macInput;
     private bool macLoaded;
@@ -319,6 +334,36 @@ else
         finally
         {
             savingMode = false;
+        }
+    }
+
+    private async Task SetPriority(Guid priority)
+    {
+        if (worker == null)
+        {
+            return;
+        }
+
+        // The refresh below can clear the field: the worker may have been revoked meanwhile.
+        var workerId = worker.Id;
+        savingPriority = true;
+        priorityError = null;
+        try
+        {
+            if (!await Scheduler.SetWorkerPriorityAsync(workerId, priority))
+            {
+                priorityError = "Worker not found.";
+            }
+            await RefreshAsync(workerId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Setting worker {WorkerId}'s priority failed", workerId);
+            priorityError = $"Failed to set priority: {ex.Message}";
+        }
+        finally
+        {
+            savingPriority = false;
         }
     }
 
@@ -437,6 +482,8 @@ else
         using var scope = ScopeFactory.CreateScope();
         var workerRepo = scope.ServiceProvider.GetRequiredService<WorkerRepository>();
         var jobRepo = scope.ServiceProvider.GetRequiredService<JobRepository>();
+        var priorities = scope.ServiceProvider.GetRequiredService<PriorityRepository>();
+        priorityOptions = (await priorities.GetAllAsync(PriorityKind.Worker)).Select(PriorityRepository.ToRef).ToList();
         worker = await workerRepo.GetByIdAsync(ulid) is { } view ? (await Scheduler.WithNoRoomAsync([view])).Single() : null;
         // Once: the page refreshes every second and on every change, and would otherwise overwrite what is being typed.
         if (worker != null && !macLoaded)
