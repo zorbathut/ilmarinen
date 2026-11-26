@@ -12,7 +12,7 @@
     else
     {
         <span class="revoke-confirm">
-            <span>Revoke @WorkerName? Its key stops working.</span>
+            <span>Revoke @WorkerName? Its key stops working, and any job it is running fails.</span>
             <button class="btn btn-danger" disabled="@busy" @onclick="RevokeAsync">Revoke</button>
             <button class="btn-arrange" disabled="@busy" @onclick="() => confirming = false">Never mind</button>
         </span>

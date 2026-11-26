@@ -27,6 +27,8 @@ On 2026-11-18 two workers each failed ~15 queued jobs in milliseconds while real
 
 Two elements are kept although the model shows them saving churn rather than correctness: the counter ordering within a process, and instance retirement. Without either, a late handshake can take the session from the worker's live connection; the live connection is then fenced, reconnects, and takes it back, and heartbeats and `Resume` repair everything else. In a bounded run that churn runs out the connection budget, which is all TLC can show. They stay because they're cheap and because without retirement two processes sharing a key would take turns superseding each other forever.
 
+Revoking a worker is outside the model: it deletes the worker, so the server stops tracking a run the worker may still be going with, which `NoUntrackedRun` rules out for a worker that exists. The server sends `CancelJob` first and then fails the worker's running jobs as lost rather than queue them again, so a run still going can't overlap a rerun.
+
 ### Implementation obligations
 
 The model takes these for granted; this is where the C# makes them true.

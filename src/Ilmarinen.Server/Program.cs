@@ -110,6 +110,9 @@ using (var scope = app.Services.CreateScope())
     await db.Database.MigrateAsync();
 }
 
+// A revoke the server stopped in the middle of leaves jobs Running for a worker that no longer exists.
+await app.Services.GetRequiredService<JobScheduler>().FailOrphanedAsync();
+
 app.UseMiddleware<ExceptionHandlerMiddleware>();
 app.UseSerilogRequestLogging();
 app.UseStaticFiles(new StaticFileOptions

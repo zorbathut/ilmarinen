@@ -16,14 +16,16 @@ public class WorkerRegistrationService
     private readonly WorkerRepository _workers;
     private readonly PriorityRepository _priorities;
     private readonly UIEventService _uiEvents;
+    private readonly JobScheduler _scheduler;
 
-    public WorkerRegistrationService(IlmarinenDbContext db, ServerKeyService serverKey, WorkerRepository workers, PriorityRepository priorities, UIEventService uiEvents)
+    public WorkerRegistrationService(IlmarinenDbContext db, ServerKeyService serverKey, WorkerRepository workers, PriorityRepository priorities, UIEventService uiEvents, JobScheduler scheduler)
     {
         _db = db;
         _serverKey = serverKey;
         _workers = workers;
         _priorities = priorities;
         _uiEvents = uiEvents;
+        _scheduler = scheduler;
     }
 
     public async Task<WorkerRegistrationResult> RegisterWorkerAsync(string name)
@@ -83,9 +85,13 @@ public class WorkerRegistrationService
         if (worker == null)
             throw new KeyNotFoundException($"Worker {workerId} not found.");
 
+        // Paused first, so nothing new is dispatched to it from here on, and told to stop its runs while it still has a session to hear that on. The row goes before the session, so a fenced worker can't authenticate a new one in between; its running jobs fail once both are gone.
+        await _scheduler.SetWorkerModeAsync(workerId, WorkerMode.Paused);
+        await _scheduler.StopRunsBeforeRevokeAsync(workerId);
         _db.Workers.Remove(worker);
         await _db.SaveChangesAsync();
         await _workers.ForgetAsync(workerId);
+        await _scheduler.FailOrphanedAsync();
         _uiEvents.NotifyWorkersChanged();
     }
 }

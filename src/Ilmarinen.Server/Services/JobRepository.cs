@@ -517,6 +517,16 @@ public class JobRepository
             .ToListAsync();
     }
 
+    /// <summary>Jobs Running for a worker that no longer exists: revoked, so it can never report how the run went. Its id with each.</summary>
+    public async Task<IReadOnlyList<(Guid JobId, Guid WorkerId)>> GetOrphanedRunningAsync()
+    {
+        var rows = await _db.Jobs
+            .Where(j => j.Status == JobStatus.Running && j.WorkerId != null && !_db.Workers.Any(w => w.Id == j.WorkerId))
+            .Select(j => new { j.Id, WorkerId = j.WorkerId!.Value })
+            .ToListAsync();
+        return rows.Select(r => (r.Id, r.WorkerId)).ToList();
+    }
+
     /// <summary>The jobs Running for a worker, with the assignment each is running under.</summary>
     public async Task<IReadOnlyList<RunningAssignment>> GetRunningAssignmentsAsync(Guid workerId)
     {

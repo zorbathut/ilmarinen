@@ -508,6 +508,65 @@ public class JobScheduler
         return true;
     }
 
+    /// <summary>
+    /// Fails as lost every job still Running for a worker that no longer exists. A revoked worker can't report how its run went, and it may still be running it, so the job fails rather than run twice. A revoke the server stopped in the middle of leaves such jobs too.
+    /// </summary>
+    public async Task FailOrphanedAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        foreach (var (jobId, workerId) in await jobs.GetOrphanedRunningAsync())
+        {
+            // Under the worker's lock, like a cancel, so a cancel can't end the job between the line and the failure.
+            using (await _sessions.LockAsync(workerId))
+            {
+                if (await jobs.GetAsync(jobId) is not { Status: JobStatus.Running } job || job.WorkerId != workerId)
+                {
+                    continue;
+                }
+                await _logStream.AppendLineAsync(jobId, $"Its worker was revoked at or before {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC, and can't say how this run went: failed as lost.");
+                if (await FailLostAsync(jobId, workerId))
+                {
+                    _logger.LogWarning("Job {JobId} was running on worker {WorkerId}, which no longer exists; failed it as lost", jobId, workerId);
+                }
+            }
+        }
+    }
+
+    /// <summary>How long a revoke waits for its CancelJobs to go out before fencing the worker, whose next call then ends its session, and a cancel still queued with it.</summary>
+    private static readonly TimeSpan RevokeCancelDrainTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>Tells a worker about to be revoked to stop each run it has, and waits a little for that to go out, while it still has a session to hear it on: it may not, and its jobs fail either way (<see cref="FailOrphanedAsync"/>).</summary>
+    public async Task StopRunsBeforeRevokeAsync(Guid workerId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobRepository>();
+
+        string? connectionId;
+        using (await _sessions.LockAsync(workerId))
+        {
+            connectionId = _sessions.ByWorker(workerId)?.ConnectionId;
+            foreach (var run in await jobs.GetRunningAssignmentsAsync(workerId))
+            {
+                SendCancel(workerId, run.JobId);
+            }
+        }
+
+        if (connectionId == null)
+        {
+            return;
+        }
+        try
+        {
+            await _messenger.DrainedAsync(connectionId).WaitAsync(RevokeCancelDrainTimeout);
+        }
+        catch (TimeoutException)
+        {
+            _logger.LogWarning("Worker {WorkerId}'s connection didn't take its CancelJobs within {Timeout}; revoking it anyway", workerId, RevokeCancelDrainTimeout);
+        }
+    }
+
     private async Task EmitCompletionAsync(IServiceScope scope, Guid jobId, JobStatus status)
     {
         await _logStream.NotifyJobCompletedAsync(jobId, status);
