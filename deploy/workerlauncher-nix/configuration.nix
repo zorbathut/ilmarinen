@@ -20,6 +20,12 @@ in
   wsl.enable = true;
   wsl.defaultUser = "nixos";
 
+  # WSL 3.x generates wsl-mnt-guard.service with ExecStart=/bin/true, which doesn't exist on NixOS: the unit fails with 203/EXEC and makes every `nixos-rebuild switch` (and so deploy.sh's `set -e`) exit non-zero. This drop-in in /etc outlives WSL regenerating the unit at each boot.
+  systemd.services.wsl-mnt-guard = lib.mkIf config.wsl.enable {
+    overrideStrategy = "asDropin";
+    serviceConfig.ExecStart = [ "" "${pkgs.coreutils}/bin/true" ];
+  };
+
   # Ilmarinen worker launcher systemd service
   systemd.services.ilmarinen-workerlauncher = {
     description = "Ilmarinen CI/CD Worker Launcher";
@@ -62,6 +68,7 @@ in
         docker
         bash
         coreutils
+        findutils
       ])));
     };
   };
