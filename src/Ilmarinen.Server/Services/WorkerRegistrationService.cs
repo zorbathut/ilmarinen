@@ -15,13 +15,15 @@ public class WorkerRegistrationService
     private readonly ServerKeyService _serverKey;
     private readonly WorkerRepository _workers;
     private readonly PriorityRepository _priorities;
+    private readonly UIEventService _uiEvents;
 
-    public WorkerRegistrationService(IlmarinenDbContext db, ServerKeyService serverKey, WorkerRepository workers, PriorityRepository priorities)
+    public WorkerRegistrationService(IlmarinenDbContext db, ServerKeyService serverKey, WorkerRepository workers, PriorityRepository priorities, UIEventService uiEvents)
     {
         _db = db;
         _serverKey = serverKey;
         _workers = workers;
         _priorities = priorities;
+        _uiEvents = uiEvents;
     }
 
     public async Task<WorkerRegistrationResult> RegisterWorkerAsync(string name)
@@ -61,6 +63,7 @@ public class WorkerRegistrationService
         };
         _db.Workers.Add(worker);
         await PriorityRepository.WritingReferencesAsync(() => _db.SaveChangesAsync());
+        _uiEvents.NotifyWorkersChanged();
 
         // Build combined key: {name}:{guid}:{workerPrivBase64}:{serverPubBase64}
         var workerPrivBase64 = Convert.ToBase64String(workerPrivateScalar);
@@ -83,6 +86,7 @@ public class WorkerRegistrationService
         _db.Workers.Remove(worker);
         await _db.SaveChangesAsync();
         await _workers.ForgetAsync(workerId);
+        _uiEvents.NotifyWorkersChanged();
     }
 }
 
