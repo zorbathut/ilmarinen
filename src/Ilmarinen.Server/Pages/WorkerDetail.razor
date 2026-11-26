@@ -299,19 +299,21 @@ else
             return;
         }
 
+        // The refresh below can clear the field: the worker may have been revoked meanwhile.
+        var workerId = worker.Id;
         savingMode = true;
         modeError = null;
         try
         {
-            if (!await Scheduler.SetWorkerModeAsync(worker.Id, mode))
+            if (!await Scheduler.SetWorkerModeAsync(workerId, mode))
             {
                 modeError = "Worker not found.";
             }
-            await RefreshAsync(worker.Id);
+            await RefreshAsync(workerId);
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Setting worker {WorkerId}'s mode failed", worker.Id);
+            Logger.LogError(ex, "Setting worker {WorkerId}'s mode failed", workerId);
             modeError = $"Failed to change the mode: {ex.Message}";
         }
         finally
@@ -338,14 +340,15 @@ else
             }
         }
 
+        var workerId = worker.Id;
         savingMac = true;
         try
         {
             using var scope = ScopeFactory.CreateScope();
-            var saved = await scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetWakeMacAddressAsync(worker.Id, mac);
+            var saved = await scope.ServiceProvider.GetRequiredService<WorkerRepository>().SetWakeMacAddressAsync(workerId, mac);
             (wakeMessage, wakeMessageIsError) = saved ? (mac == null ? "Cleared." : "Saved.", false) : ("Worker not found.", true);
             macInput = mac;
-            await RefreshAsync(worker.Id);
+            await RefreshAsync(workerId);
         }
         catch (Exception ex)
         {
