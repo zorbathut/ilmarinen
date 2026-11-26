@@ -71,7 +71,6 @@
 
     private IReadOnlyList<WorkerView>? workers;
     private HashSet<string> deletingWorkspaces = new();
-    private HashSet<string> revokingWorkers = new();
     private HashSet<Guid> savingPriority = new();
     private HashSet<Guid> savingMode = new();
     private string? actionError;
@@ -180,9 +179,7 @@
     {
         return @<text>
             <WorkerModeSelect Mode="worker.Mode" Disabled="@IsSavingMode(worker.Id)" OnChange="mode => SetMode(worker, mode)" />
-            <button class="btn btn-danger"
-                    disabled="@IsRevoking(worker.Id)"
-                    @onclick="() => RevokeWorker(worker.Id)">Revoke</button>
+            <WorkerRevokeButton WorkerId="worker.Id" WorkerName="@worker.Name" OnRevoked="RefreshWorkersAsync" />
             @foreach (var current in worker.CurrentRuns)
             {
                 <PuntButton @key="current.JobId" JobId="current.JobId" Status="JobStatus.Running" StartedAt="current.StartedAt" PuntRequested="current.PuntRequested" />
@@ -192,9 +189,6 @@
 
     private bool IsDeleting(Guid workerId, string workspace) =>
         deletingWorkspaces.Contains($"{workerId}:{workspace}");
-
-    private bool IsRevoking(Guid workerId) =>
-        revokingWorkers.Contains(workerId.ToString());
 
     private bool IsSavingPriority(Guid workerId) =>
         savingPriority.Contains(workerId);
@@ -290,27 +284,9 @@
         registrationResult = null;
     }
 
-    private async Task RevokeWorker(Guid workerId)
+    private async Task RefreshWorkersAsync()
     {
-        var key = workerId.ToString();
-        revokingWorkers.Add(key);
-        actionError = null;
-        StateHasChanged();
-
-        try
-        {
-            await RegistrationService.RevokeWorkerAsync(workerId);
-            workers = await FetchWorkersAsync();
-        }
-        catch (Exception ex)
-        {
-            actionError = $"Failed to revoke worker: {ex.Message}";
-        }
-        finally
-        {
-            revokingWorkers.Remove(key);
-            StateHasChanged();
-        }
+        workers = await FetchWorkersAsync();
     }
 
     private async Task DeleteWorkspace(Guid workerId, string workspace)

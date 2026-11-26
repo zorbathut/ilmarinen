@@ -1,0 +1,61 @@
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.Logging
+@inject WorkerRegistrationService RegistrationService
+@inject ILogger<WorkerRevokeButton> Logger
+
+<span class="revoke">
+    @if (!confirming)
+    {
+        <button class="btn btn-danger" disabled="@busy" @onclick="() => confirming = true"
+                title="Delete this worker's registration: its key stops working, and it can't connect again until it is registered anew">Revoke</button>
+    }
+    else
+    {
+        <span class="revoke-confirm">
+            <span>Revoke @WorkerName? Its key stops working.</span>
+            <button class="btn btn-danger" disabled="@busy" @onclick="RevokeAsync">Revoke</button>
+            <button class="btn-arrange" disabled="@busy" @onclick="() => confirming = false">Never mind</button>
+        </span>
+    }
+    @if (error != null)
+    {
+        <span style="color: var(--error);">@error</span>
+    }
+</span>
+
+@code {
+    [Parameter, EditorRequired]
+    public Guid WorkerId { get; set; }
+
+    [Parameter, EditorRequired]
+    public string WorkerName { get; set; } = "";
+
+    /// <summary>What the page does once the worker is gone.</summary>
+    [Parameter, EditorRequired]
+    public EventCallback OnRevoked { get; set; }
+
+    private bool confirming;
+    private bool busy;
+    private string? error;
+
+    private async Task RevokeAsync()
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            await RegistrationService.RevokeWorkerAsync(WorkerId);
+            confirming = false;
+            await OnRevoked.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Revoking worker {WorkerId} failed", WorkerId);
+            error = $"Failed to revoke worker: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}
