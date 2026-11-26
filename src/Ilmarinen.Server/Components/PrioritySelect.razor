@@ -1,0 +1,44 @@
+@using Ilmarinen.Server.Services
+@using Microsoft.Extensions.Logging
+@inject ILogger<PrioritySelect> Logger
+
+@* Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without it the diff is a no-op and the select would keep showing the priority picked instead of the one stored. *@
+<select @key="(Value, saves)" value="@Value.Id" disabled="@Disabled" @onchange="Changed">
+    @foreach (var priority in Options)
+    {
+        <option value="@priority.Id" selected="@(priority.Id == Value.Id)">@priority.Name</option>
+    }
+</select>
+
+@code {
+    /// <summary>The priorities to choose from, in the order to list them.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<PriorityRef> Options { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public PriorityRef Value { get; set; } = null!;
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    /// <summary>Saves the priority picked and refreshes what the page shows; awaited, so the select redraws from the stored priority afterwards.</summary>
+    [Parameter, EditorRequired]
+    public EventCallback<Guid> OnChange { get; set; }
+
+    private int saves;
+
+    private async Task Changed(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (!Guid.TryParse(value, out var id))
+        {
+            Logger.LogError("The priority select sent {Value}, which is no priority id", value);
+            return;
+        }
+        if (id != Value.Id)
+        {
+            await OnChange.InvokeAsync(id);
+        }
+        saves++;
+    }
+}

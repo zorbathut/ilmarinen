@@ -74,7 +74,6 @@
     private HashSet<string> revokingWorkers = new();
     private HashSet<Guid> savingPriority = new();
     private HashSet<Guid> savingMode = new();
-    private int prioritySaves;
     private string? actionError;
     private string newWorkerName = "";
     private bool isRegistering;
@@ -151,16 +150,7 @@
 
     private RenderFragment PriorityCell(WorkerView worker)
     {
-        // Keyed on the save counter as well as the value: a failed save leaves the stored priority unchanged, so without this the diff is a no-op and the dropdown would keep showing the value the user picked instead of the one that is actually stored.
-        return @<select @key="(worker.Priority, prioritySaves)"
-                        value="@worker.Priority.Id"
-                        disabled="@IsSavingPriority(worker.Id)"
-                        @onchange="e => SetPriority(worker.Id, e)">
-            @foreach (var priority in priorityOptions)
-            {
-                <option value="@priority.Id" selected="@(priority.Id == worker.Priority.Id)">@priority.Name</option>
-            }
-        </select>;
+        return @<PrioritySelect Options="priorityOptions" Value="worker.Priority" Disabled="@IsSavingPriority(worker.Id)" OnChange="priority => SetPriority(worker.Id, priority)" />;
     }
 
     /// <summary>Highest first: the options are listed highest first.</summary>
@@ -241,10 +231,8 @@
         }
     }
 
-    private async Task SetPriority(Guid workerId, ChangeEventArgs e)
+    private async Task SetPriority(Guid workerId, Guid priority)
     {
-        var priority = Guid.Parse((string)e.Value!);
-
         savingPriority.Add(workerId);
         actionError = null;
         StateHasChanged();
@@ -265,7 +253,6 @@
         finally
         {
             savingPriority.Remove(workerId);
-            prioritySaves++;
             StateHasChanged();
         }
     }
